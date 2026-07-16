@@ -1,0 +1,120 @@
+syntax = "proto3";
+
+package whatsapp.events.v1;
+
+import "whatsapp/ws/v1/frames.proto";
+
+option go_package = "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/events/v1;eventsv1";
+
+// NATS JetStream event payloads. Streams/subjects/consumer contracts:
+// Docs/04-api/internal-events-nats.md. NATS is transit — the PG inbox is
+// truth; every consumer is idempotent (at-least-once delivery).
+
+// Published on dev.{device_id}.out (DELIVERY stream) when an inbox row
+// commits. The gateway holding the device's route forwards it as an
+// InboxBatch frame.
+message Delivery {
+  string recipient_device_id = 1;
+  whatsapp.ws.v1.InboxItem item = 2;
+}
+
+enum PushKind {
+  PUSH_KIND_UNSPECIFIED = 0;
+  // Data-only wake signal; the device fetches ciphertext via resume.
+  PUSH_KIND_MESSAGE = 1;
+  // High-priority: APNs PushKit / FCM high-priority for lock-screen ringing.
+  PUSH_KIND_CALL = 2;
+  PUSH_KIND_GENERIC = 3;
+}
+
+// Published on push.dispatch (PUSH stream) when a recipient has no live
+// route. Payloads NEVER contain plaintext content (FR-NOTIF-01).
+message PushDispatch {
+  string recipient_device_id = 1;
+  PushKind kind = 2;
+  // Provider collapse key so repeated wakes coalesce (e.g. conversation id).
+  string collapse_key = 3;
+  // Set for PUSH_KIND_CALL.
+  string ring_id = 4;
+  int64 enqueued_at_ms = 5;
+}
+
+// Published on group.events.{group_id} (DOMAIN stream), ordered per group.
+// Consumed by the fan-out membership cache and relayed to clients as
+// GroupEventFrame; membership changes trigger client-side Sender Key rotation.
+message GroupEvent {
+  string group_id = 1;
+  int64 version = 2;
+  whatsapp.ws.v1.GroupEventKind kind = 3;
+  string actor_user_id = 4;
+  string subject_user_id = 5;
+  int32 role = 6;
+  int64 occurred_at_ms = 7;
+}
+
+enum CallEventKind {
+  CALL_EVENT_KIND_UNSPECIFIED = 0;
+  CALL_EVENT_KIND_ROOM_CREATED = 1;
+  CALL_EVENT_KIND_ROOM_ENDED = 2;
+  CALL_EVENT_KIND_PARTICIPANT_JOINED = 3;
+  CALL_EVENT_KIND_PARTICIPANT_LEFT = 4;
+}
+
+// Published on call.events (DOMAIN stream) by call-ctl and by LiveKit
+// webhook reconciliation. Feeds call history and analytics counters.
+message CallEvent {
+  string room_id = 1;
+  CallEventKind kind = 2;
+  whatsapp.ws.v1.CallKind call_kind = 3;
+  repeated string participant_user_ids = 4;
+  // call_records.outcome for ROOM_ENDED: completed|missed|declined|failed.
+  string outcome = 5;
+  int64 occurred_at_ms = 6;
+}
+
+enum MediaLifecycleKind {
+  MEDIA_LIFECYCLE_KIND_UNSPECIFIED = 0;
+  MEDIA_LIFECYCLE_KIND_UPLOADED = 1;
+  MEDIA_LIFECYCLE_KIND_REF_ADDED = 2;
+  MEDIA_LIFECYCLE_KIND_REF_REMOVED = 3;
+  MEDIA_LIFECYCLE_KIND_ORPHANED = 4;
+}
+
+// Published on media.lifecycle (DOMAIN stream); drives refcounts and GC.
+message MediaLifecycle {
+  string object_key = 1;
+  MediaLifecycleKind kind = 2;
+  int64 refcount = 3;
+  int64 occurred_at_ms = 4;
+}
+
+enum UserEventKind {
+  USER_EVENT_KIND_UNSPECIFIED = 0;
+  USER_EVENT_KIND_SUSPENDED = 1;
+  USER_EVENT_KIND_UNSUSPENDED = 2;
+  USER_EVENT_KIND_DELETED = 3;
+  USER_EVENT_KIND_DEVICE_REVOKED = 4;
+}
+
+// Published on user.events (DOMAIN stream). Consumed by the session killer
+// (close 4403, invalidate tokens/prekeys/push routes) and the purge job.
+message UserEvent {
+  string user_id = 1;
+  UserEventKind kind = 2;
+  string device_id = 3;
+  // Admin actor for T&S actions; empty for self-service.
+  string actor_user_id = 4;
+  int64 occurred_at_ms = 5;
+}
+
+// Published on analytics.counters (ANALYTICS stream). Metadata-only by
+// design review (HLD §18.1): counter names/labels may never encode content
+// or per-user behavior.
+message AnalyticsCounter {
+  // e.g. "messages_relayed", "call_minutes", "signups".
+  string name = 1;
+  int64 delta = 2;
+  // Low-cardinality labels only (platform, country-bucket, …).
+  map<string, string> labels = 3;
+  int64 occurred_at_ms = 4;
+}

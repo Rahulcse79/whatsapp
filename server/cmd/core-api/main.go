@@ -9,7 +9,13 @@ import (
 	"os"
 )
 
+// Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
+var (
+	version = "dev"
+	commit  = "none"
+)
+
 func main() {
-	fmt.Fprintln(os.Stderr, "core-api: scaffold only — implementation starts at T0.05 (Docs/12-planning/task-breakdown.md)")
+	fmt.Fprintf(os.Stderr, "core-api %s (%s): scaffold only — implementation starts at T0.05 (Docs/12-planning/task-breakdown.md)\n", version, commit)
 	os.Exit(1)
 }

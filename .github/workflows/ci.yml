@@ -1,0 +1,105 @@
+# CI — runs on every commit/PR. Nothing runs on developer machines by policy:
+# all checks live here. Pipeline contract: Docs/08-devops/ci-cd.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Go backend: build, vet, race tests, lint ─────────────────────────────
+  backend:
+    name: backend (go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+          cache: false # enable once go.sum exists (first real dependency)
+
+      - name: Build all deployables
+        run: go build ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Tests (race detector)
+        run: go test -race ./...
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: v1.64
+          working-directory: server
+
+  # ── Protobuf contracts: lint, breaking-change gate, codegen proof ────────
+  proto:
+    name: proto (buf)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for the breaking-change check
+
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      - name: Lint
+        working-directory: server/proto
+        run: buf lint
+
+      - name: Breaking-change check (PRs, against main)
+        if: github.event_name == 'pull_request'
+        working-directory: server/proto
+        run: buf breaking --against '../../.git#branch=origin/main,subdir=server/proto'
+
+      - name: Generate (Go + TS) — proves codegen stays green
+        working-directory: server/proto
+        run: buf generate
+
+      - name: Upload generated code
+        uses: actions/upload-artifact@v4
+        with:
+          name: proto-gen-${{ github.sha }}
+          retention-days: 7
+          path: |
+            server/internal/proto/gen/
+            clients/packages/proto-types/src/gen/
+
+  # ── Clients: shared packages typecheck + tests ───────────────────────────
+  clients:
+    name: clients (ts)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install
+        run: pnpm install --no-frozen-lockfile # switch to --frozen-lockfile once pnpm-lock.yaml is committed
+
+      - name: Typecheck
+        run: pnpm -r typecheck
+
+      - name: Tests
+        run: pnpm -r test

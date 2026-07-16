@@ -1,0 +1,98 @@
+syntax = "proto3";
+
+package whatsapp.rpc.v1;
+
+import "whatsapp/common/v1/common.proto";
+import "whatsapp/ws/v1/frames.proto";
+
+option go_package = "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/rpc/v1;rpcv1";
+
+// Internal gRPC surfaces (mTLS inside the cluster). Communication matrix:
+// Docs/02-architecture/microservices.md §4. Domain rejections travel as a
+// typed common.v1.Error in responses; gRPC status codes are reserved for
+// transport-level failures (design-patterns doc §2).
+
+// ws-gateway → core-api. The gateway is a smart pipe: it authenticates the
+// connection, then forwards frames with the authenticated identity attached.
+service ChatService {
+  // The hot path (< 10 ms server-time budget): dedupe, sequence, inbox
+  // write, publish. Idempotent on msg.msg_uuid.
+  rpc AcceptMessage(AcceptMessageRequest) returns (AcceptMessageResponse);
+
+  // Delivery/read receipts (cumulative watermarks; coalesced upstream).
+  rpc SubmitReceipt(SubmitReceiptRequest) returns (SubmitReceiptResponse);
+
+  // Inbox replay for session resume and SyncPull gap fills. Batches stream
+  // in seq order per conversation.
+  rpc PullInbox(PullInboxRequest) returns (stream PullInboxResponse);
+
+  // ACK-after-persist watermark from ClientAck frames: deletes acked inbox
+  // rows. Idempotent — replaying a cursor is a no-op.
+  rpc AckDelivered(AckDeliveredRequest) returns (AckDeliveredResponse);
+}
+
+message AcceptMessageRequest {
+  // Authenticated by the gateway at Hello; never trusted from the frame.
+  string sender_user_id = 1;
+  string sender_device_id = 2;
+  whatsapp.ws.v1.MsgSend msg = 3;
+}
+
+message AcceptMessageResponse {
+  whatsapp.ws.v1.MsgAck ack = 1;
+  // Set instead of ack on domain rejection (RATE_LIMITED,
+  // VALIDATION_EDIT_WINDOW_CLOSED, GROUP_POSTING_RESTRICTED, …).
+  whatsapp.common.v1.Error error = 2;
+}
+
+message SubmitReceiptRequest {
+  string from_user_id = 1;
+  string from_device_id = 2;
+  whatsapp.ws.v1.Receipt receipt = 3;
+}
+
+message SubmitReceiptResponse {
+  whatsapp.common.v1.Error error = 1;
+}
+
+message PullInboxRequest {
+  string recipient_device_id = 1;
+  // Empty = replay everything pending for the device (fresh session).
+  repeated whatsapp.ws.v1.ConversationCursor cursors = 2;
+  // Max items per streamed batch (server caps at 100).
+  int32 batch_size = 3;
+}
+
+message PullInboxResponse {
+  repeated whatsapp.ws.v1.InboxItem items = 1;
+  // Final batch of the replay.
+  bool end_of_replay = 2;
+}
+
+message AckDeliveredRequest {
+  string recipient_device_id = 1;
+  repeated whatsapp.ws.v1.ConversationCursor up_to = 2;
+}
+
+message AckDeliveredResponse {
+  whatsapp.common.v1.Error error = 1;
+}
+
+// media-svc → core-api: the single allowed synchronous cross-deployable
+// call (storage quota is core-owned, single-writer).
+service QuotaService {
+  // Fails closed: media-svc rejects the upload if this errors
+  // (TRANSIENT_UNAVAILABLE) — uploads are retryable, quota escapes are not.
+  rpc CheckAndReserve(CheckAndReserveRequest) returns (CheckAndReserveResponse);
+}
+
+message CheckAndReserveRequest {
+  string user_id = 1;
+  int64 bytes_requested = 2;
+}
+
+message CheckAndReserveResponse {
+  bool allowed = 1;
+  int64 remaining_bytes = 2;
+  whatsapp.common.v1.Error error = 3;
+}

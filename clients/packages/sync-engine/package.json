@@ -7,6 +7,6 @@
   "main": "src/index.ts",
   "scripts": {
     "typecheck": "tsc -p .",
-    "test": "vitest run"
+    "test": "vitest run --passWithNoTests"
   }
 }

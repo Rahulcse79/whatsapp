@@ -9,7 +9,13 @@ import (
 	"os"
 )
 
+// Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
+var (
+	version = "dev"
+	commit  = "none"
+)
+
 func main() {
-	fmt.Fprintln(os.Stderr, "media-svc: scaffold only — implementation starts at T1.04 (Docs/12-planning/task-breakdown.md)")
+	fmt.Fprintf(os.Stderr, "media-svc %s (%s): scaffold only — implementation starts at T1.04 (Docs/12-planning/task-breakdown.md)\n", version, commit)
 	os.Exit(1)
 }

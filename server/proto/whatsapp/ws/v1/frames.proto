@@ -1,0 +1,331 @@
+syntax = "proto3";
+
+package whatsapp.ws.v1;
+
+import "whatsapp/common/v1/common.proto";
+
+option go_package = "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/ws/v1;wsv1";
+
+// WebSocket frame protocol. Contract: Docs/04-api/websocket-protocol.md.
+// One multiplexed WSS connection per device; binary protobuf frames.
+// Fields are append-only; numbers are never reused (buf breaking-check in CI).
+
+// ─────────────────────────────── envelope ───────────────────────────────
+
+message Frame {
+  // Per-connection monotonic counter, for debugging/tracing only.
+  uint64 frame_id = 1;
+
+  // 25 was `Overlay` in an early draft; overlays are folded into MsgSend
+  // (kind + overlay_target) so the server can validate windows uniformly.
+  reserved 25;
+
+  oneof body {
+    // session
+    Hello hello = 10;
+    HelloAck hello_ack = 11;
+    Ping ping = 12;
+    Pong pong = 13;
+    ServerHint server_hint = 14;
+    whatsapp.common.v1.Error error = 15;
+    // messaging
+    MsgSend msg_send = 20;
+    MsgAck msg_ack = 21;
+    InboxBatch inbox_batch = 22;
+    ClientAck client_ack = 23;
+    Receipt receipt = 24;
+    SyncPull sync_pull = 26;
+    // presence
+    PresenceSub presence_sub = 30;
+    PresenceUpdate presence_update = 31;
+    Typing typing = 32;
+    // groups
+    GroupEventFrame group_event = 40;
+    // calls (signaling only — media never crosses the WS)
+    CallOffer call_offer = 50;
+    CallAnswer call_answer = 51;
+    CallDecline call_decline = 52;
+    CallEnd call_end = 53;
+    CallRing call_ring = 54;
+    // push-to-talk
+    PttRequest ptt_request = 60;
+    PttGrant ptt_grant = 61;
+    PttRelease ptt_release = 62;
+    PttQueuePos ptt_queue_pos = 63;
+  }
+}
+
+// ─────────────────────────────── session ────────────────────────────────
+
+message Hello {
+  string access_jwt = 1;
+  string device_id = 2;
+  // Present on reconnect: skips full auth, triggers inbox replay.
+  string resume_token = 3;
+  repeated ConversationCursor last_cursors = 4;
+  // Client supports app-level zstd for frames > 1 KB.
+  bool accept_zstd = 5;
+}
+
+message HelloAck {
+  // Rotated on every connect; present it on the next resume.
+  string resume_token = 1;
+  string session_id = 2;
+  int64 server_time_ms = 3;
+  // True when the server will replay missed inbox items before live traffic.
+  bool replay_pending = 4;
+  bool zstd_enabled = 5;
+}
+
+message ConversationCursor {
+  string conversation_id = 1;
+  int64 last_seq = 2;
+}
+
+message Ping {
+  int64 ts_ms = 1;
+}
+
+message Pong {
+  int64 echo_ts_ms = 1;
+}
+
+message ServerHint {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    // Deploy drain: reconnect after reconnect_after_ms (jittered server-side).
+    KIND_DRAIN = 1;
+    KIND_RECONNECT = 2;
+    // Device's one-time prekey pool is low (< 20): replenish via REST.
+    KIND_PREKEYS_LOW = 3;
+  }
+  Kind kind = 1;
+  uint64 reconnect_after_ms = 2;
+}
+
+// ─────────────────────────────── messaging ──────────────────────────────
+
+enum MsgKind {
+  MSG_KIND_UNSPECIFIED = 0;
+  MSG_KIND_TEXT = 1;
+  MSG_KIND_MEDIA = 2;
+  // Overlays reference overlay_target; server validates sender + window only
+  // (edit ≤ 15 min, delete ≤ 48 h — by server accept time).
+  MSG_KIND_OVERLAY_EDIT = 3;
+  MSG_KIND_OVERLAY_DELETE = 4;
+  MSG_KIND_REACTION = 5;
+  MSG_KIND_PIN = 6;
+  // Per-story key distribution to the audience (pairwise-encrypted).
+  MSG_KIND_STORY_KEY = 7;
+  // Sender-Key distribution after group membership change.
+  MSG_KIND_SENDER_KEY_DIST = 8;
+}
+
+message MsgSend {
+  // Client-generated UUIDv7 — the idempotency key (server dedupes 24 h).
+  string msg_uuid = 1;
+  string conversation_id = 2;
+  // libsignal ciphertext (pairwise session or Sender Key), including the
+  // encrypted mini-thumbnail for media. The server never inspects this.
+  bytes sealed_envelope = 3;
+  MsgKind kind = 4;
+  // For overlay kinds: msg_uuid of the message being edited/deleted/etc.
+  string overlay_target = 5;
+}
+
+message MsgAck {
+  string msg_uuid = 1;
+  string conversation_id = 2;
+  int64 seq = 3;
+  int64 server_time_ms = 4;
+}
+
+message InboxItem {
+  string conversation_id = 1;
+  int64 seq = 2;
+  string msg_uuid = 3;
+  string sender_user_id = 4;
+  string sender_device_id = 5;
+  MsgKind kind = 6;
+  string overlay_target = 7;
+  bytes sealed_envelope = 8;
+  int64 accepted_at_ms = 9;
+}
+
+message InboxBatch {
+  repeated InboxItem items = 1;
+  // True while replaying history; false once the batch is live traffic.
+  bool replay = 2;
+  // Set on the final replay batch.
+  bool replay_complete = 3;
+}
+
+// Cumulative watermark: "persisted everything up to seq N per conversation".
+// Client sends AFTER local persist (ACK-after-persist durability contract);
+// the server then deletes the acked inbox rows.
+message ClientAck {
+  repeated ConversationCursor up_to = 1;
+}
+
+enum ReceiptKind {
+  RECEIPT_KIND_UNSPECIFIED = 0;
+  RECEIPT_KIND_DELIVERED = 1;
+  RECEIPT_KIND_READ = 2;
+}
+
+// Cumulative; coalesced ≤ 1 flush / 250 ms per conversation, both directions.
+// READ is suppressed server-side when the recipient disables read receipts.
+message Receipt {
+  string conversation_id = 1;
+  ReceiptKind kind = 2;
+  int64 up_to_seq = 3;
+  // Filled by the server on relay: whose receipt this is.
+  string from_user_id = 4;
+}
+
+// Client detected a seq gap; server replays from_seq+1 onward for that
+// conversation as InboxBatch frames.
+message SyncPull {
+  string conversation_id = 1;
+  int64 from_seq = 2;
+}
+
+// ─────────────────────────────── presence ───────────────────────────────
+
+// Subscription-based presence: clients subscribe only to on-screen chats
+// (≤ 50 concurrent subs per device — enforced server-side).
+message PresenceSub {
+  repeated string subscribe_user_ids = 1;
+  repeated string unsubscribe_user_ids = 2;
+}
+
+message PresenceUpdate {
+  string user_id = 1;
+  bool online = 2;
+  // 0 when hidden by the user's privacy settings.
+  int64 last_seen_ms = 3;
+}
+
+// Throttled 1 / 3 s client-side; 5 s TTL server-side; lossy by design.
+message Typing {
+  string conversation_id = 1;
+  // Filled by the server on relay.
+  string user_id = 2;
+  // Voice-note recording indicator (vs text typing).
+  bool recording = 3;
+}
+
+// ─────────────────────────────── groups ─────────────────────────────────
+
+enum GroupEventKind {
+  GROUP_EVENT_KIND_UNSPECIFIED = 0;
+  GROUP_EVENT_KIND_MEMBER_ADDED = 1;
+  GROUP_EVENT_KIND_MEMBER_REMOVED = 2;
+  GROUP_EVENT_KIND_ROLE_CHANGED = 3;
+  GROUP_EVENT_KIND_SETTINGS_CHANGED = 4;
+  GROUP_EVENT_KIND_INFO_CHANGED = 5;
+  GROUP_EVENT_KIND_GROUP_DELETED = 6;
+}
+
+// Ordered per group (group.events.{id} subject). Clients rotate Sender Keys
+// on membership changes — the server never touches key material.
+message GroupEventFrame {
+  string group_id = 1;
+  int64 version = 2;
+  GroupEventKind kind = 3;
+  string actor_user_id = 4;
+  string subject_user_id = 5;
+  // New role for ROLE_CHANGED (0 member, 1 admin, 2 owner).
+  int32 role = 6;
+}
+
+// ─────────────────────────────── calls ──────────────────────────────────
+
+enum CallKind {
+  CALL_KIND_UNSPECIFIED = 0;
+  CALL_KIND_VOICE = 1;
+  CALL_KIND_VIDEO = 2;
+}
+
+message CallOffer {
+  string ring_id = 1;
+  string room_id = 2;
+  CallKind kind = 3;
+  string caller_user_id = 4;
+  string caller_device_id = 5;
+  // Short-lived (≤ 60 s), room-scoped LiveKit join JWT.
+  string join_token = 6;
+  repeated string participant_user_ids = 7;
+}
+
+message CallAnswer {
+  string ring_id = 1;
+}
+
+message CallDecline {
+  string ring_id = 1;
+  bool busy = 2;
+}
+
+message CallEnd {
+  string ring_id = 1;
+  string room_id = 2;
+  string reason = 3;
+}
+
+enum RingState {
+  RING_STATE_UNSPECIFIED = 0;
+  RING_STATE_RINGING = 1;
+  RING_STATE_ANSWERED = 2;
+  // Another of the callee's devices answered; this one stops ringing.
+  RING_STATE_ANSWERED_ELSEWHERE = 3;
+  RING_STATE_DECLINED = 4;
+  RING_STATE_BUSY = 5;
+  RING_STATE_MISSED = 6;
+  RING_STATE_ENDED = 7;
+}
+
+// Server-authoritative ring state machine updates (45 s timeout → MISSED).
+message CallRing {
+  string ring_id = 1;
+  RingState state = 2;
+  string by_user_id = 3;
+}
+
+// ─────────────────────────────── push-to-talk ───────────────────────────
+
+enum PttAction {
+  PTT_ACTION_UNSPECIFIED = 0;
+  PTT_ACTION_ACQUIRE = 1;
+  PTT_ACTION_RELEASE = 2;
+  // Every 500 ms while speaking; 2 missed beats auto-release the floor.
+  PTT_ACTION_HEARTBEAT = 3;
+}
+
+message PttRequest {
+  string room_id = 1;
+  PttAction action = 2;
+}
+
+// Broadcast to the room: who holds the floor. The fence is the fencing
+// sequence enforced at the SFU publish-permission layer — stale fences
+// cannot inject audio (DS&A §8).
+message PttGrant {
+  string room_id = 1;
+  int64 fence = 2;
+  string holder_user_id = 3;
+  string holder_device_id = 4;
+  uint64 max_speak_ms = 5;
+}
+
+// Broadcast when the floor frees (release, heartbeat lapse, or max duration).
+message PttRelease {
+  string room_id = 1;
+  int64 fence = 2;
+  string reason = 3;
+}
+
+message PttQueuePos {
+  string room_id = 1;
+  int32 position = 2;
+}

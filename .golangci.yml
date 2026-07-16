@@ -17,6 +17,12 @@ linters:
   settings:
     exhaustive:
       default-signifies-exhaustive: true
+    gosec:
+      # G115 (int conversion overflow) has a very high false-positive rate on
+      # config ints, small enum fields, and hash lengths. We rely on govet +
+      # explicit validation for real overflow risks instead.
+      excludes:
+        - G115
     depguard:
       rules:
         # platform/ is cross-cutting infrastructure: it may NEVER import a

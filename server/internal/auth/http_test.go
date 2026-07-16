@@ -22,7 +22,9 @@ func newHTTPHarness(t *testing.T) (*harness, *httptest.Server) {
 	return h, srv
 }
 
-func postJSON(t *testing.T, url string, body any, bearer string) (*http.Response, []byte) {
+// postJSON returns the status code and body bytes, closing the response body
+// itself so callers never juggle it (keeps bodyclose/errcheck happy).
+func postJSON(t *testing.T, url string, body any, bearer string) (int, []byte) {
 	t.Helper()
 	raw, _ := json.Marshal(body)
 	req, _ := http.NewRequest(http.MethodPost, url, bytes.NewReader(raw))
@@ -34,10 +36,10 @@ func postJSON(t *testing.T, url string, body any, bearer string) (*http.Response
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var buf bytes.Buffer
 	_, _ = buf.ReadFrom(resp.Body)
-	return resp, buf.Bytes()
+	return resp.StatusCode, buf.Bytes()
 }
 
 func wireDevice() map[string]any {
@@ -52,10 +54,10 @@ func TestHTTP_FullRegistrationFlow(t *testing.T) {
 	h, srv := newHTTPHarness(t)
 
 	// 1. request-otp
-	resp, body := postJSON(t, srv.URL+"/v1/auth/request-otp",
+	status, body := postJSON(t, srv.URL+"/v1/auth/request-otp",
 		map[string]string{"phone": "+14155550200"}, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("request-otp: %d %s", resp.StatusCode, body)
+	if status != http.StatusOK {
+		t.Fatalf("request-otp: %d %s", status, body)
 	}
 	var ch OTPChallenge
 	if err := json.Unmarshal(body, &ch); err != nil || ch.ChallengeID == "" {
@@ -63,10 +65,10 @@ func TestHTTP_FullRegistrationFlow(t *testing.T) {
 	}
 
 	// 2. verify-otp with a wrong code → uniform error envelope
-	resp, body = postJSON(t, srv.URL+"/v1/auth/verify-otp", map[string]any{
+	status, body = postJSON(t, srv.URL+"/v1/auth/verify-otp", map[string]any{
 		"challenge_id": ch.ChallengeID, "code": "000000", "device": wireDevice()}, "")
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("wrong code: status %d", resp.StatusCode)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("wrong code: status %d", status)
 	}
 	var envelope httpx.ErrorBody
 	if err := json.Unmarshal(body, &envelope); err != nil || envelope.Error.Code != "AUTH_OTP_INVALID" {
@@ -75,10 +77,10 @@ func TestHTTP_FullRegistrationFlow(t *testing.T) {
 
 	// 3. verify-otp with the real code → tokens
 	code := h.sender.codeFor("+14155550200")
-	resp, body = postJSON(t, srv.URL+"/v1/auth/verify-otp", map[string]any{
+	status, body = postJSON(t, srv.URL+"/v1/auth/verify-otp", map[string]any{
 		"challenge_id": ch.ChallengeID, "code": code, "device": wireDevice()}, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("verify-otp: %d %s", resp.StatusCode, body)
+	if status != http.StatusOK {
+		t.Fatalf("verify-otp: %d %s", status, body)
 	}
 	var pair TokenPair
 	if err := json.Unmarshal(body, &pair); err != nil || pair.AccessJWT == "" || pair.RefreshToken == "" {
@@ -86,10 +88,10 @@ func TestHTTP_FullRegistrationFlow(t *testing.T) {
 	}
 
 	// 4. refresh rotates
-	resp, body = postJSON(t, srv.URL+"/v1/auth/refresh",
+	status, body = postJSON(t, srv.URL+"/v1/auth/refresh",
 		map[string]string{"refresh_token": pair.RefreshToken}, "")
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("refresh: %d %s", resp.StatusCode, body)
+	if status != http.StatusOK {
+		t.Fatalf("refresh: %d %s", status, body)
 	}
 	var pair2 TokenPair
 	_ = json.Unmarshal(body, &pair2)
@@ -98,14 +100,14 @@ func TestHTTP_FullRegistrationFlow(t *testing.T) {
 	}
 
 	// 5. logout with bearer → 204; refresh afterwards fails
-	resp, _ = postJSON(t, srv.URL+"/v1/auth/logout", struct{}{}, pair2.AccessJWT)
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("logout: %d", resp.StatusCode)
+	status, _ = postJSON(t, srv.URL+"/v1/auth/logout", struct{}{}, pair2.AccessJWT)
+	if status != http.StatusNoContent {
+		t.Fatalf("logout: %d", status)
 	}
-	resp, body = postJSON(t, srv.URL+"/v1/auth/refresh",
+	status, body = postJSON(t, srv.URL+"/v1/auth/refresh",
 		map[string]string{"refresh_token": pair2.RefreshToken}, "")
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("refresh after logout: %d %s", resp.StatusCode, body)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("refresh after logout: %d %s", status, body)
 	}
 }
 
@@ -113,10 +115,10 @@ func TestHTTP_RateLimitEnvelope(t *testing.T) {
 	h, srv := newHTTPHarness(t)
 	h.svc.d.Limiter = denyLimiter{}
 
-	resp, body := postJSON(t, srv.URL+"/v1/auth/request-otp",
+	status, body := postJSON(t, srv.URL+"/v1/auth/request-otp",
 		map[string]string{"phone": "+14155550201"}, "")
-	if resp.StatusCode != http.StatusTooManyRequests {
-		t.Fatalf("status %d", resp.StatusCode)
+	if status != http.StatusTooManyRequests {
+		t.Fatalf("status %d", status)
 	}
 	var envelope httpx.ErrorBody
 	if err := json.Unmarshal(body, &envelope); err != nil {
@@ -136,7 +138,7 @@ func TestHTTP_MalformedBody(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status %d", resp.StatusCode)
 	}
@@ -144,9 +146,9 @@ func TestHTTP_MalformedBody(t *testing.T) {
 
 func TestHTTP_LogoutWithoutBearer(t *testing.T) {
 	_, srv := newHTTPHarness(t)
-	resp, _ := postJSON(t, srv.URL+"/v1/auth/logout", struct{}{}, "")
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status %d", resp.StatusCode)
+	status, _ := postJSON(t, srv.URL+"/v1/auth/logout", struct{}{}, "")
+	if status != http.StatusUnauthorized {
+		t.Fatalf("status %d", status)
 	}
 }
 
@@ -156,7 +158,7 @@ func TestHTTP_MethodNotAllowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET on POST route: %d", resp.StatusCode)
 	}

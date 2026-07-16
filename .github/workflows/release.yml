@@ -46,8 +46,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
-          cache: false
+          go-version: "1.25"
+          cache-dependency-path: server/go.sum
 
       - name: Build version-stamped binaries
         working-directory: server

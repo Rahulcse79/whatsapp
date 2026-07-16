@@ -24,8 +24,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.24"
-          cache: false # enable once go.sum exists (first real dependency)
+          go-version: "1.25"
+          cache-dependency-path: server/go.sum
 
       - name: Build all deployables
         run: go build ./...
@@ -37,9 +37,9 @@ jobs:
         run: go test -race ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v7
         with:
-          version: v1.64
+          version: latest
           working-directory: server
 
   # ── Protobuf contracts: lint, breaking-change gate, codegen proof ────────

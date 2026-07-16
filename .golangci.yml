@@ -1,26 +1,24 @@
-# Lint gates per Docs/13-standards/coding-standards.md.
+# golangci-lint v2 config. Gates per Docs/13-standards/coding-standards.md.
+# The `standard` default set = errcheck, govet, ineffassign, staticcheck, unused.
 # Import-boundary enforcement (depguard rules per context) lands with task T0.06.
+version: "2"
+
 run:
   timeout: 5m
 
 linters:
+  default: standard
   enable:
-    - errcheck
-    - govet
-    - staticcheck
-    - gosec
-    - exhaustive     # state-machine switches must be exhaustive
-    - sqlclosecheck
     - bodyclose
-    - unused
-    - ineffassign
+    - exhaustive     # state-machine switches must be exhaustive
+    - gosec
     - misspell
-
-linters-settings:
-  exhaustive:
-    default-signifies-exhaustive: true
-
-issues:
-  exclude-rules:
-    - path: _test\.go
-      linters: [gosec]
+    - sqlclosecheck
+  settings:
+    exhaustive:
+      default-signifies-exhaustive: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - gosec

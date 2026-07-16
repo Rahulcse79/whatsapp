@@ -42,10 +42,10 @@ func TestCheckPIN_Malformed(t *testing.T) {
 	for _, bad := range []string{
 		"",
 		"plainhash",
-		"$argon2i$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",       // wrong variant
-		"$argon2id$v=18$m=65536,t=3,p=4$c2FsdA$aGFzaA",      // wrong version
-		"$argon2id$v=19$m=banana,t=3,p=4$c2FsdA$aGFzaA",     // bad params
-		"$argon2id$v=19$m=65536,t=3,p=4$!!notb64!!$aGFzaA",  // bad salt
+		"$argon2i$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA",      // wrong variant
+		"$argon2id$v=18$m=65536,t=3,p=4$c2FsdA$aGFzaA",     // wrong version
+		"$argon2id$v=19$m=banana,t=3,p=4$c2FsdA$aGFzaA",    // bad params
+		"$argon2id$v=19$m=65536,t=3,p=4$!!notb64!!$aGFzaA", // bad salt
 	} {
 		if ok, err := CheckPIN(bad, "482913"); err == nil || ok {
 			t.Fatalf("malformed hash %q: ok=%v err=%v — must error", bad, ok, err)

@@ -33,14 +33,13 @@ LEGEND:  [x] done   [>] next up   [ ] pending
             senders + REST handlers; migration 000009; adapter tests run in CI
             migrations job against the migrated DB)
 
-[>] T0.09  Devices + keys contexts
-    PROMPT> implement task T0.09 devices and keys contexts: device registry with
-            single-primary invariant, QR link/approve endpoints, atomic revocation,
-            prekey publish/fetch with one-time consumption in tx. code + tests only.
-    DOCS:   Docs/04-api/auth-users-api.md (devices/keys) · Docs/06-security/e2ee-design.md §1–2,§5
-    DONE:   bundle fetch consumes one-time prekey exactly once under concurrency (test)
+[x] T0.09  Devices + keys contexts
+           (keys: publish + atomic bundle fetch w/ FOR UPDATE SKIP LOCKED consume +
+            concurrency integration test; devices: list/rename/atomic-revoke tx +
+            QR link init/approve/complete; auth gained MintLinkedSession + Sessions.Create;
+            migration 000010 device_links; shared httpx.APIError)
 
-[ ] T0.10  ws-gateway skeleton
+[>] T0.10  ws-gateway skeleton
     PROMPT> implement task T0.10 ws-gateway skeleton: WSS upgrade, Hello/JWT verify,
             sharded connection registry (256 shards), ping/pong heartbeat, route
             claim in valkey with TTL, close codes 4401/4403/4409. code + tests only.

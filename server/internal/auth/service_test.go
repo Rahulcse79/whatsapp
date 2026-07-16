@@ -100,6 +100,10 @@ func (f *fakeSessions) add(s domain.Session) {
 	defer f.mu.Unlock()
 	f.m[s.ID] = s
 }
+func (f *fakeSessions) Create(_ context.Context, s domain.Session) error {
+	f.add(s)
+	return nil
+}
 func (f *fakeSessions) ByRefreshHash(_ context.Context, h []byte) (domain.Session, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -147,9 +151,9 @@ func (f *fakeSessions) Revoke(_ context.Context, id string, at time.Time) error 
 }
 
 type fakeRegistrar struct {
-	users    *fakeUsers
-	sessions *fakeSessions
-	limitHit bool
+	users       *fakeUsers
+	sessions    *fakeSessions
+	limitHit    bool
 	lastPrimary bool
 }
 

@@ -170,6 +170,13 @@ CREATE TABLE sessions (                          -- refresh rotation + reuse det
   rotated_from bytea,                            -- previous hash: presenting it again = reuse → session killed
   created_at timestamptz, last_used_at timestamptz,
   expires_at timestamptz, revoked_at timestamptz);
+
+CREATE TABLE device_links (                      -- QR multi-device linking handoff (migration 000010, e2ee-design §5)
+  link_token text PRIMARY KEY,                   -- high-entropy secret shown in the QR + polled with
+  platform smallint, device_name text, identity_key bytea,  -- the NEW device's public identity key
+  state smallint DEFAULT 0,                       -- 0 pending | 1 approved | 2 consumed
+  approved_by uuid, user_id uuid, device_id uuid, cert bytea,  -- set at primary approval
+  created_at timestamptz, expires_at timestamptz);  -- ~5-min TTL
 ```
 
 ## 3. Partitioning & lifecycle

@@ -8,8 +8,8 @@ import (
 // fakeClock lets tests move time deterministically — no sleeps.
 type fakeClock struct{ t time.Time }
 
-func (c *fakeClock) now() time.Time            { return c.t }
-func (c *fakeClock) advance(d time.Duration)   { c.t = c.t.Add(d) }
+func (c *fakeClock) now() time.Time          { return c.t }
+func (c *fakeClock) advance(d time.Duration) { c.t = c.t.Add(d) }
 func newTestLimiter() (*MemoryLimiter, *fakeClock) {
 	c := &fakeClock{t: time.Unix(1_700_000_000, 0)}
 	return &MemoryLimiter{tats: make(map[string]time.Time), now: c.now}, c

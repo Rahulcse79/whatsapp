@@ -144,6 +144,17 @@ func (u *Users) SetPINHash(ctx context.Context, userID, phc string) error {
 
 type Sessions struct{ pool *pgxpool.Pool }
 
+func (s *Sessions) Create(ctx context.Context, sess domain.Session) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO sessions (id, device_id, refresh_hash, expires_at)
+		VALUES ($1, $2, $3, $4)`,
+		sess.ID, sess.DeviceID, sess.RefreshHash, sess.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("creating session: %w", err)
+	}
+	return nil
+}
+
 const sessionSelect = `
 	SELECT s.id, s.device_id, d.user_id, s.refresh_hash, s.rotated_from,
 	       s.expires_at, s.revoked_at

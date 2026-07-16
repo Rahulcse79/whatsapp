@@ -170,13 +170,20 @@ func decodeBody[T any](w http.ResponseWriter, r *http.Request, dst *T) bool {
 }
 
 func bearer(w http.ResponseWriter, r *http.Request, s *Service) (Identity, bool) {
+	return BearerIdentity(w, r, s)
+}
+
+// BearerIdentity authenticates a request's Authorization: Bearer token via v,
+// writing the uniform 401 envelope on failure. Other contexts use this to
+// gate their handlers through auth's public port.
+func BearerIdentity(w http.ResponseWriter, r *http.Request, v TokenVerifier) (Identity, bool) {
 	tok, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok || tok == "" {
 		httpx.Error(w, r, http.StatusUnauthorized, httpx.ErrorObj{
 			Code: "AUTH_TOKEN_INVALID", Message: "missing bearer token"})
 		return Identity{}, false
 	}
-	ident, err := s.Verify(tok)
+	ident, err := v.Verify(tok)
 	if err != nil {
 		httpx.Error(w, r, http.StatusUnauthorized, httpx.ErrorObj{
 			Code: "AUTH_TOKEN_EXPIRED", Message: "invalid or expired token"})

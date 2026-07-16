@@ -70,6 +70,8 @@ type UserRepo interface {
 }
 
 type SessionRepo interface {
+	// Create inserts a new session (used by device linking completion).
+	Create(ctx context.Context, s domain.Session) error
 	ByRefreshHash(ctx context.Context, hash []byte) (domain.Session, error)
 	ByRotatedFrom(ctx context.Context, hash []byte) (domain.Session, error)
 	// Rotate swaps oldHash → newHash atomically; false = the old hash no
@@ -480,6 +482,31 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, 
 		DeviceID:     sess.DeviceID,
 		SessionID:    sess.ID,
 	}, nil
+}
+
+// MintLinkedSession creates a session and issues tokens for an
+// already-registered device. It is the token-issuance half of the device
+// linking flow (the devices context registers the device; token minting
+// stays here). Satisfies devices.SessionMinter.
+func (s *Service) MintLinkedSession(ctx context.Context, userID, deviceID string) (access, refresh, sessionID string, err error) {
+	now := s.now()
+	refreshTok, rhash, err := domain.NewRefreshToken(s.entropy)
+	if err != nil {
+		return "", "", "", transientErr()
+	}
+	sessionID = id.New()
+	if err := s.d.Sessions.Create(ctx, domain.Session{
+		ID: sessionID, DeviceID: deviceID, UserID: userID,
+		RefreshHash: rhash, ExpiresAt: now.Add(s.refreshTTL),
+	}); err != nil {
+		s.d.Log.Error("linked session create failed", "err", err)
+		return "", "", "", transientErr()
+	}
+	accessTok, err := s.d.Issuer.Issue(userID, deviceID, sessionID)
+	if err != nil {
+		return "", "", "", transientErr()
+	}
+	return accessTok, refreshTok, sessionID, nil
 }
 
 // Logout revokes the caller's session (FR-AUTH-07).

@@ -46,7 +46,7 @@ func (s *PrekeyStore) AddOneTimePrekeys(ctx context.Context, deviceID string, ot
 			deviceID, o.KeyID, o.Pubkey)
 	}
 	br := s.pool.SendBatch(ctx, batch)
-	defer br.Close()
+	defer func() { _ = br.Close() }()
 	for range otps {
 		if _, err := br.Exec(); err != nil {
 			return fmt.Errorf("adding one-time prekey: %w", err)

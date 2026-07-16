@@ -103,3 +103,80 @@ jobs:
 
       - name: Tests
         run: pnpm -r test
+
+  # ── Migrations: up → down-all → up against real PostgreSQL 17 ────────────
+  migrations:
+    name: migrations (postgres 17)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: whatsapp
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: whatsapp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DB_URL: postgres://whatsapp:ci@localhost:5432/whatsapp?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Apply all up migrations
+        run: >
+          docker run --rm --network host
+          -v ${{ github.workspace }}/server/migrations:/migrations
+          migrate/migrate:v4.18.1
+          -path=/migrations -database "$DB_URL" up
+
+      - name: Down migrations must fully revert
+        run: >
+          docker run --rm --network host
+          -v ${{ github.workspace }}/server/migrations:/migrations
+          migrate/migrate:v4.18.1
+          -path=/migrations -database "$DB_URL" down -all
+
+      - name: Re-apply from zero (round trip is clean)
+        run: >
+          docker run --rm --network host
+          -v ${{ github.workspace }}/server/migrations:/migrations
+          migrate/migrate:v4.18.1
+          -path=/migrations -database "$DB_URL" up
+
+      - name: Sanity — partitioned inbox exists with 16 partitions
+        run: |
+          docker run --rm --network host postgres:17-alpine \
+            psql "$DB_URL" -tAc \
+            "SELECT count(*) FROM pg_inherits WHERE inhparent = 'message_inbox'::regclass" \
+            | grep -qx '16'
+
+  # ── Docs-contract gate: interface changes require their doc (PRs only) ───
+  docs-contract:
+    name: docs contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: API/schema changes must update their docs
+        run: |
+          set -euo pipefail
+          base="origin/${{ github.base_ref }}"
+          changed="$(git diff --name-only "$base"...HEAD)"
+          fail=0
+          if grep -q '^server/proto/' <<<"$changed" && ! grep -q '^Docs/04-api/' <<<"$changed"; then
+            echo "::error::Proto contracts changed without updating Docs/04-api/ — the docs ARE the contract (ci-cd.md §2)."
+            fail=1
+          fi
+          if grep -q '^server/migrations/' <<<"$changed" && ! grep -qE '^(Docs/03-database/|server/migrations/README.md)' <<<"$changed"; then
+            echo "::error::Migrations changed without updating Docs/03-database/ (or the deviations list in migrations/README.md)."
+            fail=1
+          fi
+          exit $fail

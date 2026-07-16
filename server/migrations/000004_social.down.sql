@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS blocks;
+DROP TABLE IF EXISTS contacts;
+DROP TABLE IF EXISTS invite_links;
+DROP TABLE IF EXISTS group_members;
+DROP TABLE IF EXISTS groups;

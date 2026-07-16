@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS feature_flags;
+DROP TABLE IF EXISTS audit_log;
+DROP TABLE IF EXISTS reports;

@@ -74,18 +74,24 @@ CREATE TABLE conversations (
 
 CREATE TABLE message_inbox (                        -- THE hot table; relay buffer, delete-on-ACK
   recipient_device_id uuid NOT NULL,
-  seq                 bigint NOT NULL,              -- conversation seq
   conversation_id     uuid NOT NULL,
+  seq                 bigint NOT NULL,              -- conversation seq
   msg_uuid            uuid NOT NULL,                -- client UUIDv7 (idempotency)
   sender_device_id    uuid NOT NULL,
-  kind                smallint NOT NULL,            -- msg|overlay(edit/delete/react/pin)|group-event|receipt-carry
+  kind                smallint NOT NULL,            -- MsgKind proto enum (text|media|overlay_*|reaction|pin|…)
+  overlay_target      uuid,                         -- original msg for overlay kinds
   ciphertext          bytea NOT NULL,               -- sealed envelope incl. enc thumbnail if media
-  expires_at          timestamptz NOT NULL,         -- accept_time + 30d
+  accepted_at         timestamptz NOT NULL DEFAULT now(),  -- overlay-window validation + InboxItem.accepted_at_ms
+  expires_at          timestamptz NOT NULL,         -- accepted_at + 30d
   PRIMARY KEY (recipient_device_id, conversation_id, seq, msg_uuid)
-) PARTITION BY HASH (recipient_device_id);          -- 16 hash partitions × monthly sub-partitions
--- covering replay index (the resume path):
-CREATE INDEX inbox_replay ON message_inbox (recipient_device_id, seq) INCLUDE (conversation_id, ciphertext);
-CREATE INDEX inbox_expiry ON message_inbox (expires_at);   -- TTL sweeper; monthly partitions dropped whole
+) PARTITION BY HASH (recipient_device_id);          -- 16 hash partitions (migration 000005)
+-- The PK serves the replay/resume scan (device, conversation, seq-range).
+-- Rev note (v1.1 of this doc): the earlier covering INCLUDE(ciphertext) index
+-- was WRONG — ciphertext runs to 256 KB and would blow the index-tuple limit;
+-- hot heap fetches off the PK are the correct plan.
+CREATE INDEX inbox_expiry ON message_inbox (expires_at);   -- TTL sweeper scan
+-- Monthly RANGE sub-partitioning (pg_partman) is a planned later ADD, taken
+-- when delete-job cost shows in metrics — see server/migrations/README.md.
 
 -- ═══ groups ═══
 CREATE TABLE groups (
@@ -156,7 +162,7 @@ CREATE TABLE otp_attempts (phone_hash bytea, at timestamptz, success boolean,
 
 | Table | Strategy | Purge |
 |---|---|---|
-| `message_inbox` | HASH(recipient_device_id) ×16, then RANGE by month | ACK-delete (hot path) + monthly `DROP PARTITION` (cold) |
+| `message_inbox` | HASH(recipient_device_id) ×16 (monthly RANGE sub-partitions via pg_partman = planned later ADD) | ACK-delete (hot path) + TTL sweeper on `inbox_expiry`; `DROP PARTITION` once partman lands |
 | `call_records` | monthly RANGE | drop partitions > 90 d |
 | `stories` | none (small) | hard-delete job hourly + MinIO lifecycle backstop |
 | `otp_attempts` | none | 10-min sweeper |
@@ -166,7 +172,7 @@ CREATE TABLE otp_attempts (phone_hash bytea, at timestamptz, success boolean,
 
 | Index | Serves | Verdict |
 |---|---|---|
-| `inbox_replay` covering | resume/sync — the system's most critical read | required |
+| `message_inbox` PK | resume/sync replay scan — the system's most critical read | required (covering INCLUDE rejected — oversized bytea, see rev note above) |
 | `one_primary_per_user` partial unique | device invariants | required |
 | `prekeys_available` partial | bundle fetch (hot on new sessions) | required |
 | `members_by_user` | "my groups", fan-out membership loads | required |

@@ -1,0 +1,272 @@
+================================================================================
+ WHATSAPP V2 — MASTER TASK RUNNER (A to Z)
+ Generated: 2026-07-16 · Source of truth: Docs/12-planning/task-breakdown.md
+================================================================================
+
+HOW TO USE
+----------
+1. Run ONE task at a time: copy the PROMPT> line into Claude Code, wait for it
+   to finish, commit + push yourself, and check GitHub Actions.
+2. If CI goes red: paste the failing log with the words "fix ci" — fix it
+   before starting the next task.
+3. Standing policy (already active): Claude writes code + tests ONLY. Nothing
+   builds/runs/installs locally; GitHub Actions verifies everything.
+4. Gates between phases are real: do not start the next phase until the gate
+   line is demonstrably true.
+
+LEGEND:  [x] done   [>] next up   [ ] pending
+
+================================================================================
+ PHASE 0 — FOUNDATIONS (target: two clients exchange E2EE messages via CI-shaped infra)
+================================================================================
+
+[x] T0.01  Monorepo scaffold (Go workspace, pnpm workspace, buf, Makefile)
+[x] T0.02  Protobuf contracts v1 (WS frames, NATS events, gRPC)   * verified by first CI run
+[x] T0.03  Compose dev stack (PG/Valkey/NATS/MinIO/ntfy/grafana)
+[x] T0.04  CI/CD pipelines (ci.yml + release.yml, versioned artifacts)
+[x] T0.05  platform/ package (config, UUIDv7, logging, GCRA, PG/Valkey/NATS)
+[x] T0.06  Import-boundary lint + PR template + docs-contract gate
+[x] T0.07  DB migrations 000001–000008 (partitioned inbox; CI round-trip)
+
+[>] T0.08  Auth context — OTP + JWT + 2FA PIN
+    PROMPT> implement task T0.08 auth context: OTP request/verify with pluggable
+            sms/email/mock drivers, JWT access (10min) + rotating refresh with
+            reuse detection, Argon2id 2FA PIN, REST handlers. code + tests only.
+    DOCS:   Docs/04-api/auth-users-api.md · Docs/06-security/security-architecture.md §2
+    DONE:   unit+adapter tests green in CI; OTP rate limits enforced via GCRA
+
+[ ] T0.09  Devices + keys contexts
+    PROMPT> implement task T0.09 devices and keys contexts: device registry with
+            single-primary invariant, QR link/approve endpoints, atomic revocation,
+            prekey publish/fetch with one-time consumption in tx. code + tests only.
+    DOCS:   Docs/04-api/auth-users-api.md (devices/keys) · Docs/06-security/e2ee-design.md §1–2,§5
+    DONE:   bundle fetch consumes one-time prekey exactly once under concurrency (test)
+
+[ ] T0.10  ws-gateway skeleton
+    PROMPT> implement task T0.10 ws-gateway skeleton: WSS upgrade, Hello/JWT verify,
+            sharded connection registry (256 shards), ping/pong heartbeat, route
+            claim in valkey with TTL, close codes 4401/4403/4409. code + tests only.
+    DOCS:   Docs/05-services/ws-gateway-lld.md · Docs/04-api/websocket-protocol.md §1,§6
+    DONE:   registry race-tested (-race); duplicate connect closes old with 4409
+
+[ ] T0.11  Chat accept pipeline (THE hot path)
+    PROMPT> implement task T0.11 chat accept pipeline in core-api: gRPC AcceptMessage
+            with valkey dedupe (fail closed), per-conversation seq in tx, batched
+            inbox insert, overlay window validation, MsgAck. code + tests only.
+    DOCS:   Docs/05-services/core-api-lld.md §2 · Docs/02-architecture/data-structures-algorithms.md §1–4,§6
+    DONE:   duplicate MsgSend returns identical ack (test); EXPLAIN note in PR
+
+[ ] T0.12  NATS delivery path
+    PROMPT> implement task T0.12 delivery: publish Delivery to dev.{device}.out after
+            inbox commit, gateway pull consumer with per-device flow control and
+            write-pump backpressure (1MB high-water). code + tests only.
+    DOCS:   Docs/04-api/internal-events-nats.md · Docs/05-services/ws-gateway-lld.md §2
+    DONE:   slow-consumer test: backlog stays in NATS/inbox, not pod memory
+
+[ ] T0.13  Resume & replay
+    PROMPT> implement task T0.13 session resume: resume tokens, PullInbox streaming
+            replay by cursors, ClientAck cumulative delete (AckDelivered), live/replay
+            interleave rule per conversation. code + tests only.
+    DOCS:   Docs/04-api/websocket-protocol.md §3 · Docs/05-services/ws-gateway-lld.md §3
+    DONE:   kill-connection-mid-replay test: no loss, no dupes, order preserved
+
+[ ] T0.14  Receipts + delivery states
+    PROMPT> implement task T0.14 receipts: cumulative delivered/read watermarks,
+            250ms coalescing both directions, privacy gate (read receipts off),
+            SubmitReceipt gRPC + relay to sender devices. code + tests only.
+    DOCS:   Docs/04-api/websocket-protocol.md (Receipt) · Docs/02-architecture/data-structures-algorithms.md §9
+    DONE:   coalescing test: N receipts in 250ms => 1 frame; privacy test green
+
+[ ] T0.15  Presence + typing
+    PROMPT> implement task T0.15 presence: subscription model (max 50 subs/device),
+            valkey presence keys with TTL, 15s offline grace, typing relay with 5s
+            TTL, privacy enforcement at subscribe time. code + tests only.
+    DOCS:   Docs/02-architecture/data-structures-algorithms.md §10–11 · HLD §8.5
+    DONE:   flap-damping test; unsubscribed users never receive updates (test)
+
+[ ] T0.16  notification-svc
+    PROMPT> implement task T0.16 notification-svc: push.dispatch pull consumer,
+            driver interface + fcm/apns/ntfy/webpush drivers (fcm+ntfy real, apns
+            stub ok), circuit breaker per provider, token lifecycle, DLQ after 5.
+            code + tests only.
+    DOCS:   Docs/05-services/notification-svc-lld.md
+    DONE:   breaker-open test: messages nack + redeliver, never dropped
+
+[ ] T0.17  Shared client packages
+    PROMPT> implement task T0.17 client packages: @wa/sync-engine (outbox flush loop,
+            cursors, conflict rules from the doc), @wa/crypto-wrapper (libsignal
+            session establish/encrypt/decrypt behind interfaces), @wa/proto-types
+            barrel. typescript, framework-free, vitest tests. code + tests only.
+    DOCS:   Docs/11-clients/offline-sync-local-store.md · Docs/06-security/e2ee-design.md §2
+    DONE:   outbox property test: crash/retry never dupes or loses; CI green
+
+[ ] T0.18  Mobile app shell (React Native + Expo)
+    PROMPT> implement task T0.18 mobile shell: create expo app in clients/mobile,
+            auth screens (otp), chat list + thread UI, sqlite local db wired to
+            @wa/sync-engine, WS client with reconnect/backoff/resume. code only.
+    DOCS:   Docs/11-clients/mobile-app-architecture.md
+    DONE:   CI typechecks + unit tests; release.yml android job now activates
+
+[ ] T0.19  Web PWA shell (React + Vite)
+    PROMPT> implement task T0.19 web shell: vite react app in clients/web, same
+            features as mobile shell, DB+crypto in dedicated worker, service worker
+            offline shell, WebPush registration. code only.
+    DOCS:   Docs/11-clients/web-app-architecture.md
+    DONE:   CI typechecks; lighthouse PWA installable (manual check ok)
+
+[ ] T0.20  E2EE integration end-to-end
+    PROMPT> implement task T0.20 e2ee wiring: X3DH session establishment via key
+            bundles, double-ratchet encrypt/decrypt in the send/receive path on
+            both clients, self-device sync copies. code + tests only.
+    DOCS:   Docs/06-security/e2ee-design.md §2 · Docs/02-architecture/sequence-diagrams.md §2
+    DONE:   protocol test P14: server-side bytes yield no plaintext
+
+[ ] T0.21  Overlay events
+    PROMPT> implement task T0.21 overlays: edit(15min)/delete(48h) window enforcement
+            server-side via accepted_at, reactions set-union merge, pin/star local,
+            client tombstone/apply logic. code + tests only.
+    DOCS:   Docs/04-api/messaging-groups-api.md semantics · sequence-diagrams §9
+    DONE:   window tests at boundary (14:59 ok, 15:01 reject) both directions
+
+[ ] T0.22  Kubernetes deploy
+    PROMPT> implement task T0.22 k8s: helm charts per deployable + umbrella, argocd
+            app-of-apps with dev/staging/prod/offline overlays, argo rollouts canary,
+            ws-gateway drain hook, DB role/grant bootstrap job, step-ca for offline.
+            manifests only, no cluster access.
+    DOCS:   Docs/08-devops/kubernetes-deployment.md · Docs/08-devops/offline-local-server.md
+    DONE:   helm template renders clean in CI (add a chart-lint job)
+
+[ ] T0.23  Observability wiring
+    PROMPT> implement task T0.23 observability: otel SDK in all deployables (traces
+            w/ NATS header propagation, RED metrics, SLO-bucket histograms), the 7
+            grafana dashboards as code in ops/dashboards, alert rules in ops/alerts,
+            synthetic probe job. code + config only.
+    DOCS:   Docs/09-observability/monitoring-logging-tracing.md · slos-alerts.md
+    DONE:   /metrics exposed by all four deployables; dashboards json valid
+
+[ ] T0.24  Protocol test framework + P0 scenarios
+    PROMPT> implement task T0.24 protocol tests: headless protobuf test client,
+            harness spinning gateway+core against testcontainers, scenarios
+            P1,P2,P3,P4,P5,P7,P8,P9,P10 from the catalog. tests only.
+    DOCS:   Docs/10-testing/test-strategy.md §3 · Docs/02-architecture/sequence-diagrams.md
+    DONE:   all 9 scenarios green in CI as a separate job
+
+--- GATE P0: chaos-kill a gateway during protocol tests => zero message loss ---
+
+================================================================================
+ PHASE 1 — GROUPS & MEDIA
+================================================================================
+
+[ ] T1.01  Groups context (CRUD, roles, permissions, invite links/QR, announcements)
+    PROMPT> implement task T1.01 groups context per Docs/04-api/messaging-groups-api.md. code + tests only.
+[ ] T1.02  Group events -> Sender-Key rotation protocol (clients) + membership cache
+    PROMPT> implement task T1.02 group key rotation per Docs/06-security/e2ee-design.md §3. code + tests only.
+[ ] T1.03  Group fan-out worker (batched async inserts, aggregate receipts)
+    PROMPT> implement task T1.03 fan-out worker per Docs/05-services/core-api-lld.md §3. code + tests only.
+[ ] T1.04  media-svc (upload sessions, presign, verify, quota gRPC)
+    PROMPT> implement task T1.04 media-svc per Docs/05-services/media-svc-lld.md. code + tests only.
+[ ] T1.05  Client media pipeline (compress/encrypt/thumb/blurhash, resumable upload)
+    PROMPT> implement task T1.05 client media pipeline per Docs/04-api/media-stories-api.md + HLD §9. code + tests only.
+[ ] T1.06  Media UX (gallery, voice notes, documents, download manager)
+    PROMPT> implement task T1.06 media UX on both clients. code only.
+[ ] T1.07  GIF proxy + sticker packs
+    PROMPT> implement task T1.07 gif proxy (server-side, ip-hiding) + sticker packs per FR-MED-05. code + tests only.
+[ ] T1.08  Media GC job + lifecycle events
+    PROMPT> implement task T1.08 media GC per Docs/05-services/media-svc-lld.md §4. code + tests only.
+[ ] T1.09  Contacts (hashed sync + enumeration defenses, search, favorites, invites)
+    PROMPT> implement task T1.09 contacts context per Docs/04-api/auth-users-api.md + threat-model T11. code + tests only.
+[ ] T1.10  Client FTS5 search + search UX
+    PROMPT> implement task T1.10 client search per ADR-005 + offline-sync-local-store.md. code + tests only.
+[ ] T1.11  Sender-side link previews
+    PROMPT> implement task T1.11 link previews generated on sender device, carried in envelope (FR-MSG-08). code + tests only.
+[ ] T1.12  Protocol tests P6 + P13, fan-out load profile
+    PROMPT> implement task T1.12 protocol tests P6 (1024-member group + rotation ordering) and P13 (media resume). tests only.
+
+--- GATE P1: 1,024-member group send + 25MB resumable upload pass in CI load job ---
+
+================================================================================
+ PHASE 2 — CALLING
+================================================================================
+
+[ ] T2.01  RTC infra (LiveKit pool + coturn helm charts, host-network node pool)
+    PROMPT> implement task T2.01 rtc infra manifests per Docs/05-services/rtc-lld.md §1. manifests only.
+[ ] T2.02  call-ctl (rooms, join tokens, ring state machine, LiveKit webhooks)
+    PROMPT> implement task T2.02 call-ctl in core-api per Docs/04-api/calls-ptt-api.md. code + tests only.
+[ ] T2.03  1:1 voice calls on both clients + E2EE frames (insertable streams)
+    PROMPT> implement task T2.03 1:1 voice per Docs/05-services/rtc-lld.md §2 + sequence-diagrams §6. code + tests only.
+[ ] T2.04  Lock-screen ringing (CallKit / ConnectionService + VoIP push path)
+    PROMPT> implement task T2.04 native ring integrations per Docs/11-clients/mobile-app-architecture.md §3. code only.
+[ ] T2.05  Video + simulcast + camera management
+    PROMPT> implement task T2.05 video calling with the simulcast ladder from rtc-lld §3. code + tests only.
+[ ] T2.06  Screen share + on-device background blur
+    PROMPT> implement task T2.06 screen share + blur (never server-side). code only.
+[ ] T2.07  Group calls <=32 (active speaker, layouts, key epochs on join/leave)
+    PROMPT> implement task T2.07 group calls per rtc-lld + e2ee-design §7. code + tests only.
+[ ] T2.08  Call history + missed-call flow
+    PROMPT> implement task T2.08 call history (metadata only, 90d) + missed-call notifications. code + tests only.
+[ ] T2.09  Quality adaptation + ICE-restart recovery
+    PROMPT> implement task T2.09 call quality: opus DTX/FEC config, video->audio downgrade, <5s ICE restart. code only.
+[ ] T2.10  Protocol test P12 + call-surge load profile
+    PROMPT> implement task T2.10 call tests: ring state matrix P12 + 300-setup surge profile. tests only.
+
+--- GATE P2: call setup p95 <= 3s in staging; locked-phone ring on both platforms ---
+
+================================================================================
+ PHASE 3 — MULTI-DEVICE, PTT, STORIES
+================================================================================
+
+[ ] T3.01  Device linking QR + signed device lists
+    PROMPT> implement task T3.01 device linking per e2ee-design §5 + sequence-diagrams §8. code + tests only.
+[ ] T3.02  History bootstrap transfer (primary -> new device, E2EE chunks)
+    PROMPT> implement task T3.02 history bootstrap per offline-sync-local-store §6. code + tests only.
+[ ] T3.03  Per-device session fan-out + self-sync copies
+    PROMPT> implement task T3.03 multi-device fan-out per e2ee-design §2. code + tests only.
+[ ] T3.04  PTT (floor lua, WS frames, SFU perm flip, room UX)
+    PROMPT> implement task T3.04 ptt floor control per Docs/04-api/calls-ptt-api.md + DS&A §8 + valkey-keyspace §2. code + tests only.
+[ ] T3.05  Stories (per-story keys, audience snapshot, expiry, viewers)
+    PROMPT> implement task T3.05 stories per Docs/04-api/media-stories-api.md. code + tests only.
+[ ] T3.06  Encrypted backups (create/restore, argon2id key)
+    PROMPT> implement task T3.06 encrypted backups per FR-SYNC-04 + relay-model ADR-001. code + tests only.
+[ ] T3.07  Protocol tests P11 + multi-device suite
+    PROMPT> implement task T3.07 ptt fencing tests P11 (concurrent acquire, zombie fence) + device link/revoke suite. tests only.
+
+--- GATE P3: PTT p95 grant <= 200ms @ 200 listeners; link/revoke flows clean ---
+
+================================================================================
+ PHASE 4 — HARDENING & LAUNCH
+================================================================================
+
+[ ] T4.01  Admin console (SSO/OIDC, RBAC, report queue, actions, audit log)
+    PROMPT> implement task T4.01 admin console per HLD §15.6 + security-architecture §4. code + tests only.
+[ ] T4.02  Feature-flag management UI + kill switches
+    PROMPT> implement task T4.02 flag management per core-api-lld §5. code + tests only.
+[ ] T4.03  Analytics rollups + product dashboard + crash reporting
+    PROMPT> implement task T4.03 metadata-only analytics per HLD §18.1. code + config only.
+[ ] T4.04  Full load suite + durability auditor
+    PROMPT> implement task T4.04 load profiles (sustained/burst/reconnect-storm/fanout/inbox-soak/media/call) + the zero-loss auditor per Docs/10-testing/load-and-chaos-testing.md. tests only.
+[ ] T4.05  Chaos suite (always-on staging scenarios)
+    PROMPT> implement task T4.05 chaos scenarios per load-and-chaos-testing §2. config + tests only.
+[ ] T4.06  External pentest remediation window
+    NOTE:   human task — book the pentest (Docs/10-testing §3); Claude fixes findings: paste each finding as a prompt.
+[ ] T4.07  DR game day (RTO/RPO proof)
+    NOTE:   human task — run Docs/08-devops/disaster-recovery.md §4 drills; Claude writes any missing runbooks on request.
+[ ] T4.08  Runbooks + on-call setup
+    PROMPT> implement task T4.08 runbooks: one per paging alert in slos-alerts §2, into ops/runbooks/. docs only.
+[ ] T4.09  UAT matrix (FR x AC) + accessibility audit fixes
+    PROMPT> implement task T4.09 UAT: generate the FR-to-AC checklist from Docs/01-requirements + fix axe findings. mixed.
+[ ] T4.10  Offline-profile validation
+    PROMPT> implement task T4.10 offline profile: values overlays + ntfy/step-ca/email-otp wiring end to end per HLD §17.5. config + code.
+[ ] T4.11  Go-live checklist + staged launch
+    PROMPT> implement task T4.11 go-live: final checklist doc, version tag flow, staged rollout plan. docs only.
+
+--- GATE P4 / LAUNCH: SLOs green 2 consecutive weeks under synthetic load with chaos enabled ---
+
+================================================================================
+ AFTER LAUNCH (V3 backlog — run any as: "start V3 item <name>")
+================================================================================
+ tauri desktop · broadcast channels/communities · CDN media · MLS mega-groups ·
+ on-device AI (transcription/smart replies) · PSI contact discovery · streaming
+ PTT tier · progressive video · sealed sender · multi-region
+================================================================================
+ END — when every box above is [x], the project is production-launched.
+================================================================================

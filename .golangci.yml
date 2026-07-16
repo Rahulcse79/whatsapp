@@ -1,6 +1,5 @@
 # golangci-lint v2 config. Gates per Docs/13-standards/coding-standards.md.
 # The `standard` default set = errcheck, govet, ineffassign, staticcheck, unused.
-# Import-boundary enforcement (depguard rules per context) lands with task T0.06.
 version: "2"
 
 run:
@@ -10,6 +9,7 @@ linters:
   default: standard
   enable:
     - bodyclose
+    - depguard       # import-boundary rules (T0.06) — the seams ARE the architecture
     - exhaustive     # state-machine switches must be exhaustive
     - gosec
     - misspell
@@ -17,6 +17,60 @@ linters:
   settings:
     exhaustive:
       default-signifies-exhaustive: true
+    depguard:
+      rules:
+        # platform/ is cross-cutting infrastructure: it may NEVER import a
+        # business context (core-api-lld.md §1).
+        platform-imports-no-contexts:
+          files:
+            - "**/internal/platform/**"
+          deny:
+            - pkg: github.com/whatsapp-v2/server/internal/auth
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/keys
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/chat
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/groups
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/calls
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/ptt
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/stories
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/presence
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/contacts
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/admin
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/media
+              desc: platform must not import business contexts
+            - pkg: github.com/whatsapp-v2/server/internal/notify
+              desc: platform must not import business contexts
+        # domain/ subpackages are pure logic: no I/O drivers, no platform
+        # connectors, no gRPC — unit-testable in milliseconds by construction.
+        domain-stays-pure:
+          files:
+            - "**/internal/**/domain/**"
+          deny:
+            - pkg: github.com/jackc/pgx
+              desc: domain packages do no I/O — put this in adapters/
+            - pkg: github.com/redis/go-redis
+              desc: domain packages do no I/O — put this in adapters/
+            - pkg: github.com/nats-io
+              desc: domain packages do no I/O — put this in adapters/
+            - pkg: google.golang.org/grpc
+              desc: domain packages do no I/O — put this in adapters/
+            - pkg: github.com/whatsapp-v2/server/internal/platform/pg
+              desc: domain packages do no I/O — put this in adapters/
+            - pkg: github.com/whatsapp-v2/server/internal/platform/valkey
+              desc: domain packages do no I/O — put this in adapters/
+            - pkg: github.com/whatsapp-v2/server/internal/platform/natsx
+              desc: domain packages do no I/O — put this in adapters/
+            - pkg: net/http
+              desc: domain packages do no I/O — transport lives at the edge
   exclusions:
     rules:
       - path: _test\.go

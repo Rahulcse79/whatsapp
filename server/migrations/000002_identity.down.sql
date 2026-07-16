@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS otp_attempts;
+DROP TABLE IF EXISTS prekeys;
+DROP TABLE IF EXISTS signed_prekeys;
+DROP TABLE IF EXISTS devices;
+DROP TABLE IF EXISTS users;

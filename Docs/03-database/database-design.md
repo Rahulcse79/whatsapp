@@ -1,0 +1,187 @@
+# Database Design — PostgreSQL 17
+
+| Doc | Full logical schema, ERD, partitioning, indexes |
+|---|---|
+| Status | v1.0 |
+| Upstream | [/HLD.md](../../HLD.md) §7 |
+| Rules | UUIDv7 PKs; `created_at timestamptz` everywhere; **no plaintext content columns exist anywhere**; DDL below is the reviewable contract — migrations implement it expand–contract |
+
+## 1. ERD (logical)
+
+```
+users 1──∞ devices 1──∞ prekeys            users 1──∞ push_tokens (via devices)
+  │            └──∞ signed_prekeys           │
+  ├─∞ contacts (hashed)   ├─∞ blocks         ├─∞ stories 1──∞ story_views
+  │                       │                  └─∞ reports
+conversations 1──∞ message_inbox (per recipient DEVICE, ciphertext, TTL)
+  │
+groups 1──∞ group_members ∞──1 users;  groups 1──∞ invite_links
+media_objects (refcounted, TTL) ──► MinIO blobs (ciphertext)
+call_records (metadata, 90d) · audit_log (append-only) · feature_flags
+```
+
+## 2. Core tables (DDL-level contract)
+
+```sql
+-- ═══ identity ═══
+CREATE TABLE users (
+  id              uuid PRIMARY KEY,                 -- UUIDv7
+  phone_hash      bytea NOT NULL UNIQUE,            -- HMAC(pepper, E.164); pepper in KMS/SOPS
+  phone_enc       bytea,                            -- AES-GCM for SMS sending only; NULL in offline profile
+  username        citext UNIQUE,
+  display_name    text,
+  about           text,
+  avatar_ref      uuid REFERENCES media_objects(id),
+  privacy         jsonb NOT NULL DEFAULT '{}',      -- {last_seen,avatar,about,read_receipts}: everyone|contacts|nobody
+  pin_hash        text,                             -- Argon2id 2FA registration PIN
+  status          smallint NOT NULL DEFAULT 0,      -- 0 active, 1 suspended, 2 deleted(tombstone)
+  created_at      timestamptz NOT NULL DEFAULT now(),
+  deleted_at      timestamptz
+);
+
+CREATE TABLE devices (
+  id              uuid PRIMARY KEY,
+  user_id         uuid NOT NULL REFERENCES users(id),
+  is_primary      boolean NOT NULL,
+  platform        smallint NOT NULL,                -- ios|android|web
+  device_name     text,
+  identity_key    bytea NOT NULL,                   -- public Signal identity key
+  cert            bytea NOT NULL,                   -- signed by user's primary identity key
+  registered_at   timestamptz NOT NULL DEFAULT now(),
+  last_active_at  timestamptz,
+  revoked_at      timestamptz,
+  CONSTRAINT max_devices EXCLUDE USING gist (user_id WITH =) WHERE (false) -- enforced in app tx: 1 primary + ≤4 linked
+);
+CREATE UNIQUE INDEX one_primary_per_user ON devices(user_id) WHERE is_primary AND revoked_at IS NULL;
+
+-- ═══ signal key distribution (public material only) ═══
+CREATE TABLE signed_prekeys (
+  device_id uuid REFERENCES devices(id), key_id int, pubkey bytea NOT NULL,
+  signature bytea NOT NULL, created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (device_id, key_id));
+CREATE TABLE prekeys (         -- one-time prekeys, consumed on session setup
+  device_id uuid REFERENCES devices(id), key_id int, pubkey bytea NOT NULL,
+  consumed_at timestamptz, PRIMARY KEY (device_id, key_id));
+CREATE INDEX prekeys_available ON prekeys(device_id) WHERE consumed_at IS NULL;
+
+-- ═══ messaging ═══
+CREATE TABLE conversations (
+  id        uuid PRIMARY KEY,
+  kind      smallint NOT NULL,                      -- 1:1 | group
+  group_id  uuid REFERENCES groups(id),
+  seq       bigint NOT NULL DEFAULT 0,              -- per-conversation monotonic sequence
+  created_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE message_inbox (                        -- THE hot table; relay buffer, delete-on-ACK
+  recipient_device_id uuid NOT NULL,
+  seq                 bigint NOT NULL,              -- conversation seq
+  conversation_id     uuid NOT NULL,
+  msg_uuid            uuid NOT NULL,                -- client UUIDv7 (idempotency)
+  sender_device_id    uuid NOT NULL,
+  kind                smallint NOT NULL,            -- msg|overlay(edit/delete/react/pin)|group-event|receipt-carry
+  ciphertext          bytea NOT NULL,               -- sealed envelope incl. enc thumbnail if media
+  expires_at          timestamptz NOT NULL,         -- accept_time + 30d
+  PRIMARY KEY (recipient_device_id, conversation_id, seq, msg_uuid)
+) PARTITION BY HASH (recipient_device_id);          -- 16 hash partitions × monthly sub-partitions
+-- covering replay index (the resume path):
+CREATE INDEX inbox_replay ON message_inbox (recipient_device_id, seq) INCLUDE (conversation_id, ciphertext);
+CREATE INDEX inbox_expiry ON message_inbox (expires_at);   -- TTL sweeper; monthly partitions dropped whole
+
+-- ═══ groups ═══
+CREATE TABLE groups (
+  id uuid PRIMARY KEY, name text NOT NULL, description text,
+  avatar_ref uuid REFERENCES media_objects(id),
+  settings jsonb NOT NULL DEFAULT '{}',             -- {who_can_post, who_can_edit_info, announcements}
+  version bigint NOT NULL DEFAULT 0,                -- bumped on every membership/settings change
+  created_by uuid REFERENCES users(id), created_at timestamptz DEFAULT now());
+CREATE TABLE group_members (
+  group_id uuid REFERENCES groups(id), user_id uuid REFERENCES users(id),
+  role smallint NOT NULL DEFAULT 0,                 -- member|admin|owner
+  joined_at timestamptz DEFAULT now(), PRIMARY KEY (group_id, user_id));
+CREATE INDEX members_by_user ON group_members(user_id);
+CREATE TABLE invite_links (
+  token text PRIMARY KEY, group_id uuid REFERENCES groups(id),
+  created_by uuid, expires_at timestamptz, revoked_at timestamptz, max_uses int, uses int DEFAULT 0);
+
+-- ═══ media / stories ═══
+CREATE TABLE media_objects (
+  id uuid PRIMARY KEY, object_key text NOT NULL UNIQUE,   -- MinIO key
+  size_bytes bigint NOT NULL, content_hash bytea NOT NULL,
+  uploader_user_id uuid NOT NULL, refcount int NOT NULL DEFAULT 0,
+  upload_state smallint NOT NULL DEFAULT 0,               -- pending|complete|gc_candidate
+  created_at timestamptz DEFAULT now(), expires_at timestamptz);
+CREATE INDEX media_gc ON media_objects(expires_at) WHERE refcount = 0;
+
+CREATE TABLE stories (
+  id uuid PRIMARY KEY, author_id uuid REFERENCES users(id),
+  media_ref uuid REFERENCES media_objects(id),
+  audience_snapshot uuid[] NOT NULL,                       -- eligible user ids at post time
+  expires_at timestamptz NOT NULL,                         -- post + 24h, hard delete
+  created_at timestamptz DEFAULT now());
+CREATE TABLE story_views (story_id uuid, viewer_id uuid, viewed_at timestamptz DEFAULT now(),
+  PRIMARY KEY (story_id, viewer_id));
+
+-- ═══ contacts / social ═══
+CREATE TABLE contacts (owner_id uuid, contact_phone_hash bytea, matched_user_id uuid,
+  favorite boolean DEFAULT false, PRIMARY KEY (owner_id, contact_phone_hash));
+CREATE TABLE blocks (blocker_id uuid, blocked_id uuid, created_at timestamptz DEFAULT now(),
+  PRIMARY KEY (blocker_id, blocked_id));
+
+-- ═══ calls / push ═══
+CREATE TABLE call_records (
+  id uuid PRIMARY KEY, room_id text NOT NULL, kind smallint,          -- voice|video|ptt
+  initiator uuid NOT NULL, participants uuid[] NOT NULL,
+  started_at timestamptz, ended_at timestamptz,
+  outcome smallint NOT NULL);                                          -- completed|missed|declined|failed
+CREATE INDEX calls_by_user ON call_records USING gin(participants);   -- 90d retention job
+CREATE TABLE push_tokens (device_id uuid PRIMARY KEY REFERENCES devices(id),
+  provider smallint NOT NULL,                                          -- fcm|apns|apns_voip|ntfy|webpush
+  token text NOT NULL, updated_at timestamptz DEFAULT now(), failing_since timestamptz);
+
+-- ═══ trust & safety / admin ═══
+CREATE TABLE reports (id uuid PRIMARY KEY, reporter_id uuid, target_user_id uuid,
+  reason smallint, note text, disclosed_ciphertext bytea,             -- ONLY with reporter consent
+  state smallint DEFAULT 0, created_at timestamptz DEFAULT now());
+CREATE TABLE audit_log (id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  actor uuid NOT NULL, action text NOT NULL, target uuid, reason text,
+  at timestamptz NOT NULL DEFAULT now());                              -- append-only: no UPDATE/DELETE grants to anyone
+CREATE TABLE feature_flags (flag text PRIMARY KEY, rules jsonb NOT NULL, updated_by uuid, updated_at timestamptz);
+
+-- ═══ abuse control ═══
+CREATE TABLE otp_attempts (phone_hash bytea, at timestamptz, success boolean,
+  ip inet, PRIMARY KEY (phone_hash, at));                              -- 10-min TTL sweep; long windows in Valkey
+```
+
+## 3. Partitioning & lifecycle
+
+| Table | Strategy | Purge |
+|---|---|---|
+| `message_inbox` | HASH(recipient_device_id) ×16, then RANGE by month | ACK-delete (hot path) + monthly `DROP PARTITION` (cold) |
+| `call_records` | monthly RANGE | drop partitions > 90 d |
+| `stories` | none (small) | hard-delete job hourly + MinIO lifecycle backstop |
+| `otp_attempts` | none | 10-min sweeper |
+| `audit_log` | yearly RANGE | never purged; archived |
+
+## 4. Index review (every index justifies itself)
+
+| Index | Serves | Verdict |
+|---|---|---|
+| `inbox_replay` covering | resume/sync — the system's most critical read | required |
+| `one_primary_per_user` partial unique | device invariants | required |
+| `prekeys_available` partial | bundle fetch (hot on new sessions) | required |
+| `members_by_user` | "my groups", fan-out membership loads | required |
+| `calls_by_user` GIN | call history queries | acceptable (low write rate) |
+| `users(username)` via UNIQUE citext | username search (+ separate `pg_trgm` GIN for fuzzy) | required |
+| trigram GIN on `groups.name` | metadata search (ADR-005) | required |
+
+**Banned:** indexes on `message_inbox` beyond the two listed (write amplification on the hot path needs justification per addition).
+
+## 5. Access & pooling
+
+- **PgBouncer transaction pooling from day one**; per-deployable pool budgets (bulkhead — see design-patterns doc).
+- Roles: `core_api_rw` (app tables), `media_rw` (`media_objects`), `notify_rw` (`push_tokens`), `admin_ro`+`audit_append`. `audit_log`: INSERT-only for every role — revoke UPDATE/DELETE at the grant level.
+- Read replicas take: prekey bundle fetches, profile reads, group metadata reads (lag-tolerant paths only; receipts/inbox never).
+
+## 6. What is deliberately absent
+
+No `messages` table. No content columns. No plaintext phone numbers in indexes (`phone_hash` only). No foreign key from `message_inbox` to `users` (partition-locality + volume; integrity owned by accept-path validation). No triggers on the hot table (explicit app-side writes only).

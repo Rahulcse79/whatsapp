@@ -156,6 +156,20 @@ CREATE TABLE feature_flags (flag text PRIMARY KEY, rules jsonb NOT NULL, updated
 -- ═══ abuse control ═══
 CREATE TABLE otp_attempts (phone_hash bytea, at timestamptz, success boolean,
   ip inet, PRIMARY KEY (phone_hash, at));                              -- 10-min TTL sweep; long windows in Valkey
+
+-- ═══ auth runtime state (added v1.2 of this doc, migration 000009) ═══
+CREATE TABLE otp_challenges (                    -- OTP state survives pod death (core-api-lld §4)
+  id uuid PRIMARY KEY, phone_hash bytea, code_hash bytea, salt bytea,  -- code stored ONLY as HMAC(salt, code)
+  channel smallint, attempts smallint DEFAULT 0,                        -- max 5
+  verified_at timestamptz, pin_pending boolean DEFAULT false,
+  created_at timestamptz, expires_at timestamptz);                      -- 10-min TTL
+
+CREATE TABLE sessions (                          -- refresh rotation + reuse detection (§15.2 HLD)
+  id uuid PRIMARY KEY, device_id uuid REFERENCES devices(id),
+  refresh_hash bytea UNIQUE,                     -- SHA-256 of current refresh token
+  rotated_from bytea,                            -- previous hash: presenting it again = reuse → session killed
+  created_at timestamptz, last_used_at timestamptz,
+  expires_at timestamptz, revoked_at timestamptz);
 ```
 
 ## 3. Partitioning & lifecycle

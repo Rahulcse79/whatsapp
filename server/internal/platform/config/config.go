@@ -31,6 +31,19 @@ type NATS struct {
 	URL string
 }
 
+// Auth configures the auth context: secrets, token lifetimes, OTP channel.
+type Auth struct {
+	// PhonePepper keys the HMAC over phone numbers (threat-model T11).
+	PhonePepper string
+	// JWTEd25519Seed is a base64 32-byte seed; empty = ephemeral key
+	// (dev only — restarts invalidate outstanding tokens).
+	JWTEd25519Seed string
+	AccessTTL      time.Duration
+	RefreshTTL     time.Duration
+	// OTPChannel: mock (dev) | sms | email (offline profile, HLD §17.5).
+	OTPChannel string
+}
+
 // Config is the common configuration shared by all deployables.
 type Config struct {
 	// Service is the deployable name (core-api, ws-gateway, …); set by main,
@@ -44,6 +57,7 @@ type Config struct {
 	PG     PG
 	Valkey Valkey
 	NATS   NATS
+	Auth   Auth
 }
 
 // Load reads configuration from the environment, applying dev defaults.
@@ -71,6 +85,13 @@ func Load(service string) (*Config, error) {
 		NATS: NATS{
 			URL: getStr("WA_NATS_URL", "nats://localhost:4222"),
 		},
+		Auth: Auth{
+			PhonePepper:    getStr("WA_PHONE_PEPPER", devPepper),
+			JWTEd25519Seed: os.Getenv("WA_JWT_ED25519_SEED"),
+			AccessTTL:      getDur("WA_ACCESS_TTL", 10*time.Minute, &errs),
+			RefreshTTL:     getDur("WA_REFRESH_TTL", 90*24*time.Hour, &errs),
+			OTPChannel:     getStr("WA_OTP_CHANNEL", "mock"),
+		},
 	}
 
 	if service == "" {
@@ -84,9 +105,29 @@ func Load(service string) (*Config, error) {
 	if c.PG.MinConns > c.PG.MaxConns {
 		errs = append(errs, fmt.Errorf("config: WA_PG_MIN_CONNS (%d) exceeds WA_PG_MAX_CONNS (%d)", c.PG.MinConns, c.PG.MaxConns))
 	}
+	switch c.Auth.OTPChannel {
+	case "mock", "sms", "email":
+	default:
+		errs = append(errs, fmt.Errorf("config: WA_OTP_CHANNEL %q is not one of mock|sms|email", c.Auth.OTPChannel))
+	}
+	// Production must never run on development secrets.
+	if c.Env == "prod" {
+		if c.Auth.PhonePepper == devPepper {
+			errs = append(errs, errors.New("config: WA_PHONE_PEPPER must be set in prod"))
+		}
+		if c.Auth.JWTEd25519Seed == "" {
+			errs = append(errs, errors.New("config: WA_JWT_ED25519_SEED must be set in prod"))
+		}
+		if c.Auth.OTPChannel == "mock" {
+			errs = append(errs, errors.New("config: WA_OTP_CHANNEL=mock is not allowed in prod"))
+		}
+	}
 
 	return c, errors.Join(errs...)
 }
+
+// devPepper is intentionally obvious so it can never be mistaken for a secret.
+const devPepper = "dev-pepper-not-for-production"
 
 func getStr(key, def string) string {
 	if v := os.Getenv(key); v != "" {

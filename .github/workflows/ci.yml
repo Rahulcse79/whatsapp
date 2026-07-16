@@ -155,6 +155,17 @@ jobs:
             "SELECT count(*) FROM pg_inherits WHERE inhparent = 'message_inbox'::regclass" \
             | grep -qx '16'
 
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache-dependency-path: server/go.sum
+
+      - name: Adapter integration tests (against the migrated DB)
+        working-directory: server
+        env:
+          WA_TEST_PG_DSN: postgres://whatsapp:ci@localhost:5432/whatsapp?sslmode=disable
+        run: go test ./internal/.../adapters/... -run Integration -v
+
   # ── Docs-contract gate: interface changes require their doc (PRs only) ───
   docs-contract:
     name: docs contract

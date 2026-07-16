@@ -30,6 +30,10 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	t.Setenv("WA_PG_MAX_CONNS", "32")
 	t.Setenv("WA_PG_STATEMENT_TIMEOUT", "250ms")
 	t.Setenv("WA_VALKEY_ADDR", "valkey.data:6379")
+	// prod requires real auth secrets (see TestLoad_ProdSecretGuards).
+	t.Setenv("WA_PHONE_PEPPER", "real-pepper")
+	t.Setenv("WA_JWT_ED25519_SEED", "c2VlZC1zZWVkLXNlZWQtc2VlZC1zZWVkLXNlZWQtMTI")
+	t.Setenv("WA_OTP_CHANNEL", "sms")
 
 	c, err := Load("ws-gateway")
 	if err != nil {
@@ -38,6 +42,23 @@ func TestLoad_EnvOverrides(t *testing.T) {
 	if c.Env != "prod" || c.PG.MaxConns != 32 ||
 		c.PG.StatementTimeout != 250*time.Millisecond || c.Valkey.Addr != "valkey.data:6379" {
 		t.Errorf("overrides not applied: %+v", c)
+	}
+	if c.Auth.OTPChannel != "sms" || c.Auth.AccessTTL != 10*time.Minute {
+		t.Errorf("auth config wrong: %+v", c.Auth)
+	}
+}
+
+func TestLoad_ProdSecretGuards(t *testing.T) {
+	t.Setenv("WA_ENV", "prod")
+	// No pepper, no seed, mock channel: all three must be reported.
+	_, err := Load("core-api")
+	if err == nil {
+		t.Fatal("prod with dev secrets must fail")
+	}
+	for _, want := range []string{"WA_PHONE_PEPPER", "WA_JWT_ED25519_SEED", "WA_OTP_CHANNEL"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error missing %s: %v", want, err)
+		}
 	}
 }
 

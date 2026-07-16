@@ -28,14 +28,12 @@ LEGEND:  [x] done   [>] next up   [ ] pending
 [x] T0.06  Import-boundary lint + PR template + docs-contract gate
 [x] T0.07  DB migrations 000001–000008 (partitioned inbox; CI round-trip)
 
-[>] T0.08  Auth context — OTP + JWT + 2FA PIN
-    PROMPT> implement task T0.08 auth context: OTP request/verify with pluggable
-            sms/email/mock drivers, JWT access (10min) + rotating refresh with
-            reuse detection, Argon2id 2FA PIN, REST handlers. code + tests only.
-    DOCS:   Docs/04-api/auth-users-api.md · Docs/06-security/security-architecture.md §2
-    DONE:   unit+adapter tests green in CI; OTP rate limits enforced via GCRA
+[x] T0.08  Auth context — OTP + JWT + 2FA PIN
+           (domain otp/pin/token + EdDSA jwt + service + pg adapters + mock/sms/email
+            senders + REST handlers; migration 000009; adapter tests run in CI
+            migrations job against the migrated DB)
 
-[ ] T0.09  Devices + keys contexts
+[>] T0.09  Devices + keys contexts
     PROMPT> implement task T0.09 devices and keys contexts: device registry with
             single-primary invariant, QR link/approve endpoints, atomic revocation,
             prekey publish/fetch with one-time consumption in tx. code + tests only.

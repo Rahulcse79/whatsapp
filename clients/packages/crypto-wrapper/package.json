@@ -1,0 +1,12 @@
+{
+  "name": "@wa/crypto-wrapper",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The ONLY package that touches libsignal (coding standard). Framework-free; platform keystores are injected via adapter interfaces.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  }
+}

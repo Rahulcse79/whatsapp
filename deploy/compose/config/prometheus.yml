@@ -1,0 +1,19 @@
+# Dev Prometheus config. Deployable scrape targets are added as the services
+# gain /metrics endpoints (T0.05+). Catalog: Docs/09-observability/.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: nats
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["nats:8222"]
+
+  # - job_name: core-api        # host.docker.internal:8080 once T0.05 lands
+  # - job_name: ws-gateway
+  # - job_name: media-svc
+  # - job_name: notification-svc

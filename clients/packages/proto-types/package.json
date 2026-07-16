@@ -1,0 +1,11 @@
+{
+  "name": "@wa/proto-types",
+  "version": "0.0.0",
+  "private": true,
+  "description": "buf-generated TypeScript types for WS frames, events, and API contracts. Never hand-edited — regenerate with `make proto`.",
+  "type": "module",
+  "main": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p ."
+  }
+}

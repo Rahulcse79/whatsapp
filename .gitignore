@@ -1,0 +1,35 @@
+# --- Go ---
+server/bin/
+*.test
+*.out
+coverage/
+
+# --- Node / clients ---
+node_modules/
+dist/
+build/
+.expo/
+*.tsbuildinfo
+
+# --- Env & secrets (SOPS-encrypted files ARE committed; raw secrets never) ---
+.env
+.env.*
+!.env.example
+*.agekey
+*.pem
+*.p8
+
+# --- Terraform ---
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# --- IDE / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# --- Local dev data ---
+deploy/compose/data/

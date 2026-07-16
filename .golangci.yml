@@ -1,0 +1,26 @@
+# Lint gates per Docs/13-standards/coding-standards.md.
+# Import-boundary enforcement (depguard rules per context) lands with task T0.06.
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - gosec
+    - exhaustive     # state-machine switches must be exhaustive
+    - sqlclosecheck
+    - bodyclose
+    - unused
+    - ineffassign
+    - misspell
+
+linters-settings:
+  exhaustive:
+    default-signifies-exhaustive: true
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters: [gosec]

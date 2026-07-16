@@ -1,0 +1,19 @@
+syntax = "proto3";
+
+package whatsapp.common.v1;
+
+option go_package = "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/common/v1;commonv1";
+
+// Error is the uniform error envelope carried by REST bodies and WS error
+// frames. Contract: Docs/04-api/api-standards.md §2. Codes are stable API
+// surface: append-only.
+message Error {
+  string code = 1;           // e.g. "RATE_LIMITED", "AUTH_TOKEN_EXPIRED"
+  string message = 2;        // developer-facing; never shown raw to users
+  bool retryable = 3;        // explicit — clients never guess from status alone
+  uint64 retry_after_ms = 4; // set when retryable with a mandated backoff
+  string trace_id = 5;
+}
+
+// Full WS frame schema (Hello, MsgSend, InboxBatch, Receipt, Ptt*, Call*…)
+// lands with task T0.02 per Docs/04-api/websocket-protocol.md.

@@ -1,0 +1,12 @@
+# Codegen: Go into server/internal/proto/gen, TypeScript into the shared
+# proto-types client package. Run via `make proto`.
+version: v2
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: ../internal/proto/gen
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: ../internal/proto/gen
+    opt: paths=source_relative
+  - remote: buf.build/bufbuild/es
+    out: ../../clients/packages/proto-types/src/gen

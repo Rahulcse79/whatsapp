@@ -67,10 +67,17 @@ CREATE INDEX prekeys_available ON prekeys(device_id) WHERE consumed_at IS NULL;
 -- ═══ messaging ═══
 CREATE TABLE conversations (
   id        uuid PRIMARY KEY,
-  kind      smallint NOT NULL,                      -- 1:1 | group
+  kind      smallint NOT NULL,                      -- 0 direct | 1 group
   group_id  uuid REFERENCES groups(id),
+  direct_key text,                                  -- (migration 000011) sorted user pair for 1:1 dedup; UNIQUE where not null
   seq       bigint NOT NULL DEFAULT 0,              -- per-conversation monotonic sequence
   created_at timestamptz NOT NULL DEFAULT now());
+
+CREATE TABLE conversation_members (                  -- (migration 000011) membership for direct convs; groups use group_members
+  conversation_id uuid REFERENCES conversations(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES users(id) ON DELETE CASCADE,
+  added_at timestamptz DEFAULT now(),
+  PRIMARY KEY (conversation_id, user_id));           -- recipient resolution joins this to devices in the accept tx
 
 CREATE TABLE message_inbox (                        -- THE hot table; relay buffer, delete-on-ACK
   recipient_device_id uuid NOT NULL,

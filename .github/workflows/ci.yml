@@ -104,7 +104,7 @@ jobs:
       - name: Tests
         run: pnpm -r test
 
-  # ── Migrations: up → down-all → up against real PostgreSQL 17 ────────────
+  # ── Migrations round-trip + adapter integration tests (PostgreSQL 17 + Valkey) ─
   migrations:
     name: migrations (postgres 17)
     runs-on: ubuntu-latest
@@ -119,6 +119,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      valkey:
+        image: valkey/valkey:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "valkey-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
@@ -160,10 +169,11 @@ jobs:
           go-version: "1.25"
           cache-dependency-path: server/go.sum
 
-      - name: Adapter integration tests (against the migrated DB)
+      - name: Adapter integration tests (against the migrated DB + Valkey)
         working-directory: server
         env:
           WA_TEST_PG_DSN: postgres://whatsapp:ci@localhost:5432/whatsapp?sslmode=disable
+          WA_TEST_VALKEY_ADDR: localhost:6379
         run: go test ./internal/.../adapters/... -run Integration -v
 
   # ── Docs-contract gate: interface changes require their doc (PRs only) ───

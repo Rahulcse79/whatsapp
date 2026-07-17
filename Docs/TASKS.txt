@@ -46,14 +46,15 @@ LEGEND:  [x] done   [>] next up   [ ] pending
             wired w/ graceful drain. Interim JSON handshake frames — switch to protobuf
             wsv1 at T0.12. NOTE: proto-gen Go types still not wired into build.)
 
-[>] T0.11  Chat accept pipeline (THE hot path)
-    PROMPT> implement task T0.11 chat accept pipeline in core-api: gRPC AcceptMessage
-            with valkey dedupe (fail closed), per-conversation seq in tx, batched
-            inbox insert, overlay window validation, MsgAck. code + tests only.
-    DOCS:   Docs/05-services/core-api-lld.md §2 · Docs/02-architecture/data-structures-algorithms.md §1–4,§6
-    DONE:   duplicate MsgSend returns identical ack (test); EXPLAIN note in PR
+[x] T0.11  Chat accept pipeline (THE hot path)
+           (internal/chat: Accept service — validate → dedupe (fail-closed, identical
+            ack via Valkey Lua claim/commit) → per-conversation seq tx + batched inbox
+            fan-out (members' active devices minus sender device) → ack; overlay windows
+            anchored to the target's UUIDv7 timestamp [no extra storage]; GetOrCreateDirect.
+            Migration 000011 conversation_members+direct_key. Valkey added to CI integration
+            job. gRPC/protobuf binding deferred to T0.12.)
 
-[ ] T0.12  NATS delivery path
+[>] T0.12  NATS delivery path (+ wire protobuf codegen into CI — first proto-gen use)
     PROMPT> implement task T0.12 delivery: publish Delivery to dev.{device}.out after
             inbox commit, gateway pull consumer with per-device flow control and
             write-pump backpressure (1MB high-water). code + tests only.

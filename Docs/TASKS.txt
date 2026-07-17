@@ -54,14 +54,20 @@ LEGEND:  [x] done   [>] next up   [ ] pending
             Migration 000011 conversation_members+direct_key. Valkey added to CI integration
             job. gRPC/protobuf binding deferred to T0.12.)
 
-[>] T0.12  NATS delivery path (+ wire protobuf codegen into CI — first proto-gen use)
-    PROMPT> implement task T0.12 delivery: publish Delivery to dev.{device}.out after
-            inbox commit, gateway pull consumer with per-device flow control and
-            write-pump backpressure (1MB high-water). code + tests only.
-    DOCS:   Docs/04-api/internal-events-nats.md · Docs/05-services/ws-gateway-lld.md §2
-    DONE:   slow-consumer test: backlog stays in NATS/inbox, not pod memory
+[x] T0.12  NATS delivery path + protobuf codegen wired into the build
+           (chat: Publisher port; NATS adapter publishes events.v1.Delivery on
+            dev.{device}.out after inbox commit [publish failure = latency, never
+            loss — inbox is truth]; gateway: per-connection DeliverySource sub,
+            bounded outbound queue + single-writer pump, slow consumer → 1013
+            close + resume replay [backlog stays out of pod memory — test],
+            delivery transcoded to wsv1 InboxBatch frames; whole WS protocol now
+            binary wsv1 [interim JSON codec deleted]; buf generate precedes every
+            Go compile in CI [backend + migrations jobs], gen/ gitignored, grpc +
+            protobuf deps added. DIVERGENCE: dev.*.out rides core NATS, not the
+            DELIVERY JetStream stream — noted in internal-events-nats.md §1;
+            JetStream arrives with PUSH at T0.16.)
 
-[ ] T0.13  Resume & replay
+[>] T0.13  Resume & replay
     PROMPT> implement task T0.13 session resume: resume tokens, PullInbox streaming
             replay by cursors, ClientAck cumulative delete (AckDelivered), live/replay
             interleave rule per conversation. code + tests only.

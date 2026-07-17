@@ -111,8 +111,13 @@ func TestIntegration_Accept_SeqAndFanout(t *testing.T) {
 	}
 	// Recipients = userB's 3 devices + userA's OTHER device (self-sync) = 4.
 	wantRecipients := (len(devsB)) + (len(devsA) - 1)
-	if res.Seq != 1 || res.RecipientCount != wantRecipients {
-		t.Fatalf("seq=%d recipients=%d, want 1 and %d", res.Seq, res.RecipientCount, wantRecipients)
+	if res.Seq != 1 || len(res.RecipientDeviceIDs) != wantRecipients {
+		t.Fatalf("seq=%d recipients=%d, want 1 and %d", res.Seq, len(res.RecipientDeviceIDs), wantRecipients)
+	}
+	for _, did := range res.RecipientDeviceIDs {
+		if did == sender {
+			t.Fatal("sender device listed as a recipient")
+		}
 	}
 
 	// The sending device must NOT receive its own message.

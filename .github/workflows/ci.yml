@@ -27,6 +27,16 @@ jobs:
           go-version: "1.25"
           cache-dependency-path: server/go.sum
 
+      # Generated code (internal/proto/gen) is never committed: every Go
+      # compile is preceded by codegen, so drift is impossible (T0.12).
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      - name: Generate protobuf code
+        working-directory: server/proto
+        run: buf generate
+
       - name: Build all deployables
         run: go build ./...
 
@@ -168,6 +178,16 @@ jobs:
         with:
           go-version: "1.25"
           cache-dependency-path: server/go.sum
+
+      # Adapters import generated protobuf types; regenerate before compiling
+      # (gen/ is never committed — see the backend job).
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      - name: Generate protobuf code
+        working-directory: server/proto
+        run: buf generate
 
       - name: Adapter integration tests (against the migrated DB + Valkey)
         working-directory: server

@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,8 +11,10 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/whatsapp-v2/server/internal/auth"
+	wsv1 "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/ws/v1"
 )
 
 type denyAuthz struct{}
@@ -21,6 +22,11 @@ type denyAuthz struct{}
 func (denyAuthz) Authorize(context.Context, auth.Identity) (bool, error) { return false, nil }
 
 func newTestServer(t *testing.T, authz Authorizer) (*httptest.Server, *auth.TokenIssuer, *Server) {
+	t.Helper()
+	return newTestServerWithDelivery(t, authz, nil)
+}
+
+func newTestServerWithDelivery(t *testing.T, authz Authorizer, delivery DeliverySource) (*httptest.Server, *auth.TokenIssuer, *Server) {
 	t.Helper()
 	issuer, err := auth.NewEphemeralIssuer(10 * time.Minute)
 	if err != nil {
@@ -30,6 +36,7 @@ func newTestServer(t *testing.T, authz Authorizer) (*httptest.Server, *auth.Toke
 		Verifier:   issuer,
 		Authorizer: authz,
 		Routes:     NewMemoryRouteStore(),
+		Delivery:   delivery,
 		PodID:      "pod-test",
 		Log:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -58,27 +65,53 @@ func dial(t *testing.T, hs *httptest.Server) *websocket.Conn {
 	return c
 }
 
-func sendHello(t *testing.T, c *websocket.Conn, token string) {
+// writeFrame marshals and sends one binary protobuf frame (the client side
+// of the wire contract).
+func writeFrame(t *testing.T, c *websocket.Conn, f *wsv1.Frame) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	data, _ := json.Marshal(helloFrame{Type: frameHello, AccessJWT: token})
-	if err := c.Write(ctx, websocket.MessageText, data); err != nil {
-		t.Fatalf("write hello: %v", err)
+	data, err := proto.Marshal(f)
+	if err != nil {
+		t.Fatalf("marshal frame: %v", err)
+	}
+	if err := c.Write(ctx, websocket.MessageBinary, data); err != nil {
+		t.Fatalf("write frame: %v", err)
 	}
 }
 
-func expectAck(t *testing.T, c *websocket.Conn) helloAckFrame {
+// readServerFrame reads and decodes one binary protobuf frame.
+func readServerFrame(t *testing.T, c *websocket.Conn) *wsv1.Frame {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	_, data, err := c.Read(ctx)
+	typ, data, err := c.Read(ctx)
 	if err != nil {
-		t.Fatalf("expected hello_ack, got read error: %v (close=%d)", err, websocket.CloseStatus(err))
+		t.Fatalf("expected frame, got read error: %v (close=%d)", err, websocket.CloseStatus(err))
 	}
-	var ack helloAckFrame
-	if err := json.Unmarshal(data, &ack); err != nil || ack.Type != frameHelloAck {
-		t.Fatalf("not a hello_ack: %s", data)
+	if typ != websocket.MessageBinary {
+		t.Fatalf("frame message type = %d, want binary", typ)
+	}
+	f := &wsv1.Frame{}
+	if err := proto.Unmarshal(data, f); err != nil {
+		t.Fatalf("not a protobuf frame: %v", err)
+	}
+	return f
+}
+
+func sendHello(t *testing.T, c *websocket.Conn, token string) {
+	t.Helper()
+	writeFrame(t, c, &wsv1.Frame{
+		Body: &wsv1.Frame_Hello{Hello: &wsv1.Hello{AccessJwt: token}},
+	})
+}
+
+func expectAck(t *testing.T, c *websocket.Conn) *wsv1.HelloAck {
+	t.Helper()
+	f := readServerFrame(t, c)
+	ack := f.GetHelloAck()
+	if ack == nil {
+		t.Fatalf("not a hello_ack: %v", f)
 	}
 	return ack
 }
@@ -107,8 +140,8 @@ func TestHandshake_Success(t *testing.T) {
 	c := dial(t, hs)
 	sendHello(t, c, tok)
 	ack := expectAck(t, c)
-	if ack.SessionID != "sess1" {
-		t.Fatalf("ack session = %q, want sess1", ack.SessionID)
+	if ack.GetSessionId() != "sess1" {
+		t.Fatalf("ack session = %q, want sess1", ack.GetSessionId())
 	}
 	if _, ok := s.Registry().Get("d1"); !ok {
 		t.Fatal("connection not in registry after handshake")
@@ -132,11 +165,22 @@ func TestHandshake_Revoked(t *testing.T) {
 }
 
 func TestHandshake_MalformedHello(t *testing.T) {
+	// A text message is a protocol violation — frames are binary protobuf.
 	hs, _, _ := newTestServer(t, AllowAll{})
 	c := dial(t, hs)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	_ = c.Write(ctx, websocket.MessageText, []byte(`{"type":"not-hello"}`))
+	expectClose(t, c, CloseBadHandshake)
+}
+
+func TestHandshake_WrongFirstFrame(t *testing.T) {
+	// A well-formed frame that is not a hello must not pass the handshake.
+	hs, _, _ := newTestServer(t, AllowAll{})
+	c := dial(t, hs)
+	writeFrame(t, c, &wsv1.Frame{
+		Body: &wsv1.Frame_Ping{Ping: &wsv1.Ping{TsMs: 1}},
+	})
 	expectClose(t, c, CloseBadHandshake)
 }
 

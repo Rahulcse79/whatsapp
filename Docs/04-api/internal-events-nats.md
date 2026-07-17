@@ -7,6 +7,18 @@
 
 ## 1. Streams & subjects
 
+> **Implemented divergence (T0.12):** `dev.{device_id}.out` currently rides
+> **core NATS pub/sub**, not the `DELIVERY` JetStream stream. Durability is
+> already owned by the PG inbox + resume replay — a push missed while a device
+> is between subscriptions heals by replay — so per-device JetStream consumers
+> add cost (one consumer per connected device at 20k concurrent) without
+> adding a guarantee. The gateway consumer contract in §2 is therefore, today,
+> a plain per-connection subscription: no broker ack, flow control by the
+> bounded write-pump queue (slow consumer → close 1013 → client resumes).
+> The table below stays as the target topology; JetStream lands first for
+> `PUSH` (T0.16), which genuinely needs redelivery. Producer/consumer code:
+> `server/internal/chat/adapters/nats.go`, `server/internal/gateway/adapters/nats.go`.
+
 | Stream | Subjects | Retention | Purpose |
 |---|---|---|---|
 | `DELIVERY` | `dev.{device_id}.out` | 24 h / 1M msgs per subject cap | Live delivery to the gateway holding the device |
@@ -35,7 +47,7 @@
 
 | Event | Emitted when | Key fields | Consumers |
 |---|---|---|---|
-| `msg.accepted` → `dev.*.out` | inbox row committed | conv, seq, msg_uuid, ciphertext ref | gateways |
+| `msg.accepted` → `dev.*.out` | inbox row committed | `events.v1.Delivery`: recipient_device_id + full `wsv1.InboxItem` (conv, seq, msg_uuid, sealed envelope) | gateways |
 | `push.dispatch` | recipient has no live route | device, kind(msg/call/voip), collapse_key | notification-svc |
 | `group.member_added/removed/role_changed` | membership tx commits | group, version, actor, subject | fan-out cache, clients (as group_event), key-rotation trigger |
 | `call.room_created/ended` | call-ctl / LiveKit webhook | room, participants, outcome | call history, analytics |

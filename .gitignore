@@ -4,6 +4,11 @@ server/bin/
 *.out
 coverage/
 
+# --- Generated protobuf code (never committed: `make proto` locally; CI runs
+# --- buf generate before every Go compile — ci.yml backend/migrations jobs) ---
+server/internal/proto/gen/
+clients/packages/proto-types/src/gen/
+
 # --- Node / clients ---
 node_modules/
 dist/

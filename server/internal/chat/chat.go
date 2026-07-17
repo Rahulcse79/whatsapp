@@ -5,8 +5,9 @@
 // Docs/02-architecture/data-structures-algorithms.md §1–4, §6.
 package chat
 
-// MsgKind mirrors the wire MsgKind enum (websocket-protocol.md). Defined here
-// as a domain type; the protobuf binding lands with T0.12.
+// MsgKind mirrors the wire MsgKind enum (websocket-protocol.md) value for
+// value — the NATS adapter casts to wsv1.MsgKind on encode. Defined here as a
+// domain type so this package stays free of generated code.
 type MsgKind int16
 
 const (
@@ -53,4 +54,20 @@ type AcceptResult struct {
 	// Deduped is true when this was a duplicate of an already-accepted send;
 	// the seq is the original's (identical ack).
 	Deduped bool
+}
+
+// InboxItem is one delivery unit: what a recipient device receives, both on
+// the live path (NATS dev.{id}.out) and on inbox replay (T0.13). Mirrors the
+// wsv1.InboxItem wire message; the NATS adapter owns the protobuf binding so
+// this package stays free of generated code.
+type InboxItem struct {
+	ConversationID string
+	Seq            int64
+	MsgUUID        string
+	SenderUserID   string
+	SenderDeviceID string
+	Kind           MsgKind
+	OverlayTarget  string // original msg_uuid for overlay kinds; empty otherwise
+	Ciphertext     []byte // sealed envelope; server-opaque
+	AcceptedAtMS   int64
 }

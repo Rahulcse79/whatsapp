@@ -118,7 +118,7 @@ func (s *Store) Accept(ctx context.Context, p chat.AcceptParams) (chat.StoreResu
 	if err := tx.Commit(ctx); err != nil {
 		return chat.StoreResult{}, fmt.Errorf("commit accept tx: %w", err)
 	}
-	return chat.StoreResult{Seq: seq, RecipientCount: len(deviceIDs)}, nil
+	return chat.StoreResult{Seq: seq, RecipientDeviceIDs: deviceIDs}, nil
 }
 
 // GetOrCreateDirect returns the id of the 1:1 conversation between two users,

@@ -2,7 +2,6 @@ package gateway
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"time"
 
@@ -29,7 +28,7 @@ type Authorizer interface {
 }
 
 // AllowAll authorizes every identity — the interim default until the
-// core-api session-check gRPC lands (T0.11/T0.12).
+// core-api session-check gRPC lands (T0.13, with the inbound frame routing).
 type AllowAll struct{}
 
 func (AllowAll) Authorize(context.Context, auth.Identity) (bool, error) { return true, nil }
@@ -40,6 +39,7 @@ type Server struct {
 	verifier auth.TokenVerifier
 	authz    Authorizer
 	routes   RouteStore
+	delivery DeliverySource // nil = no live delivery (some tests)
 	podID    string
 	routeTTL time.Duration
 	log      *slog.Logger
@@ -55,6 +55,7 @@ type Config struct {
 	Verifier       auth.TokenVerifier
 	Authorizer     Authorizer
 	Routes         RouteStore
+	Delivery       DeliverySource
 	PodID          string
 	RouteTTL       time.Duration
 	Log            *slog.Logger
@@ -77,8 +78,8 @@ func NewServer(cfg Config) *Server {
 	}
 	return &Server{
 		reg: cfg.Registry, verifier: cfg.Verifier, authz: cfg.Authorizer,
-		routes: cfg.Routes, podID: cfg.PodID, routeTTL: cfg.RouteTTL,
-		log: cfg.Log, allowedOrigins: cfg.AllowedOrigins,
+		routes: cfg.Routes, delivery: cfg.Delivery, podID: cfg.PodID,
+		routeTTL: cfg.RouteTTL, log: cfg.Log, allowedOrigins: cfg.AllowedOrigins,
 	}
 }
 
@@ -106,7 +107,10 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	c := &Conn{deviceID: ident.DeviceID, userID: ident.UserID, sessionID: ident.SessionID, ws: ws}
+	c := &Conn{
+		deviceID: ident.DeviceID, userID: ident.UserID, sessionID: ident.SessionID,
+		ws: ws, outbound: make(chan []byte, outboundQueueSize),
+	}
 	if displaced := s.reg.Add(c); displaced != nil {
 		// Close asynchronously: a WebSocket close performs a closing handshake
 		// that blocks until the peer acks, and this new connection must not
@@ -114,16 +118,42 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 		go displaced.Close(CloseReplaced, "replaced by a newer connection")
 	}
 
-	ack, _ := json.Marshal(helloAckFrame{
-		Type: frameHelloAck, SessionID: ident.SessionID, ServerTimeMS: time.Now().UnixMilli(),
-	})
+	ack := helloAckFrame(c.nextFrameID(), ident.SessionID, time.Now().UnixMilli())
 	if err := c.write(r.Context(), ack); err != nil {
 		s.cleanup(c)
 		return
 	}
 
+	// Attach the live-delivery feed. Deliveries published before this point
+	// (or while disconnected) are covered by inbox replay — never lost.
+	var unsubscribe func()
+	if s.delivery != nil {
+		unsubscribe, err = s.delivery.Subscribe(ident.DeviceID, func(payload []byte) {
+			frame, ferr := liveInboxFrame(payload, c.nextFrameID(), c.deviceID)
+			if ferr != nil {
+				// Drop, don't disconnect: the item is safe in the inbox and
+				// resume replay delivers it. Only the live push is lost.
+				s.log.Warn("dropping malformed live delivery", "device_id", c.deviceID, "err", ferr)
+				return
+			}
+			if !c.Deliver(frame) {
+				// Backpressure policy: the backlog stays in the inbox, not in
+				// pod memory. The client reconnects and replays from cursor.
+				c.Close(CloseSlowConsumer, "slow consumer — resume to catch up")
+			}
+		})
+		if err != nil {
+			s.log.Error("delivery subscribe failed", "device_id", ident.DeviceID, "err", err)
+			s.cleanup(c)
+			return
+		}
+	}
+
 	s.log.Info("connection established", "device_id", ident.DeviceID, "user_id", ident.UserID)
 	s.serve(r.Context(), c)
+	if unsubscribe != nil {
+		unsubscribe()
+	}
 	s.cleanup(c)
 }
 
@@ -134,18 +164,20 @@ func (s *Server) handshake(ctx context.Context, ws *websocket.Conn) (auth.Identi
 	hctx, cancel := context.WithTimeout(ctx, handshakeTimeout)
 	defer cancel()
 
-	_, data, err := ws.Read(hctx)
+	frame, err := readFrame(hctx, ws)
 	if err != nil {
 		_ = ws.Close(CloseBadHandshake, "expected hello frame")
 		return auth.Identity{}, false
 	}
-	var hello helloFrame
-	if err := json.Unmarshal(data, &hello); err != nil || hello.Type != frameHello || hello.AccessJWT == "" {
+	hello := frame.GetHello()
+	if hello == nil || hello.GetAccessJwt() == "" {
 		s.sendErrorAndClose(ctx, ws, CloseBadHandshake, "VALIDATION_HANDSHAKE", "malformed hello frame")
 		return auth.Identity{}, false
 	}
 
-	ident, err := s.verifier.Verify(hello.AccessJWT)
+	// The JWT is the identity authority; hello.device_id is advisory and
+	// resume_token/last_cursors are handled by the resume path (T0.13).
+	ident, err := s.verifier.Verify(hello.GetAccessJwt())
 	if err != nil {
 		s.sendErrorAndClose(ctx, ws, CloseAuthExpired, "AUTH_TOKEN_EXPIRED", "invalid or expired token")
 		return auth.Identity{}, false
@@ -163,15 +195,17 @@ func (s *Server) handshake(ctx context.Context, ws *websocket.Conn) (auth.Identi
 	return ident, true
 }
 
-// serve runs the heartbeat and read loop until the connection closes.
+// serve runs the write pump, heartbeat, and read loop until the connection
+// closes.
 func (s *Server) serve(ctx context.Context, c *Conn) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	go c.writePump(ctx)
 	go s.heartbeat(ctx, c)
 
 	// Skeleton read loop: drain frames to detect close and honor client
-	// activity. Frame routing to core-api lands with T0.11/T0.12.
+	// activity. Inbound frame routing to core-api lands with T0.13.
 	for {
 		_, _, err := c.ws.Read(ctx)
 		if err != nil {
@@ -219,9 +253,8 @@ func (s *Server) cleanup(c *Conn) {
 }
 
 func (s *Server) sendErrorAndClose(ctx context.Context, ws *websocket.Conn, code CloseCode, errCode, msg string) {
-	payload, _ := json.Marshal(errorFrame{Type: frameError, Code: errCode, Message: msg})
 	wctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	_ = ws.Write(wctx, websocket.MessageText, payload)
+	_ = ws.Write(wctx, websocket.MessageBinary, errorFrame(errCode, msg))
 	_ = ws.Close(code, msg)
 }

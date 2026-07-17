@@ -33,7 +33,28 @@ func (m *memStore) Accept(_ context.Context, p AcceptParams) (StoreResult, error
 	}
 	m.accepts++
 	m.seqs[p.ConversationID]++
-	return StoreResult{Seq: m.seqs[p.ConversationID], RecipientCount: 2}, nil
+	return StoreResult{Seq: m.seqs[p.ConversationID], RecipientDeviceIDs: []string{"devB1", "devB2"}}, nil
+}
+
+// recPublisher records deliveries; failPub always errors.
+type recPublisher struct {
+	mu    sync.Mutex
+	items map[string][]InboxItem // by device id
+}
+
+func newRecPublisher() *recPublisher { return &recPublisher{items: map[string][]InboxItem{}} }
+
+func (p *recPublisher) PublishDelivery(_ context.Context, deviceID string, item InboxItem) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.items[deviceID] = append(p.items[deviceID], item)
+	return nil
+}
+
+type failPub struct{}
+
+func (failPub) PublishDelivery(context.Context, string, InboxItem) error {
+	return errors.New("nats down")
 }
 
 type memDeduper struct {
@@ -79,7 +100,7 @@ func (errDeduper) Commit(context.Context, string, int64) error { return nil }
 func (errDeduper) Release(context.Context, string) error       { return nil }
 
 func newSvc(store Store, dedupe Deduper) *Service {
-	return NewService(store, dedupe, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return NewService(store, dedupe, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func req(conv, msgUUID string) AcceptRequest {
@@ -203,6 +224,49 @@ func TestAccept_Validation(t *testing.T) {
 	noTarget.Kind = KindOverlayEdit
 	if _, err := s.Accept(ctx, noTarget); code(t, err) != "VALIDATION_OVERLAY" {
 		t.Fatal("overlay without target accepted")
+	}
+}
+
+func TestAccept_PublishesToEveryRecipient(t *testing.T) {
+	pub := newRecPublisher()
+	s := NewService(newMemStore(), newMemDeduper(), pub, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx := context.Background()
+
+	u := id.New()
+	res, err := s.Accept(ctx, req("c1", u))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.RecipientCount != 2 {
+		t.Fatalf("recipient count = %d, want 2", res.RecipientCount)
+	}
+	for _, dev := range []string{"devB1", "devB2"} {
+		items := pub.items[dev]
+		if len(items) != 1 {
+			t.Fatalf("device %s got %d deliveries, want 1", dev, len(items))
+		}
+		if items[0].MsgUUID != u || items[0].Seq != res.Seq || string(items[0].Ciphertext) != "sealed" {
+			t.Fatalf("delivery payload wrong: %+v", items[0])
+		}
+	}
+	// A duplicate must NOT publish again.
+	if _, err := s.Accept(ctx, req("c1", u)); err != nil {
+		t.Fatal(err)
+	}
+	if len(pub.items["devB1"]) != 1 {
+		t.Fatal("duplicate send re-published a delivery")
+	}
+}
+
+// Publish failure is a latency event, never a loss or an error to the sender.
+func TestAccept_PublishFailureDoesNotFailAccept(t *testing.T) {
+	s := NewService(newMemStore(), newMemDeduper(), failPub{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	res, err := s.Accept(context.Background(), req("c1", id.New()))
+	if err != nil {
+		t.Fatalf("accept failed on publish error: %v", err)
+	}
+	if res.Seq != 1 {
+		t.Fatalf("seq = %d, want 1", res.Seq)
 	}
 }
 

@@ -34,8 +34,8 @@ type AcceptParams struct {
 
 // StoreResult is the outcome of the accept transaction.
 type StoreResult struct {
-	Seq            int64
-	RecipientCount int
+	Seq                int64
+	RecipientDeviceIDs []string
 }
 
 // Store is the persistence port: the seq+inbox transaction.
@@ -45,6 +45,14 @@ type Store interface {
 	// sending device), in a single transaction. Returns ErrNotMember if the
 	// sender is not in the conversation.
 	Accept(ctx context.Context, p AcceptParams) (StoreResult, error)
+}
+
+// Publisher is the live-delivery port: fan the accepted item out to each
+// recipient device's subject (dev.{id}.out). NATS is TRANSIT, not truth —
+// the inbox row is the durability guarantee, so publish failures are logged,
+// never surfaced to the sender (internal-events-nats.md).
+type Publisher interface {
+	PublishDelivery(ctx context.Context, recipientDeviceID string, item InboxItem) error
 }
 
 // Deduper is the idempotency port over Valkey.
@@ -63,12 +71,13 @@ type Deduper interface {
 type Service struct {
 	store  Store
 	dedupe Deduper
+	pub    Publisher // nil = no live delivery (tests); inbox still holds everything
 	log    *slog.Logger
 	now    func() time.Time
 }
 
-func NewService(store Store, dedupe Deduper, log *slog.Logger) *Service {
-	return &Service{store: store, dedupe: dedupe, log: log, now: time.Now}
+func NewService(store Store, dedupe Deduper, pub Publisher, log *slog.Logger) *Service {
+	return &Service{store: store, dedupe: dedupe, pub: pub, log: log, now: time.Now}
 }
 
 // Accept is the hot path (target < 10 ms server time): validate → dedupe →
@@ -154,9 +163,32 @@ func (s *Service) Accept(ctx context.Context, req AcceptRequest) (AcceptResult, 
 		s.log.Error("dedupe commit failed", "msg_uuid", req.MsgUUID, "err", err)
 	}
 
+	// 6. Live delivery (best-effort): connected devices get the item now;
+	// everyone else gets it via inbox replay. A publish failure is a latency
+	// event, never a loss event.
+	if s.pub != nil {
+		item := InboxItem{
+			ConversationID: req.ConversationID,
+			Seq:            res.Seq,
+			MsgUUID:        req.MsgUUID,
+			SenderUserID:   req.SenderUserID,
+			SenderDeviceID: req.SenderDeviceID,
+			Kind:           req.Kind,
+			OverlayTarget:  req.OverlayTarget,
+			Ciphertext:     req.Ciphertext,
+			AcceptedAtMS:   now.UnixMilli(),
+		}
+		for _, did := range res.RecipientDeviceIDs {
+			if err := s.pub.PublishDelivery(ctx, did, item); err != nil {
+				s.log.Warn("live delivery publish failed (inbox will cover it)",
+					"device_id", did, "err", err)
+			}
+		}
+	}
+
 	return AcceptResult{
 		Seq:            res.Seq,
 		ServerTimeMS:   now.UnixMilli(),
-		RecipientCount: res.RecipientCount,
+		RecipientCount: len(res.RecipientDeviceIDs),
 	}, nil
 }

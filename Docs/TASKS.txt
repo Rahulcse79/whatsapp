@@ -39,14 +39,14 @@ LEGEND:  [x] done   [>] next up   [ ] pending
             QR link init/approve/complete; auth gained MintLinkedSession + Sessions.Create;
             migration 000010 device_links; shared httpx.APIError)
 
-[>] T0.10  ws-gateway skeleton
-    PROMPT> implement task T0.10 ws-gateway skeleton: WSS upgrade, Hello/JWT verify,
-            sharded connection registry (256 shards), ping/pong heartbeat, route
-            claim in valkey with TTL, close codes 4401/4403/4409. code + tests only.
-    DOCS:   Docs/05-services/ws-gateway-lld.md · Docs/04-api/websocket-protocol.md §1,§6
-    DONE:   registry race-tested (-race); duplicate connect closes old with 4409
+[x] T0.10  ws-gateway skeleton
+           (internal/gateway: 256-shard registry [race test], coder/websocket handshake
+            w/ JWT verify + Authorizer, MemoryRouteStore + ValkeyRouteStore [Lua owned
+            refresh/release], heartbeat, close codes 4400/4401/4403/4409/1012; cmd/ws-gateway
+            wired w/ graceful drain. Interim JSON handshake frames — switch to protobuf
+            wsv1 at T0.12. NOTE: proto-gen Go types still not wired into build.)
 
-[ ] T0.11  Chat accept pipeline (THE hot path)
+[>] T0.11  Chat accept pipeline (THE hot path)
     PROMPT> implement task T0.11 chat accept pipeline in core-api: gRPC AcceptMessage
             with valkey dedupe (fail closed), per-conversation seq in tx, batched
             inbox insert, overlay window validation, MsgAck. code + tests only.

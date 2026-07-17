@@ -48,9 +48,12 @@ func dial(t *testing.T, hs *httptest.Server) *websocket.Conn {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	c, _, err := websocket.Dial(ctx, wsURL(hs), nil)
+	c, resp, err := websocket.Dial(ctx, wsURL(hs), nil)
 	if err != nil {
 		t.Fatalf("dial: %v", err)
+	}
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
 	}
 	return c
 }
@@ -110,7 +113,7 @@ func TestHandshake_Success(t *testing.T) {
 	if _, ok := s.Registry().Get("d1"); !ok {
 		t.Fatal("connection not in registry after handshake")
 	}
-	c.Close(websocket.StatusNormalClosure, "")
+	_ = c.Close(websocket.StatusNormalClosure, "")
 }
 
 func TestHandshake_BadToken(t *testing.T) {
@@ -156,5 +159,5 @@ func TestDuplicateConnect_ClosesOldWith4409(t *testing.T) {
 	if got, ok := s.Registry().Get("dupdev"); !ok || got.sessionID != "sess1" {
 		t.Fatal("registry should hold the newer connection")
 	}
-	c2.Close(websocket.StatusNormalClosure, "")
+	_ = c2.Close(websocket.StatusNormalClosure, "")
 }

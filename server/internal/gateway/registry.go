@@ -94,9 +94,11 @@ func (r *Registry) Count() int {
 }
 
 // CloseAll closes every connection with the given code — used to drain on
-// shutdown. It snapshots per shard so callbacks can't deadlock on the shard
-// lock while closing.
+// shutdown. Each close runs in its own goroutine because a WebSocket close is
+// a blocking handshake; serializing tens of thousands would stall the drain.
+// It snapshots per shard so it never holds a shard lock while closing.
 func (r *Registry) CloseAll(code CloseCode, reason string) {
+	var wg sync.WaitGroup
 	for _, s := range r.shards {
 		s.mu.Lock()
 		conns := make([]*Conn, 0, len(s.conns))
@@ -105,7 +107,12 @@ func (r *Registry) CloseAll(code CloseCode, reason string) {
 		}
 		s.mu.Unlock()
 		for _, c := range conns {
-			c.Close(code, reason)
+			wg.Add(1)
+			go func(c *Conn) {
+				defer wg.Done()
+				c.Close(code, reason)
+			}(c)
 		}
 	}
+	wg.Wait()
 }

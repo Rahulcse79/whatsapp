@@ -108,7 +108,10 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 
 	c := &Conn{deviceID: ident.DeviceID, userID: ident.UserID, sessionID: ident.SessionID, ws: ws}
 	if displaced := s.reg.Add(c); displaced != nil {
-		displaced.Close(CloseReplaced, "replaced by a newer connection")
+		// Close asynchronously: a WebSocket close performs a closing handshake
+		// that blocks until the peer acks, and this new connection must not
+		// wait on the old client to send its hello_ack.
+		go displaced.Close(CloseReplaced, "replaced by a newer connection")
 	}
 
 	ack, _ := json.Marshal(helloAckFrame{

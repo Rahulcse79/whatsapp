@@ -134,9 +134,12 @@ func (s *Store) GetOrCreateDirect(ctx context.Context, userA, userB string) (str
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	newID := id.New()
+	// conversations_direct_key is a partial unique index (WHERE direct_key IS
+	// NOT NULL — groups carry no direct_key); ON CONFLICT only infers a
+	// partial index when the target repeats its predicate.
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO conversations (id, kind, direct_key) VALUES ($1, 0, $2)
-		 ON CONFLICT (direct_key) DO NOTHING`, newID, dk); err != nil {
+		 ON CONFLICT (direct_key) WHERE direct_key IS NOT NULL DO NOTHING`, newID, dk); err != nil {
 		return "", fmt.Errorf("creating direct conversation: %w", err)
 	}
 

@@ -56,9 +56,17 @@ type AcceptResult struct {
 	Deduped bool
 }
 
+// Cursor is a per-conversation replay watermark: "the client has persisted
+// everything up to LastSeq". Replay starts after it; AckDelivered deletes up
+// to it (cumulative, idempotent).
+type Cursor struct {
+	ConversationID string
+	LastSeq        int64
+}
+
 // InboxItem is one delivery unit: what a recipient device receives, both on
 // the live path (NATS dev.{id}.out) and on inbox replay (T0.13). Mirrors the
-// wsv1.InboxItem wire message; the NATS adapter owns the protobuf binding so
+// wsv1.InboxItem wire message; the adapters own the protobuf binding so
 // this package stays free of generated code.
 type InboxItem struct {
 	ConversationID string

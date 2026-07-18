@@ -55,6 +55,21 @@ type Publisher interface {
 	PublishDelivery(ctx context.Context, recipientDeviceID string, item InboxItem) error
 }
 
+// ReplayBatchSize is the server-side cap on items per replay batch
+// (rpc.proto PullInboxRequest.batch_size).
+const ReplayBatchSize = 100
+
+// Inbox is the replay/ack port over the message inbox (T0.13).
+type Inbox interface {
+	// PullInbox streams the device's pending items in (conversation, seq)
+	// order, batched at most batchSize at a time, skipping anything at or
+	// below the given cursors. emit returning an error aborts the pull.
+	PullInbox(ctx context.Context, deviceID string, cursors []Cursor, batchSize int, emit func(batch []InboxItem) error) error
+	// AckDelivered deletes every row covered by the cumulative cursors.
+	// Idempotent: replaying a cursor is a no-op.
+	AckDelivered(ctx context.Context, deviceID string, upTo []Cursor) error
+}
+
 // Deduper is the idempotency port over Valkey.
 type Deduper interface {
 	// Claim attempts to reserve msgUUID. won=true means this caller owns the
@@ -67,17 +82,18 @@ type Deduper interface {
 	Release(ctx context.Context, msgUUID string) error
 }
 
-// Service is the accept pipeline.
+// Service is the accept pipeline plus the replay/ack surface.
 type Service struct {
 	store  Store
+	inbox  Inbox // nil = replay/ack unavailable (accept-only tests)
 	dedupe Deduper
 	pub    Publisher // nil = no live delivery (tests); inbox still holds everything
 	log    *slog.Logger
 	now    func() time.Time
 }
 
-func NewService(store Store, dedupe Deduper, pub Publisher, log *slog.Logger) *Service {
-	return &Service{store: store, dedupe: dedupe, pub: pub, log: log, now: time.Now}
+func NewService(store Store, inbox Inbox, dedupe Deduper, pub Publisher, log *slog.Logger) *Service {
+	return &Service{store: store, inbox: inbox, dedupe: dedupe, pub: pub, log: log, now: time.Now}
 }
 
 // Accept is the hot path (target < 10 ms server time): validate → dedupe →
@@ -191,4 +207,39 @@ func (s *Service) Accept(ctx context.Context, req AcceptRequest) (AcceptResult, 
 		ServerTimeMS:   now.UnixMilli(),
 		RecipientCount: len(res.RecipientDeviceIDs),
 	}, nil
+}
+
+// PullInbox streams the device's pending inbox in (conversation, seq) order.
+// cursors narrow the replay to items the client has not yet persisted; empty
+// cursors replay everything pending (fresh session). batchSize is clamped to
+// ReplayBatchSize — the caller never dictates unbounded batches.
+func (s *Service) PullInbox(ctx context.Context, deviceID string, cursors []Cursor, batchSize int, emit func(batch []InboxItem) error) error {
+	if deviceID == "" {
+		return httpx.Reject(http.StatusBadRequest, "VALIDATION_DEVICE", "recipient_device_id is required")
+	}
+	if batchSize <= 0 || batchSize > ReplayBatchSize {
+		batchSize = ReplayBatchSize
+	}
+	return s.inbox.PullInbox(ctx, deviceID, cursors, batchSize, emit)
+}
+
+// AckDelivered applies the client's cumulative persistence watermark:
+// everything at or below each cursor is deleted from the inbox
+// (ACK-after-persist — websocket-protocol.md §3). Idempotent.
+func (s *Service) AckDelivered(ctx context.Context, deviceID string, upTo []Cursor) error {
+	if deviceID == "" {
+		return httpx.Reject(http.StatusBadRequest, "VALIDATION_DEVICE", "recipient_device_id is required")
+	}
+	// Drop structurally empty cursors rather than failing the batch: acks are
+	// fire-and-forget from the client's perspective and must stay idempotent.
+	valid := upTo[:0]
+	for _, c := range upTo {
+		if c.ConversationID != "" && c.LastSeq > 0 {
+			valid = append(valid, c)
+		}
+	}
+	if len(valid) == 0 {
+		return nil
+	}
+	return s.inbox.AckDelivered(ctx, deviceID, valid)
 }

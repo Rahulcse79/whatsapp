@@ -62,11 +62,15 @@ func TestDeliver_QueueOverflowReportsFalse(t *testing.T) {
 	}
 }
 
-func TestLiveInboxFrame_RoundTrip(t *testing.T) {
-	frame, err := liveInboxFrame(deliveryPayload(t, "d1", "m1", 7), 42, "d1")
+func TestDecodeDelivery_RoundTrip(t *testing.T) {
+	item, err := decodeDelivery(deliveryPayload(t, "d1", "m1", 7), "d1")
 	if err != nil {
-		t.Fatalf("liveInboxFrame: %v", err)
+		t.Fatalf("decodeDelivery: %v", err)
 	}
+	if item.GetSeq() != 7 || item.GetMsgUuid() != "m1" {
+		t.Fatalf("unexpected item: %v", item)
+	}
+	frame := itemsFrame(42, []*wsv1.InboxItem{item}, false, false)
 	f := &wsv1.Frame{}
 	if err := proto.Unmarshal(frame, f); err != nil {
 		t.Fatalf("unmarshal frame: %v", err)
@@ -80,15 +84,15 @@ func TestLiveInboxFrame_RoundTrip(t *testing.T) {
 	}
 }
 
-func TestLiveInboxFrame_RejectsGarbageAndSkew(t *testing.T) {
-	if _, err := liveInboxFrame([]byte("not-a-proto"), 1, "d1"); err == nil {
-		t.Fatal("garbage payload must not become a frame")
+func TestDecodeDelivery_RejectsGarbageAndSkew(t *testing.T) {
+	if _, err := decodeDelivery([]byte("not-a-proto"), "d1"); err == nil {
+		t.Fatal("garbage payload must not become an item")
 	}
-	if _, err := liveInboxFrame(deliveryPayload(t, "other-device", "m1", 1), 1, "d1"); err == nil {
+	if _, err := decodeDelivery(deliveryPayload(t, "other-device", "m1", 1), "d1"); err == nil {
 		t.Fatal("delivery addressed to another device must be dropped")
 	}
 	empty, _ := proto.Marshal(&eventsv1.Delivery{RecipientDeviceId: "d1"})
-	if _, err := liveInboxFrame(empty, 1, "d1"); err == nil {
+	if _, err := decodeDelivery(empty, "d1"); err == nil {
 		t.Fatal("delivery without an item must be dropped")
 	}
 }

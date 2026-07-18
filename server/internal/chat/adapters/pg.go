@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -169,3 +170,105 @@ func directKey(a, b string) string {
 	}
 	return b + ":" + a
 }
+
+// zeroUUID is the keyset floor for the replay scan (uuid sorts bytewise).
+const zeroUUID = "00000000-0000-0000-0000-000000000000"
+
+// PullInbox streams the device's pending items in primary-key order —
+// (recipient_device_id, conversation_id, seq) — using keyset pagination, so
+// each batch is one bounded index scan and a mid-replay disconnect resumes
+// from the client's cursors, never from scratch.
+//
+// The per-conversation cursor filter runs in Go: acked rows are deleted, so
+// cursors only skip the narrow window where a client persisted items whose
+// ack has not landed yet — rarely more than one batch's worth.
+func (s *Store) PullInbox(ctx context.Context, deviceID string, cursors []chat.Cursor, batchSize int, emit func(batch []chat.InboxItem) error) error {
+	after := make(map[string]int64, len(cursors))
+	for _, c := range cursors {
+		after[c.ConversationID] = c.LastSeq
+	}
+
+	lastConv, lastSeq := zeroUUID, int64(0)
+	for {
+		// LEFT JOIN: a sender device deleted with its user must not black-hole
+		// the ciphertext — the item replays with an empty sender_user_id.
+		rows, err := s.pool.Query(ctx, `
+			SELECT mi.conversation_id, mi.seq, mi.msg_uuid,
+			       COALESCE(d.user_id::text, ''), mi.sender_device_id, mi.kind,
+			       COALESCE(mi.overlay_target::text, ''), mi.ciphertext, mi.accepted_at
+			FROM message_inbox mi
+			LEFT JOIN devices d ON d.id = mi.sender_device_id
+			WHERE mi.recipient_device_id = $1
+			  AND (mi.conversation_id, mi.seq) > ($2::uuid, $3)
+			ORDER BY mi.conversation_id, mi.seq
+			LIMIT $4`, deviceID, lastConv, lastSeq, batchSize)
+		if err != nil {
+			return fmt.Errorf("replay scan: %w", err)
+		}
+
+		var (
+			batch   = make([]chat.InboxItem, 0, batchSize)
+			scanned int
+		)
+		for rows.Next() {
+			var (
+				it         chat.InboxItem
+				kind       int16
+				acceptedAt time.Time
+			)
+			if err := rows.Scan(&it.ConversationID, &it.Seq, &it.MsgUUID,
+				&it.SenderUserID, &it.SenderDeviceID, &kind,
+				&it.OverlayTarget, &it.Ciphertext, &acceptedAt); err != nil {
+				rows.Close()
+				return fmt.Errorf("replay scan row: %w", err)
+			}
+			scanned++
+			lastConv, lastSeq = it.ConversationID, it.Seq
+			if it.Seq <= after[it.ConversationID] {
+				continue // client already persisted this one
+			}
+			it.Kind = chat.MsgKind(kind)
+			it.AcceptedAtMS = acceptedAt.UnixMilli()
+			batch = append(batch, it)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return fmt.Errorf("replay scan rows: %w", err)
+		}
+
+		if len(batch) > 0 {
+			if err := emit(batch); err != nil {
+				return err
+			}
+		}
+		if scanned < batchSize {
+			return nil // drained
+		}
+	}
+}
+
+// AckDelivered deletes every inbox row the client has durably persisted —
+// cumulative per conversation, idempotent by construction (a DELETE with
+// nothing left to delete is a no-op).
+func (s *Store) AckDelivered(ctx context.Context, deviceID string, upTo []chat.Cursor) error {
+	batch := &pgx.Batch{}
+	for _, c := range upTo {
+		batch.Queue(`
+			DELETE FROM message_inbox
+			WHERE recipient_device_id = $1 AND conversation_id = $2 AND seq <= $3`,
+			deviceID, c.ConversationID, c.LastSeq)
+	}
+	br := s.pool.SendBatch(ctx, batch)
+	for range upTo {
+		if _, err := br.Exec(); err != nil {
+			_ = br.Close()
+			return fmt.Errorf("ack delete: %w", err)
+		}
+	}
+	if err := br.Close(); err != nil {
+		return fmt.Errorf("closing ack batch: %w", err)
+	}
+	return nil
+}
+
+var _ chat.Inbox = (*Store)(nil)

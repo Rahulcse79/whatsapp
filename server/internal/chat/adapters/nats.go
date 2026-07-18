@@ -44,23 +44,29 @@ func (p *NATSPublisher) PublishDelivery(_ context.Context, recipientDeviceID str
 func encodeDelivery(recipientDeviceID string, item chat.InboxItem) ([]byte, error) {
 	payload, err := proto.Marshal(&eventsv1.Delivery{
 		RecipientDeviceId: recipientDeviceID,
-		Item: &wsv1.InboxItem{
-			ConversationId: item.ConversationID,
-			Seq:            item.Seq,
-			MsgUuid:        item.MsgUUID,
-			SenderUserId:   item.SenderUserID,
-			SenderDeviceId: item.SenderDeviceID,
-			// chat.MsgKind mirrors the wire enum value for value (chat.go).
-			Kind:           wsv1.MsgKind(item.Kind),
-			OverlayTarget:  item.OverlayTarget,
-			SealedEnvelope: item.Ciphertext,
-			AcceptedAtMs:   item.AcceptedAtMS,
-		},
+		Item:              wireItem(item),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("encoding delivery: %w", err)
 	}
 	return payload, nil
+}
+
+// wireItem converts the domain delivery unit to its wsv1 wire message —
+// the single mapping both the NATS and gRPC edges share.
+func wireItem(item chat.InboxItem) *wsv1.InboxItem {
+	return &wsv1.InboxItem{
+		ConversationId: item.ConversationID,
+		Seq:            item.Seq,
+		MsgUuid:        item.MsgUUID,
+		SenderUserId:   item.SenderUserID,
+		SenderDeviceId: item.SenderDeviceID,
+		// chat.MsgKind mirrors the wire enum value for value (chat.go).
+		Kind:           wsv1.MsgKind(item.Kind),
+		OverlayTarget:  item.OverlayTarget,
+		SealedEnvelope: item.Ciphertext,
+		AcceptedAtMs:   item.AcceptedAtMS,
+	}
 }
 
 var _ chat.Publisher = (*NATSPublisher)(nil)

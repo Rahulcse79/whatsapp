@@ -8,15 +8,20 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+
 	"github.com/whatsapp-v2/server/internal/auth"
 	authadapters "github.com/whatsapp-v2/server/internal/auth/adapters"
 	"github.com/whatsapp-v2/server/internal/auth/domain"
+	"github.com/whatsapp-v2/server/internal/chat"
+	chatadapters "github.com/whatsapp-v2/server/internal/chat/adapters"
 	"github.com/whatsapp-v2/server/internal/devices"
 	devadapters "github.com/whatsapp-v2/server/internal/devices/adapters"
 	"github.com/whatsapp-v2/server/internal/keys"
@@ -27,6 +32,7 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/pg"
 	"github.com/whatsapp-v2/server/internal/platform/ratelimit"
 	"github.com/whatsapp-v2/server/internal/platform/valkey"
+	rpcv1 "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/rpc/v1"
 )
 
 // Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
@@ -104,9 +110,25 @@ func main() {
 	devEvents := devadapters.NewNATSEvents(nc, log)
 	devSvc := devices.NewService(devStore, devStore, authSvc, devEvents)
 
-	// Chat accept + live delivery are exercised over the gateway→core-api
-	// gRPC path, wired when protobuf codegen lands (T0.13). The chat service
-	// and its adapters already exist and are tested.
+	// ── chat context (gateway-facing gRPC surface) ────────────────────────
+	chatStore := chatadapters.NewStore(pool)
+	chatSvc := chat.NewService(chatStore, chatStore,
+		chatadapters.NewDeduper(vk), chatadapters.NewNATSPublisher(nc), log)
+
+	grpcSrv := grpc.NewServer()
+	rpcv1.RegisterChatServiceServer(grpcSrv, chatadapters.NewChatGRPC(chatSvc, log))
+	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
+	if err != nil {
+		log.Error("grpc listen failed", "addr", cfg.GRPCAddr, "err", err)
+		os.Exit(1)
+	}
+	go func() {
+		log.Info("grpc listening", "addr", cfg.GRPCAddr)
+		if err := grpcSrv.Serve(grpcLis); err != nil {
+			log.Error("grpc server failed", "err", err)
+			os.Exit(1)
+		}
+	}()
 
 	mux := http.NewServeMux()
 	auth.Routes(mux, authSvc)
@@ -136,8 +158,18 @@ func main() {
 	log.Info("shutting down")
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
+	grpcDone := make(chan struct{})
+	go func() {
+		grpcSrv.GracefulStop() // finishes in-flight RPCs (incl. replay streams)
+		close(grpcDone)
+	}()
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		log.Error("shutdown", "err", err)
+	}
+	select {
+	case <-grpcDone:
+	case <-shutdownCtx.Done():
+		grpcSrv.Stop() // deadline passed; cut remaining streams
 	}
 	log.Info("stopped")
 }

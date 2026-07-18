@@ -16,11 +16,15 @@ import (
 	"syscall"
 	"time"
 
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"github.com/whatsapp-v2/server/internal/auth"
 	"github.com/whatsapp-v2/server/internal/gateway"
 	gwadapters "github.com/whatsapp-v2/server/internal/gateway/adapters"
 	"github.com/whatsapp-v2/server/internal/platform/config"
 	"github.com/whatsapp-v2/server/internal/platform/logging"
+	"github.com/whatsapp-v2/server/internal/platform/natsx"
 	"github.com/whatsapp-v2/server/internal/platform/valkey"
 )
 
@@ -47,15 +51,36 @@ func main() {
 	}
 	defer func() { _ = vk.Close() }()
 
+	nc, _, err := natsx.Connect(natsx.Config{URL: cfg.NATS.URL, Name: "ws-gateway"})
+	if err != nil {
+		log.Error("nats connect failed", "err", err)
+		os.Exit(1)
+	}
+	defer nc.Close()
+
 	verifier, err := buildVerifier(cfg, log)
 	if err != nil {
 		log.Error("building token verifier", "err", err)
 		os.Exit(1)
 	}
 
+	// gRPC to core-api: in-cluster plaintext for now; mTLS arrives with the
+	// K8s deploy (T0.22). NewClient dials lazily — core-api being down shows
+	// up as per-RPC Unavailable (retried once), never as a boot failure.
+	coreConn, err := grpc.NewClient(cfg.CoreAPIGRPCAddr,
+		grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		log.Error("core-api grpc client failed", "addr", cfg.CoreAPIGRPCAddr, "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = coreConn.Close() }()
+
 	srv := gateway.NewServer(gateway.Config{
 		Verifier: verifier,
 		Routes:   gwadapters.NewValkeyRouteStore(vk),
+		Delivery: gwadapters.NewNATSDeliverySource(nc),
+		Chat:     gwadapters.NewGRPCChatClient(coreConn),
+		Resume:   gwadapters.NewValkeyResumeStore(vk),
 		PodID:    podID(),
 		RouteTTL: 90 * time.Second,
 		Log:      log,

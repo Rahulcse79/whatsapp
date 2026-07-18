@@ -100,7 +100,7 @@ func (errDeduper) Commit(context.Context, string, int64) error { return nil }
 func (errDeduper) Release(context.Context, string) error       { return nil }
 
 func newSvc(store Store, dedupe Deduper) *Service {
-	return NewService(store, dedupe, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	return NewService(store, nil, dedupe, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func req(conv, msgUUID string) AcceptRequest {
@@ -229,7 +229,7 @@ func TestAccept_Validation(t *testing.T) {
 
 func TestAccept_PublishesToEveryRecipient(t *testing.T) {
 	pub := newRecPublisher()
-	s := NewService(newMemStore(), newMemDeduper(), pub, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := NewService(newMemStore(), nil, newMemDeduper(), pub, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	ctx := context.Background()
 
 	u := id.New()
@@ -260,7 +260,7 @@ func TestAccept_PublishesToEveryRecipient(t *testing.T) {
 
 // Publish failure is a latency event, never a loss or an error to the sender.
 func TestAccept_PublishFailureDoesNotFailAccept(t *testing.T) {
-	s := NewService(newMemStore(), newMemDeduper(), failPub{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	s := NewService(newMemStore(), nil, newMemDeduper(), failPub{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	res, err := s.Accept(context.Background(), req("c1", id.New()))
 	if err != nil {
 		t.Fatalf("accept failed on publish error: %v", err)

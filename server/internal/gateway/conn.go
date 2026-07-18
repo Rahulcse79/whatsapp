@@ -40,6 +40,7 @@ type Conn struct {
 	sessionID string
 	ws        *websocket.Conn
 	outbound  chan []byte
+	gate      *replayGate   // live/replay interleave (ws-gateway-lld §3)
 	frameID   atomic.Uint64 // per-connection frame_id counter (tracing only)
 	closeOnce sync.Once
 }

@@ -37,30 +37,70 @@ func readFrame(ctx context.Context, ws *websocket.Conn) (*wsv1.Frame, error) {
 // errorFrame encodes the uniform error envelope sent before an abnormal
 // close (api-standards.md §2).
 func errorFrame(code, msg string) []byte {
+	return wireErrorFrame(0, &commonv1.Error{Code: code, Message: msg})
+}
+
+// wireErrorFrame encodes an already-typed domain error (e.g. a core-api
+// rejection relayed to the sender; the connection stays open).
+func wireErrorFrame(frameID uint64, werr *commonv1.Error) []byte {
 	payload, _ := proto.Marshal(&wsv1.Frame{
-		Body: &wsv1.Frame_Error{Error: &commonv1.Error{Code: code, Message: msg}},
+		FrameId: frameID,
+		Body:    &wsv1.Frame_Error{Error: werr},
 	})
 	return payload
 }
 
-// helloAckFrame encodes the handshake acknowledgement. The resume_token /
-// replay_pending fields arrive with the session-resume path (T0.13).
-func helloAckFrame(frameID uint64, sessionID string, serverTimeMS int64) []byte {
+// helloAckFrame encodes the handshake acknowledgement: the rotated resume
+// token and whether an inbox replay will precede live traffic.
+func helloAckFrame(frameID uint64, sessionID string, serverTimeMS int64, resumeToken string, replayPending bool) []byte {
 	payload, _ := proto.Marshal(&wsv1.Frame{
 		FrameId: frameID,
 		Body: &wsv1.Frame_HelloAck{HelloAck: &wsv1.HelloAck{
-			SessionId:    sessionID,
-			ServerTimeMs: serverTimeMS,
+			ResumeToken:   resumeToken,
+			SessionId:     sessionID,
+			ServerTimeMs:  serverTimeMS,
+			ReplayPending: replayPending,
 		}},
 	})
 	return payload
 }
 
-// liveInboxFrame transcodes one NATS delivery payload (events.v1.Delivery,
-// published by chat/adapters) into the client-facing frame: an InboxBatch of
-// a single live item (replay=false). deviceID guards against subject/payload
-// skew — a delivery addressed elsewhere is a bug, not a frame to forward.
-func liveInboxFrame(payload []byte, frameID uint64, deviceID string) ([]byte, error) {
+// pongFrame answers an application-level Ping.
+func pongFrame(frameID uint64, echoTSMS int64) []byte {
+	payload, _ := proto.Marshal(&wsv1.Frame{
+		FrameId: frameID,
+		Body:    &wsv1.Frame_Pong{Pong: &wsv1.Pong{EchoTsMs: echoTSMS}},
+	})
+	return payload
+}
+
+// msgAckFrame relays the "sent" acknowledgement for a MsgSend.
+func msgAckFrame(frameID uint64, ack *wsv1.MsgAck) []byte {
+	payload, _ := proto.Marshal(&wsv1.Frame{
+		FrameId: frameID,
+		Body:    &wsv1.Frame_MsgAck{MsgAck: ack},
+	})
+	return payload
+}
+
+// itemsFrame encodes an InboxBatch frame — replay batches (replay=true, the
+// final one also replay_complete=true) and live deliveries (both false).
+func itemsFrame(frameID uint64, items []*wsv1.InboxItem, replay, replayComplete bool) []byte {
+	payload, _ := proto.Marshal(&wsv1.Frame{
+		FrameId: frameID,
+		Body: &wsv1.Frame_InboxBatch{InboxBatch: &wsv1.InboxBatch{
+			Items:          items,
+			Replay:         replay,
+			ReplayComplete: replayComplete,
+		}},
+	})
+	return payload
+}
+
+// decodeDelivery decodes one NATS delivery payload (events.v1.Delivery,
+// published by chat/adapters). deviceID guards against subject/payload skew —
+// a delivery addressed elsewhere is a bug, not an item to forward.
+func decodeDelivery(payload []byte, deviceID string) (*wsv1.InboxItem, error) {
 	d := &eventsv1.Delivery{}
 	if err := proto.Unmarshal(payload, d); err != nil {
 		return nil, fmt.Errorf("decoding delivery: %w", err)
@@ -71,14 +111,5 @@ func liveInboxFrame(payload []byte, frameID uint64, deviceID string) ([]byte, er
 	if rid := d.GetRecipientDeviceId(); rid != "" && rid != deviceID {
 		return nil, fmt.Errorf("delivery addressed to %q arrived on %q's subject", rid, deviceID)
 	}
-	frame, err := proto.Marshal(&wsv1.Frame{
-		FrameId: frameID,
-		Body: &wsv1.Frame_InboxBatch{InboxBatch: &wsv1.InboxBatch{
-			Items: []*wsv1.InboxItem{d.GetItem()},
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("encoding inbox batch: %w", err)
-	}
-	return frame, nil
+	return d.GetItem(), nil
 }

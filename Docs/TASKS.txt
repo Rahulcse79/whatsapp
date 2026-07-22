@@ -67,14 +67,18 @@ LEGEND:  [x] done   [>] next up   [ ] pending
             DELIVERY JetStream stream — noted in internal-events-nats.md §1;
             JetStream arrives with PUSH at T0.16.)
 
-[>] T0.13  Resume & replay
-    PROMPT> implement task T0.13 session resume: resume tokens, PullInbox streaming
-            replay by cursors, ClientAck cumulative delete (AckDelivered), live/replay
-            interleave rule per conversation. code + tests only.
-    DOCS:   Docs/04-api/websocket-protocol.md §3 · Docs/05-services/ws-gateway-lld.md §3
-    DONE:   kill-connection-mid-replay test: no loss, no dupes, order preserved
+[x] T0.13  Resume & replay
+           (core-api: PullInbox streaming replay by cursors + AckDelivered cumulative
+            delete, wired via ChatService gRPC. gateway: resume tokens (Valkey, hashed,
+            rotate-per-connect; stale/foreign token → full replay, never lossy),
+            ClientAck → AckDelivered, and the replayGate interleave rule — live items
+            buffer during replay, flush post-replay in (conv,seq) order deduped against
+            the replay watermark. Tests added T0.13-final: replayGate unit tests
+            [dedupe/order/overflow/slow-consumer] + e2e replay/cursor-honoring/invalid-
+            token-degrade/ClientAck-forward. Impl landed inside the T0.12 commit; tests
+            were the gap.)
 
-[ ] T0.14  Receipts + delivery states
+[>] T0.14  Receipts + delivery states
     PROMPT> implement task T0.14 receipts: cumulative delivered/read watermarks,
             250ms coalescing both directions, privacy gate (read receipts off),
             SubmitReceipt gRPC + relay to sender devices. code + tests only.

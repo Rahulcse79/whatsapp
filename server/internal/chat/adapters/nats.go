@@ -69,4 +69,29 @@ func wireItem(item chat.InboxItem) *wsv1.InboxItem {
 	}
 }
 
-var _ chat.Publisher = (*NATSPublisher)(nil)
+// ReceiptSubject is the per-device receipt subject (dev.{id}.receipt), kept
+// separate from message delivery so the gateway decodes each unambiguously.
+func ReceiptSubject(deviceID string) string { return "dev." + deviceID + ".receipt" }
+
+// RelayReceipt publishes a wsv1.Receipt toward a device. Best-effort like
+// delivery: receipts are cumulative conveniences, not durable state.
+func (p *NATSPublisher) RelayReceipt(_ context.Context, targetDeviceID string, r chat.ReceiptOut) error {
+	payload, err := proto.Marshal(&wsv1.Receipt{
+		ConversationId: r.ConversationID,
+		Kind:           wsv1.ReceiptKind(r.Kind),
+		UpToSeq:        r.UpToSeq,
+		FromUserId:     r.FromUserID,
+	})
+	if err != nil {
+		return fmt.Errorf("encoding receipt: %w", err)
+	}
+	if err := p.nc.Publish(ReceiptSubject(targetDeviceID), payload); err != nil {
+		return fmt.Errorf("publishing receipt: %w", err)
+	}
+	return nil
+}
+
+var (
+	_ chat.Publisher    = (*NATSPublisher)(nil)
+	_ chat.ReceiptRelay = (*NATSPublisher)(nil)
+)

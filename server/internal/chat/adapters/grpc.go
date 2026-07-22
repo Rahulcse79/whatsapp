@@ -103,9 +103,26 @@ func (g *ChatGRPC) AckDelivered(ctx context.Context, req *rpcv1.AckDeliveredRequ
 	return &rpcv1.AckDeliveredResponse{}, nil
 }
 
-// SubmitReceipt lands with T0.14.
-func (g *ChatGRPC) SubmitReceipt(context.Context, *rpcv1.SubmitReceiptRequest) (*rpcv1.SubmitReceiptResponse, error) {
-	return nil, status.Error(codes.Unimplemented, "receipts land with T0.14")
+// SubmitReceipt relays a recipient's cumulative delivered/read watermark to
+// the conversation's other devices (privacy-gated for read receipts).
+func (g *ChatGRPC) SubmitReceipt(ctx context.Context, req *rpcv1.SubmitReceiptRequest) (*rpcv1.SubmitReceiptResponse, error) {
+	rc := req.GetReceipt()
+	if rc == nil {
+		return nil, status.Error(codes.InvalidArgument, "receipt is required")
+	}
+	err := g.svc.SubmitReceipt(ctx, req.GetFromUserId(), req.GetFromDeviceId(), chat.ReceiptIn{
+		ConversationID: rc.GetConversationId(),
+		Kind:           chat.ReceiptKind(rc.GetKind()),
+		UpToSeq:        rc.GetUpToSeq(),
+	})
+	if err != nil {
+		if werr := wireError(err); werr != nil {
+			return &rpcv1.SubmitReceiptResponse{Error: werr}, nil
+		}
+		g.log.Error("submit receipt failed", "err", err)
+		return nil, status.Error(codes.Internal, "receipt failed")
+	}
+	return &rpcv1.SubmitReceiptResponse{}, nil
 }
 
 // wireError maps a domain rejection (httpx.APIError) to the uniform

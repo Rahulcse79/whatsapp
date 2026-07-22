@@ -112,8 +112,10 @@ func main() {
 
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
+	chatPub := chatadapters.NewNATSPublisher(nc)
 	chatSvc := chat.NewService(chatStore, chatStore,
-		chatadapters.NewDeduper(vk), chatadapters.NewNATSPublisher(nc), log)
+		chatadapters.NewDeduper(vk), chatPub, log)
+	chatSvc.SetReceipts(chatStore, chatPub) // the NATS publisher also relays receipts
 
 	grpcSrv := grpc.NewServer()
 	rpcv1.RegisterChatServiceServer(grpcSrv, chatadapters.NewChatGRPC(chatSvc, log))

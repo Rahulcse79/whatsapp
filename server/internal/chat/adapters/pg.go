@@ -163,6 +163,53 @@ func (s *Store) GetOrCreateDirect(ctx context.Context, userA, userB string) (str
 	return convID, nil
 }
 
+// ReceiptTargets returns every conversation member's active devices except the
+// submitting device — but only if the submitter is a member (a receipt from a
+// non-member relays to nobody). Includes the submitter's own other devices for
+// read-state sync across their devices.
+func (s *Store) ReceiptTargets(ctx context.Context, conversationID, submitterUserID, submitterDeviceID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT d.id
+		FROM conversation_members cm
+		JOIN devices d ON d.user_id = cm.user_id
+		WHERE cm.conversation_id = $1
+		  AND d.revoked_at IS NULL
+		  AND d.id <> $2
+		  AND EXISTS (SELECT 1 FROM conversation_members me
+		              WHERE me.conversation_id = $1 AND me.user_id = $3)`,
+		conversationID, submitterDeviceID, submitterUserID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving receipt targets: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var did string
+		if err := rows.Scan(&did); err != nil {
+			return nil, fmt.Errorf("scanning receipt target: %w", err)
+		}
+		out = append(out, did)
+	}
+	return out, rows.Err()
+}
+
+// ReadReceiptsEnabled reports whether the user sends read receipts. Default
+// (no privacy set) is enabled; only an explicit "nobody" disables them. A
+// missing/deleted user sends none.
+func (s *Store) ReadReceiptsEnabled(ctx context.Context, userID string) (bool, error) {
+	var enabled bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT COALESCE(privacy->>'read_receipts', 'everyone') <> 'nobody'
+		FROM users WHERE id = $1 AND deleted_at IS NULL`, userID).Scan(&enabled)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("reading read-receipt privacy: %w", err)
+	}
+	return enabled, nil
+}
+
 // directKey is the order-independent identity of a 1:1 conversation.
 func directKey(a, b string) string {
 	if a <= b {

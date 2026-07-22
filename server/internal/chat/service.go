@@ -82,14 +82,16 @@ type Deduper interface {
 	Release(ctx context.Context, msgUUID string) error
 }
 
-// Service is the accept pipeline plus the replay/ack surface.
+// Service is the accept pipeline plus the replay/ack and receipt surfaces.
 type Service struct {
-	store  Store
-	inbox  Inbox // nil = replay/ack unavailable (accept-only tests)
-	dedupe Deduper
-	pub    Publisher // nil = no live delivery (tests); inbox still holds everything
-	log    *slog.Logger
-	now    func() time.Time
+	store    Store
+	inbox    Inbox // nil = replay/ack unavailable (accept-only tests)
+	dedupe   Deduper
+	pub      Publisher    // nil = no live delivery (tests); inbox still holds everything
+	receipts ReceiptStore // nil = receipts not wired (set via SetReceipts)
+	relay    ReceiptRelay // nil = receipts not wired
+	log      *slog.Logger
+	now      func() time.Time
 }
 
 func NewService(store Store, inbox Inbox, dedupe Deduper, pub Publisher, log *slog.Logger) *Service {

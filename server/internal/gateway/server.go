@@ -144,12 +144,11 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 	// replay, never to skipped messages. The token rotates on every connect.
 	cursors, resumeToken := s.applyResume(ctx, ident.DeviceID, hello)
 
-	ack := helloAckFrame(c.nextFrameID(), ident.SessionID, time.Now().UnixMilli(), resumeToken, willReplay)
-	if err := c.write(ctx, ack); err != nil {
-		s.cleanup(c)
-		return
-	}
-
+	// Attach the live feeds BEFORE sending HelloAck: a message published the
+	// instant the client sees itself connected must not slip in before the
+	// subscription exists. Frames still queue in the outbound channel until the
+	// write pump starts in serve(), so HelloAck is physically first on the wire.
+	//
 	// Attach the live-delivery feed BEFORE the replay snapshot (lld §3 order):
 	// anything accepted after the snapshot arrives live; anything before it is
 	// in the replay; the gate dedupes the overlap. Deliveries while fully
@@ -205,6 +204,19 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 			s.cleanup(c)
 			return
 		}
+	}
+
+	// Now that the feeds are live, tell the client it is connected.
+	ack := helloAckFrame(c.nextFrameID(), ident.SessionID, time.Now().UnixMilli(), resumeToken, willReplay)
+	if err := c.write(ctx, ack); err != nil {
+		if unsubscribe != nil {
+			unsubscribe()
+		}
+		if unsubReceipts != nil {
+			unsubReceipts()
+		}
+		s.cleanup(c)
+		return
 	}
 
 	if willReplay {

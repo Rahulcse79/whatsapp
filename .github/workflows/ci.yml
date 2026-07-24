@@ -78,11 +78,15 @@ jobs:
         working-directory: server/proto
         run: buf generate
 
+      # Convenience artifact for inspecting generated code — NOT a gate (the
+      # `buf generate` step above is the real verification). Never fail the
+      # job on it: GitHub artifact-storage quota is account-wide and transient.
       - name: Upload generated code
         uses: actions/upload-artifact@v4
+        continue-on-error: true
         with:
           name: proto-gen-${{ github.sha }}
-          retention-days: 7
+          retention-days: 1
           path: |
             server/internal/proto/gen/
             clients/packages/proto-types/src/gen/

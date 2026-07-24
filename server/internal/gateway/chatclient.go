@@ -24,4 +24,8 @@ type ChatClient interface {
 	// AckDelivered forwards the client's cumulative persistence watermark
 	// (ACK-after-persist); the server deletes covered inbox rows.
 	AckDelivered(ctx context.Context, deviceID string, upTo []*wsv1.ConversationCursor) error
+
+	// SubmitReceipt forwards a coalesced delivered/read watermark; core-api
+	// privacy-gates read receipts and relays to the conversation's devices.
+	SubmitReceipt(ctx context.Context, fromUserID, fromDeviceID string, r *wsv1.Receipt) error
 }

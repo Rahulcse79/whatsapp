@@ -47,6 +47,7 @@ type Server struct {
 	authz    Authorizer
 	routes   RouteStore
 	delivery DeliverySource // nil = no live delivery (some tests)
+	receipts DeliverySource // nil = no receipt forwarding (dev.{id}.receipt)
 	chat     ChatClient     // nil = no core-api (some tests): no replay, no send path
 	resume   ResumeStore    // nil = resume tokens disabled (some tests)
 	podID    string
@@ -65,6 +66,7 @@ type Config struct {
 	Authorizer     Authorizer
 	Routes         RouteStore
 	Delivery       DeliverySource
+	Receipts       DeliverySource
 	Chat           ChatClient
 	Resume         ResumeStore
 	PodID          string
@@ -89,9 +91,9 @@ func NewServer(cfg Config) *Server {
 	}
 	return &Server{
 		reg: cfg.Registry, verifier: cfg.Verifier, authz: cfg.Authorizer,
-		routes: cfg.Routes, delivery: cfg.Delivery, chat: cfg.Chat,
-		resume: cfg.Resume, podID: cfg.PodID, routeTTL: cfg.RouteTTL,
-		log: cfg.Log, allowedOrigins: cfg.AllowedOrigins,
+		routes: cfg.Routes, delivery: cfg.Delivery, receipts: cfg.Receipts,
+		chat: cfg.Chat, resume: cfg.Resume, podID: cfg.PodID,
+		routeTTL: cfg.RouteTTL, log: cfg.Log, allowedOrigins: cfg.AllowedOrigins,
 	}
 }
 
@@ -127,7 +129,8 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 	c := &Conn{
 		deviceID: ident.DeviceID, userID: ident.UserID, sessionID: ident.SessionID,
 		ws: ws, outbound: make(chan []byte, outboundQueueSize),
-		gate: newReplayGate(!willReplay),
+		gate:  newReplayGate(!willReplay),
+		rcoal: newReceiptCoalescer(),
 	}
 	if displaced := s.reg.Add(c); displaced != nil {
 		// Close asynchronously: a WebSocket close performs a closing handshake
@@ -182,12 +185,37 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Receipt forwarding: peers' delivered/read watermarks relayed by core-api
+	// on dev.{id}.receipt. Lossy by design — a full queue drops the receipt
+	// rather than the connection (unlike messages, nothing replays them).
+	var unsubReceipts func()
+	if s.receipts != nil {
+		unsubReceipts, err = s.receipts.Subscribe(ident.DeviceID, func(payload []byte) {
+			rc, derr := decodeReceipt(payload)
+			if derr != nil {
+				s.log.Warn("dropping malformed receipt", "device_id", c.deviceID, "err", derr)
+				return
+			}
+			if !c.Deliver(receiptFrame(c.nextFrameID(), rc)) {
+				s.log.Debug("dropping receipt on full queue", "device_id", c.deviceID)
+			}
+		})
+		if err != nil {
+			s.log.Error("receipt subscribe failed", "device_id", ident.DeviceID, "err", err)
+			s.cleanup(c)
+			return
+		}
+	}
+
 	if willReplay {
 		go s.replay(ctx, c, cursors)
 	}
 
 	s.log.Info("connection established", "device_id", ident.DeviceID, "user_id", ident.UserID)
 	s.serve(ctx, c)
+	if unsubReceipts != nil {
+		unsubReceipts()
+	}
 	if unsubscribe != nil {
 		unsubscribe()
 	}
@@ -301,6 +329,9 @@ func (s *Server) serve(ctx context.Context, c *Conn) {
 
 	go c.writePump(ctx)
 	go s.heartbeat(ctx, c)
+	if s.chat != nil {
+		go s.receiptFlushLoop(ctx, c)
+	}
 
 	for {
 		frame, err := readFrame(ctx, c.ws)
@@ -317,10 +348,15 @@ func (s *Server) serve(ctx context.Context, c *Conn) {
 			s.handleMsgSend(ctx, c, body.MsgSend)
 		case *wsv1.Frame_ClientAck:
 			s.handleClientAck(ctx, c, body.ClientAck)
+		case *wsv1.Frame_Receipt:
+			// Coalesced: the flush loop forwards at most one per
+			// (conversation, kind) per 250 ms window (DS&A §9).
+			r := body.Receipt
+			c.rcoal.submit(r.GetConversationId(), r.GetKind(), r.GetUpToSeq())
 		default:
-			// Receipts, presence, typing, … arrive with their tasks
-			// (T0.14/T0.15). Unknown frames are ignored, not fatal: old
-			// servers must tolerate newer clients.
+			// Presence, typing, … arrive with their tasks (T0.15+). Unknown
+			// frames are ignored, not fatal: old servers must tolerate newer
+			// clients.
 			s.log.Debug("ignoring frame", "device_id", c.deviceID)
 		}
 	}

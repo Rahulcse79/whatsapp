@@ -26,3 +26,24 @@ func (s *NATSDeliverySource) Subscribe(deviceID string, deliver func([]byte)) (f
 	}
 	return func() { _ = sub.Unsubscribe() }, nil
 }
+
+// NATSReceiptSource subscribes to per-device receipt subjects
+// (dev.{id}.receipt, published by chat/adapters.RelayReceipt). Same
+// live-only semantics as delivery: receipts are lossy conveniences, so a
+// receipt published while the device is offline is simply gone — the message
+// info screen reconciles from peer state on demand (T1+).
+type NATSReceiptSource struct{ nc *nats.Conn }
+
+func NewNATSReceiptSource(nc *nats.Conn) *NATSReceiptSource {
+	return &NATSReceiptSource{nc: nc}
+}
+
+func (s *NATSReceiptSource) Subscribe(deviceID string, deliver func([]byte)) (func(), error) {
+	sub, err := s.nc.Subscribe("dev."+deviceID+".receipt", func(msg *nats.Msg) {
+		deliver(msg.Data)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("subscribing receipts for %s: %w", deviceID, err)
+	}
+	return func() { _ = sub.Unsubscribe() }, nil
+}

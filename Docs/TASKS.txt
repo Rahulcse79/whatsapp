@@ -78,16 +78,14 @@ LEGEND:  [x] done   [>] next up   [ ] pending
             token-degrade/ClientAck-forward. Impl landed inside the T0.12 commit; tests
             were the gap.)
 
-[~] T0.14  Receipts + delivery states  (SERVER-SIDE DONE; gateway plumbing remains)
-           DONE: chat.SubmitReceipt (privacy-gated read receipts, relay to other
-           devices), ReceiptCoalescer (N->1 per conv/kind, max seq — tested), gRPC
-           SubmitReceipt, store ReceiptTargets/ReadReceiptsEnabled, NATS RelayReceipt
-           on dev.{id}.receipt, core-api SetReceipts. Both DONE criteria met (coalescing
-           + privacy unit tests).
-           REMAINING (gateway follow-up): add SubmitReceipt to gateway ChatClient +
-           gRPC adapter; serve-loop case *wsv1.Frame_Receipt -> coalesced SubmitReceipt;
-           ReceiptSource (like DeliverySource) subscribing dev.{id}.receipt -> forward as
-           Receipt frames (coalesced); wire in ws-gateway main. Then flip to [x].
+[x] T0.14  Receipts + delivery states
+           (server: chat.SubmitReceipt privacy-gated read receipts + relay to other
+           devices; ReceiptCoalescer N->1 per conv/kind max-seq; gRPC SubmitReceipt;
+           store ReceiptTargets/ReadReceiptsEnabled; NATS RelayReceipt on dev.{id}.receipt.
+           gateway: inbound Receipt frame -> per-conn receiptCoalescer -> 250ms flush loop
+           -> ChatClient.SubmitReceipt (N-in-window -> 1 rpc, tested e2e); outbound
+           dev.{id}.receipt subscription -> Receipt frame to client (tested e2e); wired in
+           ws-gateway main. Both DONE criteria green + inbound/outbound e2e tests.)
 
 [>] T0.15  Presence + typing
     PROMPT> implement task T0.15 presence: subscription model (max 50 subs/device),

@@ -97,6 +97,28 @@ func itemsFrame(frameID uint64, items []*wsv1.InboxItem, replay, replayComplete 
 	return payload
 }
 
+// receiptFrame relays a peer's delivered/read watermark to the client.
+func receiptFrame(frameID uint64, r *wsv1.Receipt) []byte {
+	payload, _ := proto.Marshal(&wsv1.Frame{
+		FrameId: frameID,
+		Body:    &wsv1.Frame_Receipt{Receipt: r},
+	})
+	return payload
+}
+
+// decodeReceipt decodes one NATS receipt payload (wsv1.Receipt, published by
+// chat/adapters.RelayReceipt).
+func decodeReceipt(payload []byte) (*wsv1.Receipt, error) {
+	r := &wsv1.Receipt{}
+	if err := proto.Unmarshal(payload, r); err != nil {
+		return nil, fmt.Errorf("decoding receipt: %w", err)
+	}
+	if r.GetConversationId() == "" || r.GetUpToSeq() <= 0 {
+		return nil, fmt.Errorf("receipt missing conversation/seq")
+	}
+	return r, nil
+}
+
 // decodeDelivery decodes one NATS delivery payload (events.v1.Delivery,
 // published by chat/adapters). deviceID guards against subject/payload skew —
 // a delivery addressed elsewhere is a bug, not an item to forward.

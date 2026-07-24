@@ -26,6 +26,7 @@ type fakeChat struct {
 	batch         int
 	pulledCursors [][]*wsv1.ConversationCursor
 	ackedCursors  [][]*wsv1.ConversationCursor
+	receipts      []*wsv1.Receipt
 }
 
 func (f *fakeChat) AcceptMessage(_ context.Context, _, _ string, msg *wsv1.MsgSend) (*wsv1.MsgAck, *commonv1.Error, error) {
@@ -57,6 +58,21 @@ func (f *fakeChat) AckDelivered(_ context.Context, _ string, upTo []*wsv1.Conver
 	f.ackedCursors = append(f.ackedCursors, upTo)
 	f.mu.Unlock()
 	return nil
+}
+
+func (f *fakeChat) SubmitReceipt(_ context.Context, _, _ string, r *wsv1.Receipt) error {
+	f.mu.Lock()
+	f.receipts = append(f.receipts, r)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeChat) submittedReceipts() []*wsv1.Receipt {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]*wsv1.Receipt, len(f.receipts))
+	copy(out, f.receipts)
+	return out
 }
 
 func (f *fakeChat) lastPull() []*wsv1.ConversationCursor {

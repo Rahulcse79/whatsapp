@@ -79,6 +79,7 @@ func main() {
 		Verifier: verifier,
 		Routes:   gwadapters.NewValkeyRouteStore(vk),
 		Delivery: gwadapters.NewNATSDeliverySource(nc),
+		Receipts: gwadapters.NewNATSReceiptSource(nc),
 		Chat:     gwadapters.NewGRPCChatClient(coreConn),
 		Resume:   gwadapters.NewValkeyResumeStore(vk),
 		PodID:    podID(),

@@ -70,6 +70,23 @@ func (g *GRPCChatClient) PullInbox(ctx context.Context, deviceID string, cursors
 	}
 }
 
+// SubmitReceipt forwards a coalesced receipt watermark. Best-effort: typed
+// rejections surface as errors the caller logs (receipts are lossy).
+func (g *GRPCChatClient) SubmitReceipt(ctx context.Context, fromUserID, fromDeviceID string, r *wsv1.Receipt) error {
+	resp, err := g.c.SubmitReceipt(ctx, &rpcv1.SubmitReceiptRequest{
+		FromUserId:   fromUserID,
+		FromDeviceId: fromDeviceID,
+		Receipt:      r,
+	})
+	if err != nil {
+		return fmt.Errorf("receipt rpc: %w", err)
+	}
+	if werr := resp.GetError(); werr != nil {
+		return fmt.Errorf("receipt rejected: %s", werr.GetCode())
+	}
+	return nil
+}
+
 // AckDelivered forwards the cumulative watermark. A typed rejection is
 // surfaced as an error: the caller only logs it (acks are retried by design
 // — unacked rows simply replay).

@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/whatsapp-v2/server/internal/auth"
+	"github.com/whatsapp-v2/server/internal/presence"
 	wsv1 "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/ws/v1"
 )
 
@@ -46,10 +47,12 @@ type Server struct {
 	verifier auth.TokenVerifier
 	authz    Authorizer
 	routes   RouteStore
-	delivery DeliverySource // nil = no live delivery (some tests)
-	receipts DeliverySource // nil = no receipt forwarding (dev.{id}.receipt)
-	chat     ChatClient     // nil = no core-api (some tests): no replay, no send path
-	resume   ResumeStore    // nil = resume tokens disabled (some tests)
+	delivery DeliverySource  // nil = no live delivery (some tests)
+	receipts DeliverySource  // nil = no receipt forwarding (dev.{id}.receipt)
+	chat     ChatClient      // nil = no core-api (some tests): no replay, no send path
+	resume   ResumeStore     // nil = resume tokens disabled (some tests)
+	presence PresenceBackend // nil = presence/typing disabled (some tests)
+	flap     *presence.FlapDamper
 	podID    string
 	routeTTL time.Duration
 	log      *slog.Logger
@@ -69,6 +72,8 @@ type Config struct {
 	Receipts       DeliverySource
 	Chat           ChatClient
 	Resume         ResumeStore
+	Presence       PresenceBackend
+	PresenceGrace  time.Duration // offline flap-damping window; 0 = presence.DefaultGrace
 	PodID          string
 	RouteTTL       time.Duration
 	Log            *slog.Logger
@@ -89,12 +94,17 @@ func NewServer(cfg Config) *Server {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	return &Server{
+	s := &Server{
 		reg: cfg.Registry, verifier: cfg.Verifier, authz: cfg.Authorizer,
 		routes: cfg.Routes, delivery: cfg.Delivery, receipts: cfg.Receipts,
-		chat: cfg.Chat, resume: cfg.Resume, podID: cfg.PodID,
-		routeTTL: cfg.RouteTTL, log: cfg.Log, allowedOrigins: cfg.AllowedOrigins,
+		chat: cfg.Chat, resume: cfg.Resume, presence: cfg.Presence,
+		podID: cfg.PodID, routeTTL: cfg.RouteTTL, log: cfg.Log,
+		allowedOrigins: cfg.AllowedOrigins,
 	}
+	if cfg.Presence != nil {
+		s.flap = presence.NewFlapDamper(cfg.PresenceGrace)
+	}
+	return s
 }
 
 // Registry exposes the connection registry (drain, metrics).
@@ -131,6 +141,9 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 		ws: ws, outbound: make(chan []byte, outboundQueueSize),
 		gate:  newReplayGate(!willReplay),
 		rcoal: newReceiptCoalescer(),
+	}
+	if s.presence != nil {
+		c.pres = newConnPresence()
 	}
 	if displaced := s.reg.Add(c); displaced != nil {
 		// Close asynchronously: a WebSocket close performs a closing handshake
@@ -217,6 +230,10 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 		s.cleanup(c)
 		return
+	}
+
+	if s.presence != nil {
+		s.presenceConnect(ctx, c)
 	}
 
 	if willReplay {
@@ -365,6 +382,14 @@ func (s *Server) serve(ctx context.Context, c *Conn) {
 			// (conversation, kind) per 250 ms window (DS&A §9).
 			r := body.Receipt
 			c.rcoal.submit(r.GetConversationId(), r.GetKind(), r.GetUpToSeq())
+		case *wsv1.Frame_PresenceSub:
+			if s.presence != nil {
+				s.handlePresenceSub(ctx, c, body.PresenceSub)
+			}
+		case *wsv1.Frame_Typing:
+			if s.presence != nil {
+				s.handleTyping(ctx, c, body.Typing)
+			}
 		default:
 			// Presence, typing, … arrive with their tasks (T0.15+). Unknown
 			// frames are ignored, not fatal: old servers must tolerate newer
@@ -440,6 +465,11 @@ func (s *Server) heartbeat(ctx context.Context, c *Conn) {
 				c.Close(CloseReplaced, "replaced by a newer connection")
 				return
 			}
+			if s.presence != nil {
+				if err := s.presence.Heartbeat(ctx, c.userID, c.deviceID, time.Now().UnixMilli()); err != nil {
+					s.log.Debug("presence heartbeat failed", "device_id", c.deviceID, "err", err)
+				}
+			}
 		}
 	}
 }
@@ -448,6 +478,9 @@ func (s *Server) heartbeat(ctx context.Context, c *Conn) {
 // but only if it is still the current owner (a displaced connection must not
 // evict the newer one's registry entry or route).
 func (s *Server) cleanup(c *Conn) {
+	if s.presence != nil && c.pres != nil && c.pres.connected {
+		s.presenceDisconnect(c)
+	}
 	if s.reg.Remove(c) {
 		_ = s.routes.Release(context.Background(), c.deviceID, s.podID)
 	}

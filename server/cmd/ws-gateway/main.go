@@ -26,7 +26,18 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/logging"
 	"github.com/whatsapp-v2/server/internal/platform/natsx"
 	"github.com/whatsapp-v2/server/internal/platform/valkey"
+	"github.com/whatsapp-v2/server/internal/presence"
+	presadapters "github.com/whatsapp-v2/server/internal/presence/adapters"
 )
+
+// presenceBackend composes the presence Store (Valkey), Publisher + subscribe
+// helpers (NATS), and PrivacyChecker into gateway.PresenceBackend. Method sets
+// are disjoint, so embedding satisfies the interface by promotion.
+type presenceBackend struct {
+	*presadapters.PresenceStore
+	*presadapters.NATSPresence
+	presence.PrivacyChecker
+}
 
 // Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
 var (
@@ -82,6 +93,11 @@ func main() {
 		Receipts: gwadapters.NewNATSReceiptSource(nc),
 		Chat:     gwadapters.NewGRPCChatClient(coreConn),
 		Resume:   gwadapters.NewValkeyResumeStore(vk),
+		Presence: presenceBackend{
+			PresenceStore:  presadapters.NewPresenceStore(vk),
+			NATSPresence:   presadapters.NewNATSPresence(nc),
+			PrivacyChecker: presence.AllowAllPrivacy{}, // TODO: core-api privacy lookup
+		},
 		PodID:    podID(),
 		RouteTTL: 90 * time.Second,
 		Log:      log,

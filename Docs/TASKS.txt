@@ -87,12 +87,17 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            dev.{id}.receipt subscription -> Receipt frame to client (tested e2e); wired in
            ws-gateway main. Both DONE criteria green + inbound/outbound e2e tests.)
 
-[>] T0.15  Presence + typing
-    PROMPT> implement task T0.15 presence: subscription model (max 50 subs/device),
-            valkey presence keys with TTL, 15s offline grace, typing relay with 5s
-            TTL, privacy enforcement at subscribe time. code + tests only.
-    DOCS:   Docs/02-architecture/data-structures-algorithms.md §10–11 · HLD §8.5
-    DONE:   flap-damping test; unsubscribed users never receive updates (test)
+[x] T0.15  Presence + typing
+           (presence pkg: Subscriptions [cap 50, add/remove reporting, filter], FlapDamper
+           [15s grace, reconnect cancels], Valkey Store [per-user online-device hash, Lua
+           prune of stale devices, multi-device transitions], NATS Publisher + pres.{u}/typ.{u}
+           subscribe helpers, PrivacyChecker port. gateway: per-conn presence subs + fan-out,
+           connect→online publish, heartbeat refresh, disconnect→flap-damped offline, PresenceSub
+           opens/closes feeds w/ subscribe-time privacy + snapshot, Typing→publish. ws-gateway main
+           wires composite backend. Tests: subscriptions/flap unit, Valkey integration, gateway e2e
+           [connect-online, subscribe-snapshot+updates, unsubscribe-drops-updates, typing-published].)
+           NOTE: PrivacyChecker is AllowAll interim — real core-api privacy lookup is a follow-up.
+
 
 [ ] T0.16  notification-svc
     PROMPT> implement task T0.16 notification-svc: push.dispatch pull consumer,

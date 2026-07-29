@@ -106,6 +106,24 @@ func receiptFrame(frameID uint64, r *wsv1.Receipt) []byte {
 	return payload
 }
 
+// presenceUpdateFrame relays a tracked user's online/last-seen change.
+func presenceUpdateFrame(frameID uint64, u *wsv1.PresenceUpdate) []byte {
+	payload, _ := proto.Marshal(&wsv1.Frame{
+		FrameId: frameID,
+		Body:    &wsv1.Frame_PresenceUpdate{PresenceUpdate: u},
+	})
+	return payload
+}
+
+// typingFrame relays a tracked user's typing/recording indicator.
+func typingFrame(frameID uint64, tp *wsv1.Typing) []byte {
+	payload, _ := proto.Marshal(&wsv1.Frame{
+		FrameId: frameID,
+		Body:    &wsv1.Frame_Typing{Typing: tp},
+	})
+	return payload
+}
+
 // decodeReceipt decodes one NATS receipt payload (wsv1.Receipt, published by
 // chat/adapters.RelayReceipt).
 func decodeReceipt(payload []byte) (*wsv1.Receipt, error) {

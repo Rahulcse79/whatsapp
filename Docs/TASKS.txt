@@ -99,13 +99,20 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            NOTE: PrivacyChecker is AllowAll interim — real core-api privacy lookup is a follow-up.
 
 
-[ ] T0.16  notification-svc
-    PROMPT> implement task T0.16 notification-svc: push.dispatch pull consumer,
-            driver interface + fcm/apns/ntfy/webpush drivers (fcm+ntfy real, apns
-            stub ok), circuit breaker per provider, token lifecycle, DLQ after 5.
-            code + tests only.
-    DOCS:   Docs/05-services/notification-svc-lld.md
-    DONE:   breaker-open test: messages nack + redeliver, never dropped
+[x] T0.16  notification-svc
+           (internal/notify: PushDriver/TokenStore/DLQPublisher ports + typed errors
+           [ErrTokenInvalid/ErrNoToken]; per-provider circuit Breaker [5 fails/30s → open
+           60s, half-open probe, injectable clock]; Service.Handle pipeline → Outcome
+           Ack/Nack/Dead [breaker-open → Nack without calling driver; invalid token →
+           delete+ack; transient → nack, ceiling 5 → DLQ]. adapters: PG TokenStore,
+           drivers [ntfy real HTTP, FCM real v1 data-only w/ injected OAuth, APNs+WebPush
+           stubs], JetStream consumer [first durable stream PUSH: push.dispatch+push.dlq,
+           MaxDeliver, ack/nak/DLQ] + DLQPublisher. cmd/notification-svc wired [ntfy always,
+           FCM if WA_FCM_PROJECT]. Tests: breaker [open/half-open/window] + pipeline
+           [success/no-token/invalid/transient-DLQ/BREAKER-OPEN-nacks-without-sending] +
+           token-store integration. First JetStream use.)
+           NOTE: APNs/WebPush stubs unregistered by default (ack-drop, not DLQ-spam) until
+           creds wired; FCM OAuth token source is a static-env placeholder.
 
 [ ] T0.17  Shared client packages
     PROMPT> implement task T0.17 client packages: @wa/sync-engine (outbox flush loop,

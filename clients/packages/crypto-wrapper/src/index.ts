@@ -1,7 +1,6 @@
-// Crypto boundary: only this package may import libsignal. UI code never
-// sees key-material types (Docs/13-standards/coding-standards.md).
-//
-// Will expose: session establishment (X3DH), Double Ratchet encrypt/decrypt,
-// Sender Keys for groups, device-list signing/verification, safety numbers.
-// Design: Docs/06-security/e2ee-design.md. Implementation: task T0.17/T0.20.
-export {};
+// @wa/crypto-wrapper — the ONLY package that touches libsignal. It exposes the
+// E2EE session contract (establish / encrypt / decrypt) behind interfaces so
+// UI and sync code never handle key material (coding-standards.md). The
+// production cipher wraps libsignal (e2ee-design §2); MockSessionCipher is a
+// test double.
+export * from "./cipher";

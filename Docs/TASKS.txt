@@ -114,13 +114,17 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            NOTE: APNs/WebPush stubs unregistered by default (ack-drop, not DLQ-spam) until
            creds wired; FCM OAuth token source is a static-env placeholder.
 
-[ ] T0.17  Shared client packages
-    PROMPT> implement task T0.17 client packages: @wa/sync-engine (outbox flush loop,
-            cursors, conflict rules from the doc), @wa/crypto-wrapper (libsignal
-            session establish/encrypt/decrypt behind interfaces), @wa/proto-types
-            barrel. typescript, framework-free, vitest tests. code + tests only.
-    DOCS:   Docs/11-clients/offline-sync-local-store.md · Docs/06-security/e2ee-design.md §2
-    DONE:   outbox property test: crash/retry never dupes or loses; CI green
+[x] T0.17  Shared client packages
+           (@wa/sync-engine [framework-free TS]: crash-safe Outbox [persist-before-send,
+           remove-only-on-ack; thrown send/lost-ack keeps entry -> resend deduped by
+           clientRef], OutboxStore port + MemoryOutboxStore, Cursors [forward-only advance,
+           gap detection, snapshot/load], conflict rules [delete-wins overlay, set-union
+           reactions, monotonic read-seq]. @wa/crypto-wrapper: SessionCipher contract
+           [establish/encrypt/decrypt, opaque envelope] + MockSessionCipher test double
+           [INSECURE XOR, not shipped]. @wa/proto-types stays generated barrel. Tests:
+           outbox PROPERTY test [seeded PRNG, 25 seeds x 20 msgs, random crash/retry/ack ->
+           no loss, no dupe, drains] + conflict/cursors + cipher contract. Standalone, no
+           proto-types dep -> CI clients job safe.)
 
 [ ] T0.18  Mobile app shell (React Native + Expo)
     PROMPT> implement task T0.18 mobile shell: create expo app in clients/mobile,

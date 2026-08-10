@@ -185,12 +185,25 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            + real libsignal binding [Node native / WASM / RN] are the seams that
            activate with the keys API + device directory. No new deps [pure TS].)
 
-[ ] T0.21  Overlay events
-    PROMPT> implement task T0.21 overlays: edit(15min)/delete(48h) window enforcement
-            server-side via accepted_at, reactions set-union merge, pin/star local,
-            client tombstone/apply logic. code + tests only.
-    DOCS:   Docs/04-api/messaging-groups-api.md semantics · sequence-diagrams §9
-    DONE:   window tests at boundary (14:59 ok, 15:01 reject) both directions
+[x] T0.21  Overlay events
+           (Server window enforcement was already wired in chat/service.go Accept
+           via domain.CheckOverlayWindow [edit 15m / delete 48h], anchored on the
+           target's UUIDv7 timestamp NOT a stored accepted_at — deliberate: the
+           relay model keeps no post-ACK message metadata, and a v7 id can't be
+           gamed since recipients match overlays by that same id [window.go doc].
+           Added the DONE: service-level boundary test through Accept —
+           TestAccept_OverlayWindowBoundaries, both directions: edit 14m59s ok /
+           15m01s -> VALIDATION_EDIT_WINDOW_CLOSED, delete 47h59m ok / 48h01m ->
+           VALIDATION_DELETE_WINDOW_CLOSED. Client: @wa/sync-engine applyOverlay
+           gained pin/unpin/star/unstar [reactions set-union + edit/delete-wins
+           already there]; client-core planInboxBatch BUG FIX — REACTION+PIN now
+           route to overlays not new-message inserts [via isOverlayKind]; pin/star
+           LOCAL surfaced through the repos — ThreadMessage.pinned/starred +
+           MessageRepo.setPinned/setStarred implemented in MemoryMessageRepo [+
+           tests] and SqliteMessageStore [schema cols]. Edit/reaction CONTENT apply
+           still rides the E2EE-decrypt seam [payloads are ciphertext]. Tests:
+           conflict pin/star, planInboxBatch reaction/pin routing, memoryRepo
+           pin/star toggles, server boundary both directions.)
 
 [ ] T0.22  Kubernetes deploy
     PROMPT> implement task T0.22 k8s: helm charts per deployable + umbrella, argocd

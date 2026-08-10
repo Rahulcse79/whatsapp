@@ -57,3 +57,33 @@ describe("mergeReadSeq", () => {
     expect(mergeReadSeq(0, 0)).toBe(0);
   });
 });
+
+describe("applyOverlay pin/star", () => {
+  it("toggles the pin flag", () => {
+    let m = base();
+    expect(m.pinned).toBeFalsy();
+    m = applyOverlay(m, { kind: "pin" });
+    expect(m.pinned).toBe(true);
+    m = applyOverlay(m, { kind: "unpin" });
+    expect(m.pinned).toBe(false);
+  });
+
+  it("toggles the star flag independently of pin", () => {
+    let m = applyOverlay(base(), { kind: "star" });
+    expect(m.starred).toBe(true);
+    expect(m.pinned).toBeFalsy();
+    m = applyOverlay(m, { kind: "pin" });
+    expect(m.starred).toBe(true);
+    expect(m.pinned).toBe(true);
+    m = applyOverlay(m, { kind: "unstar" });
+    expect(m.starred).toBe(false);
+    expect(m.pinned).toBe(true);
+  });
+
+  it("pin/star survive a reaction and vice-versa (independent fields)", () => {
+    let m = applyOverlay(base(), { kind: "pin" });
+    m = applyOverlay(m, { kind: "reaction-add", emoji: "👍", reactorUserId: "u1" });
+    expect(m.pinned).toBe(true);
+    expect([...(m.reactions["👍"] ?? [])]).toEqual(["u1"]);
+  });
+});

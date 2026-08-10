@@ -50,6 +50,20 @@ describe("planInboxBatch", () => {
     expect(plan.watermark).toEqual([{ conversationId: "c1", lastSeq: 2 }]);
   });
 
+  it("routes reaction and pin kinds to overlays too (never new bubbles)", () => {
+    const cursors = new Cursors();
+    const plan = planInboxBatch(
+      batch([
+        item(1),
+        item(2, { kind: MsgKind.REACTION, overlayTarget: "m1", msgUuid: "r2" }),
+        item(3, { kind: MsgKind.PIN, overlayTarget: "m1", msgUuid: "p3" }),
+      ]),
+      cursors,
+    );
+    expect(plan.inserts.map((i) => i.msgUuid)).toEqual(["m1"]); // only the real message
+    expect(plan.overlays.map((o) => o.kind)).toEqual([MsgKind.REACTION, MsgKind.PIN]);
+  });
+
   it("sorts out-of-order items by seq so the cursor gate is correct", () => {
     const cursors = new Cursors();
     const plan = planInboxBatch(batch([item(3), item(1), item(2)]), cursors);

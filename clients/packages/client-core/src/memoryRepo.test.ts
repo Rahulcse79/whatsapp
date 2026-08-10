@@ -71,4 +71,20 @@ describe("MemoryMessageRepo", () => {
     const convs = await repo.conversations();
     expect(convs.map((c) => c.conversationId)).toEqual(["new", "old"]);
   });
+
+  it("pins and stars a message locally (independent, toggleable flags)", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.enqueueOutgoing({ clientRef: "m1", conversationId: "c1", plaintext: "hi", payload: new Uint8Array(), now: 1 });
+    const read = async () => (await repo.thread("c1")).find((m) => m.msgUuid === "m1");
+    expect((await read())?.pinned).toBe(false);
+
+    await repo.setPinned("m1", true);
+    await repo.setStarred("m1", true);
+    expect((await read())?.pinned).toBe(true);
+    expect((await read())?.starred).toBe(true);
+
+    await repo.setPinned("m1", false);
+    expect((await read())?.pinned).toBe(false);
+    expect((await read())?.starred).toBe(true); // star unaffected
+  });
 });

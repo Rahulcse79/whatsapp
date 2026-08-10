@@ -22,6 +22,8 @@ interface MsgRow {
   deleted: boolean;
   mine: boolean;
   state: string;
+  pinned?: boolean;
+  starred?: boolean;
   acceptedAt: number;
   createdAt: number;
 }
@@ -152,9 +154,23 @@ export class MemoryMessageRepo implements MessageRepo {
         mine: m.mine,
         state: m.state,
         deleted: m.deleted,
+        pinned: m.pinned ?? false,
+        starred: m.starred ?? false,
         createdAt: m.createdAt,
       }));
     return Promise.resolve(rows);
+  }
+
+  setPinned(msgUuid: string, pinned: boolean): Promise<void> {
+    const m = this.messages.get(msgUuid);
+    if (m) m.pinned = pinned;
+    return Promise.resolve();
+  }
+
+  setStarred(msgUuid: string, starred: boolean): Promise<void> {
+    const m = this.messages.get(msgUuid);
+    if (m) m.starred = starred;
+    return Promise.resolve();
   }
 
   private touch(conversationId: string, seq: number, preview: string, ts: number): void {

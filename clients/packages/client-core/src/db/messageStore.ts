@@ -30,6 +30,17 @@ export interface BatchPlan {
   watermark: ConversationCursor[]; // cumulative per-conversation max seq to ClientAck
 }
 
+/** Overlay kinds reference an existing message rather than creating a new one
+ *  (edit/delete/reaction/pin). Everything else is a new message. */
+export function isOverlayKind(kind: MsgKind): boolean {
+  return (
+    kind === MsgKind.OVERLAY_EDIT ||
+    kind === MsgKind.OVERLAY_DELETE ||
+    kind === MsgKind.REACTION ||
+    kind === MsgKind.PIN
+  );
+}
+
 /**
  * planInboxBatch decides — purely — what an inbox batch does to local state:
  * which non-overlay messages are new (seq beyond the cursor; at-least-once
@@ -43,7 +54,10 @@ export function planInboxBatch(batch: InboxBatch, cursors: Cursors): BatchPlan {
 
   for (const it of [...batch.items].sort((a, b) => a.seq - b.seq)) {
     touched.add(it.conversationId);
-    if (it.kind === MsgKind.OVERLAY_EDIT || it.kind === MsgKind.OVERLAY_DELETE) {
+    if (isOverlayKind(it.kind)) {
+      // edit/delete/reaction/pin reference an existing message — they are never
+      // new bubbles. Content (edit body, reaction emoji) rides the ciphertext;
+      // the repo applies it after decryption. Delete needs no content.
       overlays.push({ conversationId: it.conversationId, targetMsgUuid: it.overlayTarget ?? "", kind: it.kind });
     } else if (it.seq > cursors.get(it.conversationId)) {
       inserts.push({
@@ -77,6 +91,8 @@ export interface ThreadMessage {
   mine: boolean;
   state: string;
   deleted: boolean;
+  pinned: boolean;
+  starred: boolean;
   createdAt: number;
 }
 
@@ -103,6 +119,10 @@ export interface MessageRepo {
   pendingSends(): Promise<MsgSend[]>;
   conversations(): Promise<ChatSummary[]>;
   thread(conversationId: string): Promise<ThreadMessage[]>;
+  /** Local pin (syncs to own devices in the full build). */
+  setPinned(msgUuid: string, pinned: boolean): Promise<void>;
+  /** Purely local star — never leaves the device. */
+  setStarred(msgUuid: string, starred: boolean): Promise<void>;
 }
 
 export class MessageStore implements MessageRepo {
@@ -204,7 +224,7 @@ export class MessageStore implements MessageRepo {
 
   async thread(conversationId: string): Promise<ThreadMessage[]> {
     const rows = await this.db.all(
-      "SELECT msg_uuid, seq, body, deleted, mine, state, accepted_at, created_at FROM messages WHERE conversation_id = ? ORDER BY (CASE WHEN accepted_at > 0 THEN accepted_at ELSE created_at END) ASC, seq ASC",
+      "SELECT msg_uuid, seq, body, deleted, mine, state, pinned, starred, accepted_at, created_at FROM messages WHERE conversation_id = ? ORDER BY (CASE WHEN accepted_at > 0 THEN accepted_at ELSE created_at END) ASC, seq ASC",
       [conversationId],
     );
     return rows.map((r) => ({
@@ -214,8 +234,18 @@ export class MessageStore implements MessageRepo {
       deleted: Number(r.deleted) === 1,
       mine: Number(r.mine) === 1,
       state: String(r.state),
+      pinned: Number(r.pinned) === 1,
+      starred: Number(r.starred) === 1,
       createdAt: Number(r.created_at),
     }));
+  }
+
+  async setPinned(msgUuid: string, pinned: boolean): Promise<void> {
+    await this.db.run("UPDATE messages SET pinned = ? WHERE msg_uuid = ?", [pinned ? 1 : 0, msgUuid]);
+  }
+
+  async setStarred(msgUuid: string, starred: boolean): Promise<void> {
+    await this.db.run("UPDATE messages SET starred = ? WHERE msg_uuid = ?", [starred ? 1 : 0, msgUuid]);
   }
 
   private async touchConversation(conversationId: string, seq: number, preview: string, ts: number): Promise<void> {

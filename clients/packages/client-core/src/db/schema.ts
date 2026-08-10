@@ -22,6 +22,8 @@ CREATE TABLE IF NOT EXISTS messages (
   deleted         INTEGER NOT NULL DEFAULT 0,
   mine            INTEGER NOT NULL DEFAULT 0,
   state           TEXT    NOT NULL DEFAULT 'received',
+  pinned          INTEGER NOT NULL DEFAULT 0,
+  starred         INTEGER NOT NULL DEFAULT 0,
   accepted_at     INTEGER NOT NULL DEFAULT 0,
   created_at      INTEGER NOT NULL DEFAULT 0
 );

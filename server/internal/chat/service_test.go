@@ -283,3 +283,47 @@ func TestAccept_EditWindowClosed(t *testing.T) {
 		t.Fatal("edit past 15m accepted")
 	}
 }
+
+// TestAccept_OverlayWindowBoundaries exercises the accept-path enforcement at
+// the exact window edges (FR-MSG-05/06): both directions (edit 15m, delete 48h),
+// just inside accepts, just outside rejects with the matching code. The window
+// anchors on the target message's UUIDv7 timestamp; the service clock is
+// injected relative to it.
+func TestAccept_OverlayWindowBoundaries(t *testing.T) {
+	cases := []struct {
+		name    string
+		kind    MsgKind
+		age     time.Duration
+		wantErr string // "" = accepted
+	}{
+		{"edit 14m59s inside", KindOverlayEdit, 14*time.Minute + 59*time.Second, ""},
+		{"edit 15m01s outside", KindOverlayEdit, 15*time.Minute + time.Second, "VALIDATION_EDIT_WINDOW_CLOSED"},
+		{"delete 47h59m inside", KindOverlayDelete, 47*time.Hour + 59*time.Minute, ""},
+		{"delete 48h01m outside", KindOverlayDelete, 48*time.Hour + time.Minute, "VALIDATION_DELETE_WINDOW_CLOSED"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newSvc(newMemStore(), newMemDeduper())
+			target := id.NewUUID()
+			s.now = func() time.Time { return id.TimeOf(target).Add(tc.age) }
+
+			r := req("c1", id.New())
+			r.Kind = tc.kind
+			r.OverlayTarget = target.String()
+
+			res, err := s.Accept(context.Background(), r)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("overlay just inside the window was rejected: %v", err)
+				}
+				if res.Seq == 0 {
+					t.Fatal("accepted overlay got no seq")
+				}
+				return
+			}
+			if got := code(t, err); got != tc.wantErr {
+				t.Fatalf("want %s, got %s", tc.wantErr, got)
+			}
+		})
+	}
+}

@@ -1,7 +1,7 @@
 import { router, useLocalSearchParams } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import type { VerifiedSession } from "../../src/core/otpClient";
+import type { VerifiedSession } from "@wa/client-core";
 import { useServices } from "../../src/ui/ServicesContext";
 import { messageOf } from "../../src/ui/errors";
 

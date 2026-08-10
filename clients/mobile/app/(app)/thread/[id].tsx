@@ -10,7 +10,7 @@ import {
   TextInput,
   View,
 } from "react-native";
-import type { ThreadMessage } from "../../../src/core/db/messageStore";
+import type { ThreadMessage } from "@wa/client-core";
 import { useServices } from "../../../src/ui/ServicesContext";
 
 export default function Thread() {

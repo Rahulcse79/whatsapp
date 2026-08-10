@@ -88,17 +88,36 @@ export interface OutgoingDraft {
   now: number;
 }
 
-export class MessageStore {
+/**
+ * MessageRepo is the local-store contract the UI/services depend on, independent
+ * of the backing store. MessageStore implements it over the SqliteDB seam
+ * (mobile: expo-sqlite; web: OPFS SQLite-wasm). MemoryMessageRepo is the
+ * in-memory variant the web shell's worker uses until the OPFS store lands.
+ */
+export interface MessageRepo {
+  init(): Promise<ConversationCursor[]>;
+  cursorSnapshot(): ConversationCursor[];
+  persistInboxBatch(batch: InboxBatch): Promise<ConversationCursor[]>;
+  enqueueOutgoing(d: OutgoingDraft): Promise<void>;
+  markSent(clientRef: string, seq: number): Promise<void>;
+  pendingSends(): Promise<MsgSend[]>;
+  conversations(): Promise<ChatSummary[]>;
+  thread(conversationId: string): Promise<ThreadMessage[]>;
+}
+
+export class MessageStore implements MessageRepo {
   constructor(
     private readonly db: SqliteDB,
     private readonly cursors: Cursors,
   ) {}
 
-  /** init creates the schema and hydrates cursors from disk. */
-  async init(): Promise<void> {
+  /** init creates the schema, hydrates cursors from disk, and returns the
+   *  cursor snapshot (seeds a caller's Hello.last_cursors mirror). */
+  async init(): Promise<ConversationCursor[]> {
     await this.db.exec(SCHEMA);
     const rows = await this.db.all("SELECT conversation_id, last_seq FROM cursors");
     this.cursors.load(rows.map((r) => ({ conversationId: String(r.conversation_id), lastSeq: Number(r.last_seq) })));
+    return this.cursorSnapshot();
   }
 
   /** cursorSnapshot feeds Hello.last_cursors on connect. */

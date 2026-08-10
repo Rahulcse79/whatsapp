@@ -1,7 +1,7 @@
 import { router } from "expo-router";
 import { useState } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
-import { isValidPhone } from "../../src/core/ids";
+import { isValidPhone } from "@wa/client-core";
 import { useServices } from "../../src/ui/ServicesContext";
 import { messageOf } from "../../src/ui/errors";
 

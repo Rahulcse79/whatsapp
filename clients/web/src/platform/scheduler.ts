@@ -1,8 +1,7 @@
 import type { Cancel, Scheduler } from "@wa/client-core";
 
-// Real timers backing the Scheduler port. The core injects this in production
-// and a manual clock in tests.
-export const rnScheduler: Scheduler = {
+// Real timers backing the Scheduler port (WsClient injects a manual clock in tests).
+export const webScheduler: Scheduler = {
   setTimeout(fn: () => void, ms: number): Cancel {
     const id = setTimeout(fn, ms);
     return () => clearTimeout(id);

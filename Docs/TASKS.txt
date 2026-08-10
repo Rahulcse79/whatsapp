@@ -144,12 +144,24 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            ids, otpClient, wsClient [10 cases: handshake/resume/heartbeat/close-
            codes/reconnect-resend], outboxStore, planInboxBatch.)
 
-[ ] T0.19  Web PWA shell (React + Vite)
-    PROMPT> implement task T0.19 web shell: vite react app in clients/web, same
-            features as mobile shell, DB+crypto in dedicated worker, service worker
-            offline shell, WebPush registration. code only.
-    DOCS:   Docs/11-clients/web-app-architecture.md
-    DONE:   CI typechecks; lighthouse PWA installable (manual check ok)
+[x] T0.19  Web PWA shell (React + Vite)
+           (First extracted the framework-free mobile core -> shared package
+           @wa/client-core [clients/packages/client-core: frames, ports, WsClient,
+           backoff, ids, session, otpClient, SqliteOutboxStore, planInboxBatch +
+           MessageRepo iface + new MemoryMessageRepo; all Node tests moved here].
+           Mobile now imports @wa/client-core (no logic dup). Then clients/web
+           @wa/web, React 19 + Vite + vite-plugin-pwa. DEDICATED WORKER
+           [src/worker/db.worker.ts] runs DB+crypto off main thread: MemoryMessageRepo
+           [OPFS SQLite-wasm deferred] + MockSessionCipher seal, via typed postMessage
+           RPC [rpc.ts DbApi]. Main thread AppServices owns WsClient + SessionManager
+           + OtpClient + a cursor mirror [so Hello.last_cursors stays sync while store
+           is in worker]. Platform adapters: fetch/WebSocket/timers + IndexedDB
+           SecureStore [no secrets in localStorage]. vite-plugin-pwa Workbox SW +
+           manifest [pwa-192/512 icons generated] = installable + offline shell;
+           WebPush registration in push.ts [VAPID-gated]. UI: React 19 view-state
+           router + screens login/verify/chats/thread. New tests: MemoryMessageRepo
+           [dedupe/overlay/outbox/ordering]. Web logic reuses client-core -> web CI
+           test is passWithNoTests; typecheck covers the RN-free web surface.)
 
 [ ] T0.20  E2EE integration end-to-end
     PROMPT> implement task T0.20 e2ee wiring: X3DH session establishment via key

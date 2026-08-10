@@ -1,6 +1,6 @@
 import type { ClientFrame, ServerFrame, TransportFactory, WsTransport } from "@wa/client-core";
 
-// DEV/OFFLINE codec: frames as JSON (Uint8Array fields carried as tagged number
+// DEV/OFFLINE codec: frames as JSON (Uint8Array carried as tagged number
 // arrays). The wire contract is binary protobuf (websocket-protocol.md §Wire);
 // the production transport swaps this codec for @wa/proto-types once that
 // package is generated for the clients build (task T0.20). The core state
@@ -40,9 +40,7 @@ class JsonWsTransport implements WsTransport {
 }
 
 function encode(frame: ClientFrame): string {
-  return JSON.stringify(frame, (_k, v: unknown) =>
-    v instanceof Uint8Array ? { __u8: Array.from(v) } : v,
-  );
+  return JSON.stringify(frame, (_k, v: unknown) => (v instanceof Uint8Array ? { __u8: Array.from(v) } : v));
 }
 
 function decode(data: unknown): ServerFrame {

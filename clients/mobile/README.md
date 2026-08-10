@@ -5,13 +5,13 @@ store wired to `@wa/sync-engine`, and a WS client with reconnect/backoff/resume.
 
 Layering mirrors [mobile-app-architecture.md](../../Docs/11-clients/mobile-app-architecture.md) §1:
 
-- **`src/core/`** — framework-free, no React Native imports, unit-tested in Node.
-  Wire frames + ports, the WS connection/resume state machine (`wsClient.ts`),
-  full-jitter backoff, the OTP/refresh REST client, and the SQLite-backed stores
+- **`@wa/client-core`** (`clients/packages/client-core`) — the framework-free engine
+  shared with web: wire frames + ports, the WS connection/resume state machine,
+  full-jitter backoff, the OTP/refresh REST client, and the store logic
   (`SqliteOutboxStore` implements `@wa/sync-engine`'s `OutboxStore`; `planInboxBatch`
-  is the pure inbox-merge). The wire codec is JSON in this shell — binary protobuf
-  via `@wa/proto-types` lands with E2EE wiring (T0.20).
-- **`src/platform/`** — thin adapters implementing the core ports over Expo:
+  is the pure inbox-merge). Unit-tested in Node. The wire codec is JSON in this shell
+  — binary protobuf via `@wa/proto-types` lands with E2EE wiring (T0.20).
+- **`src/platform/`** — thin adapters implementing the client-core ports over Expo:
   `expo-sqlite`, `expo-secure-store`, `fetch`, `WebSocket`, real timers.
 - **`src/services/`, `src/ui/`, `app/`** — `AppServices` assembly, the React
   context, and the expo-router screens (`/login`, `/verify`, `/chats`, `/thread/[id]`).

@@ -1,7 +1,6 @@
 import type { HttpClient, HttpResponse } from "@wa/client-core";
 
-// fetch-backed HttpClient. Kept trivial: the core owns retries/backoff and error
-// mapping (otpClient), this just carries JSON over the wire.
+// fetch-backed HttpClient. The core owns retries + error mapping (otpClient).
 export function createHttpClient(baseUrl: string): HttpClient {
   return {
     async post(path: string, body: unknown, headers?: Record<string, string>): Promise<HttpResponse> {

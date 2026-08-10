@@ -20,8 +20,8 @@ describe("OtpClient", () => {
     const otp = new OtpClient(http);
     const ch = await otp.requestOtp("+14155550123");
     expect(ch).toEqual({ challengeId: "ch1", channel: "sms" });
-    expect(http.calls[0].path).toBe("/v1/auth/request-otp");
-    expect(http.calls[0].body).toEqual({ phone: "+14155550123" });
+    expect(http.calls[0]?.path).toBe("/v1/auth/request-otp");
+    expect(http.calls[0]?.body).toEqual({ phone: "+14155550123" });
   });
 
   it("verifies an OTP into a session (snake_case → camelCase)", async () => {
@@ -32,7 +32,7 @@ describe("OtpClient", () => {
     const otp = new OtpClient(http);
     const s = await otp.verifyOtp("ch1", "123456", { name: "Pixel", platform: "android" });
     expect(s).toEqual({ accessJwt: "a", refreshToken: "r", deviceId: "d", requiresPin: false });
-    expect(http.calls[0].body).toEqual({
+    expect(http.calls[0]?.body).toEqual({
       challenge_id: "ch1",
       code: "123456",
       device_info: { name: "Pixel", platform: "android" },

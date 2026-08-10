@@ -1,8 +1,7 @@
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import { FlatList, Pressable, StyleSheet, Text, View } from "react-native";
-import type { ChatSummary } from "../../src/core/db/messageStore";
-import { newId } from "../../src/core/ids";
+import { newId, type ChatSummary } from "@wa/client-core";
 import { useServices } from "../../src/ui/ServicesContext";
 
 export default function Chats() {

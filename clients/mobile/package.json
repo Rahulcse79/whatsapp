@@ -2,7 +2,7 @@
   "name": "@wa/mobile",
   "version": "0.0.0",
   "private": true,
-  "description": "WhatsApp V2 mobile client (React Native + Expo). Framework-free core (src/core) shared-testable in Node; RN/Expo only in platform adapters + app/ screens.",
+  "description": "WhatsApp V2 mobile client (React Native + Expo). Shared logic lives in @wa/client-core; this package is RN/Expo platform adapters + app/ screens.",
   "main": "expo-router/entry",
   "scripts": {
     "start": "expo start",
@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@wa/client-core": "workspace:*",
     "@wa/crypto-wrapper": "workspace:*",
     "@wa/sync-engine": "workspace:*",
     "expo": "~52.0.0",

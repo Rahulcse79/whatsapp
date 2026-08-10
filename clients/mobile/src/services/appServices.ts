@@ -5,12 +5,17 @@
 
 import { MockSessionCipher } from "@wa/crypto-wrapper";
 import { Cursors } from "@wa/sync-engine";
-import { MessageStore } from "../core/db/messageStore";
-import { newId } from "../core/ids";
-import { OtpClient, type VerifiedSession } from "../core/otpClient";
-import type { HttpClient, SqliteDB } from "../core/ports";
-import { SessionManager } from "../core/session";
-import { WsClient, type SessionProvider } from "../core/wsClient";
+import {
+  MessageStore,
+  OtpClient,
+  SessionManager,
+  WsClient,
+  newId,
+  type HttpClient,
+  type SessionProvider,
+  type SqliteDB,
+  type VerifiedSession,
+} from "@wa/client-core";
 import { createHttpClient } from "../platform/httpClient";
 import { openDatabase } from "../platform/expoSqlite";
 import { rnScheduler } from "../platform/scheduler";

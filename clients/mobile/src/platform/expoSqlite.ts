@@ -1,5 +1,5 @@
 import * as SQLite from "expo-sqlite";
-import type { SqliteDB, SqlRow, SqlValue } from "../core/ports";
+import type { SqliteDB, SqlRow, SqlValue } from "@wa/client-core";
 
 // SqliteDB port backed by expo-sqlite (SQLCipher-capable). The DB key comes from
 // the hardware keystore in the full build (mobile-app-architecture.md §2); the

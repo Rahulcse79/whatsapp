@@ -1,0 +1,16 @@
+{
+  "name": "@wa/client-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-free client core shared by web + mobile: wire frames, the WS reconnect/resume state machine, full-jitter backoff, the OTP/refresh REST client, and the local-store logic (planInboxBatch, SqliteOutboxStore, MessageRepo + MemoryMessageRepo). No DOM/React-Native imports — unit-tested in Node.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@wa/sync-engine": "workspace:*"
+  }
+}

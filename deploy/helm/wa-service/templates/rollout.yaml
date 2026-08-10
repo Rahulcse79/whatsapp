@@ -1,0 +1,112 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Rollout
+metadata:
+  name: {{ include "wa-service.fullname" . }}
+  labels:
+    {{- include "wa-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "wa-service.selectorLabels" . | nindent 6 }}
+  strategy:
+    canary:
+      maxSurge: {{ .Values.rollout.maxSurge | quote }}
+      maxUnavailable: {{ .Values.rollout.maxUnavailable }}
+      scaleDownDelaySeconds: {{ .Values.rollout.scaleDownDelaySeconds }}
+      steps:
+        {{- toYaml .Values.rollout.canary.steps | nindent 8 }}
+  template:
+    metadata:
+      labels:
+        {{- include "wa-service.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ include "wa-service.serviceAccountName" . }}
+      securityContext:
+        runAsNonRoot: {{ .Values.securityContext.runAsNonRoot }}
+        runAsUser: {{ .Values.securityContext.runAsUser }}
+        fsGroup: {{ .Values.securityContext.runAsUser }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      {{- if .Values.hostNetwork }}
+      hostNetwork: true
+      dnsPolicy: {{ default "ClusterFirstWithHostNet" .Values.dnsPolicy }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        {{- if .Values.affinity }}
+        {{- toYaml .Values.affinity | nindent 8 }}
+        {{- else }}
+        {{- include "wa-service.affinity" . | nindent 8 }}
+        {{- end }}
+      containers:
+        - name: {{ include "wa-service.name" . }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ports.http }}
+              protocol: TCP
+            {{- if .Values.ports.grpc }}
+            - name: grpc
+              containerPort: {{ .Values.ports.grpc }}
+              protocol: TCP
+            {{- end }}
+            {{- with .Values.ports.extra }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          envFrom:
+            - configMapRef:
+                name: {{ include "wa-service.fullname" . }}-config
+            {{- if .Values.envFromSecret }}
+            - secretRef:
+                name: {{ .Values.envFromSecret }}
+            {{- end }}
+          {{- with .Values.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.probes.livenessPath }}
+          livenessProbe:
+            httpGet:
+              path: {{ .Values.probes.livenessPath }}
+              port: {{ .Values.probes.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+          {{- end }}
+          {{- if .Values.probes.readinessPath }}
+          readinessProbe:
+            httpGet:
+              path: {{ .Values.probes.readinessPath }}
+              port: {{ .Values.probes.port }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 3
+          {{- end }}
+          {{- with .Values.lifecycle }}
+          lifecycle:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: {{ .Values.securityContext.readOnlyRootFilesystem }}
+            capabilities:
+              drop:
+                - ALL

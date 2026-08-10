@@ -1,0 +1,66 @@
+# offline — self-hosted single box / air-gapped (HLD §17.5, offline-local-server.md).
+# No public CA (step-ca), no FCM/APNs (ntfy), OTP over email/mock. Same charts.
+bootstrap:
+  dbRoles:
+    enabled: true
+
+offline:
+  stepCA:
+    enabled: true
+    dnsName: ca.wa.internal
+    acmeIssuerName: wa-step-ca
+
+core-api:
+  replicaCount: 1
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: offline
+    WA_VALKEY_ADDR: valkey:6379
+    WA_NATS_URL: nats://nats:4222
+    WA_OTP_CHANNEL: email
+
+ws-gateway:
+  replicaCount: 1
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: offline
+    WA_VALKEY_ADDR: valkey:6379
+    WA_NATS_URL: nats://nats:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+media-svc:
+  replicaCount: 1
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: offline
+    WA_NATS_URL: nats://nats:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+notification-svc:
+  replicaCount: 1
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: offline
+    WA_NATS_URL: nats://nats:4222
+    # ntfy driver (no FCM/APNs); the notification-svc picks ntfy when FCM is unset.
+    WA_NTFY_URL: http://ntfy:80

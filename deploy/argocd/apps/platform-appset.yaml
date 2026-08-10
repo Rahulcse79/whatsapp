@@ -1,0 +1,44 @@
+# ApplicationSet: one wa-platform Application per environment (dev/staging/prod/
+# offline), same chart, values-<env>.yaml overlay — drift impossible by
+# construction (kubernetes-deployment.md §3). Rendered by the ArgoCD
+# ApplicationSet controller (Go templating); all `{{ }}` fields are quoted so the
+# file stays valid YAML.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: wa-platform
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+          - env: staging
+          - env: prod
+          - env: offline
+  template:
+    metadata:
+      name: "wa-platform-{{ .env }}"
+    spec:
+      project: whatsapp-v2
+      source:
+        # Set repoURL to your GitOps repository.
+        repoURL: https://github.com/whatsapp-v2/whatsapp-v2.git
+        targetRevision: main
+        path: deploy/helm/wa-platform
+        helm:
+          valueFiles:
+            - values.yaml
+            - "values-{{ .env }}.yaml"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "wa-{{ .env }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

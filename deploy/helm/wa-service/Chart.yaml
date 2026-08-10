@@ -1,0 +1,13 @@
+apiVersion: v2
+name: wa-service
+description: >-
+  Reusable chart for a WhatsApp V2 Go deployable (core-api, ws-gateway,
+  media-svc, notification-svc). One chart, values overlays per service + env
+  (kubernetes-deployment.md §3). Workload is an Argo Rollout (canary).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - whatsapp-v2
+maintainers:
+  - name: platform

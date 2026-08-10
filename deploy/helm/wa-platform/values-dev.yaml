@@ -1,0 +1,58 @@
+# dev — single-node (kind / k3s), mocks, no autoscaling. Infra by service name.
+bootstrap:
+  dbRoles:
+    enabled: false
+
+core-api:
+  replicaCount: 1
+  image:
+    tag: "dev"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: dev
+    WA_LOG_LEVEL: debug
+    WA_VALKEY_ADDR: valkey:6379
+    WA_NATS_URL: nats://nats:4222
+    WA_OTP_CHANNEL: mock
+
+ws-gateway:
+  replicaCount: 1
+  image:
+    tag: "dev"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: dev
+    WA_VALKEY_ADDR: valkey:6379
+    WA_NATS_URL: nats://nats:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+media-svc:
+  replicaCount: 1
+  image:
+    tag: "dev"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: dev
+    WA_NATS_URL: nats://nats:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+notification-svc:
+  replicaCount: 1
+  image:
+    tag: "dev"
+  autoscaling:
+    enabled: false
+  pdb:
+    enabled: false
+  config:
+    WA_ENV: dev
+    WA_NATS_URL: nats://nats:4222

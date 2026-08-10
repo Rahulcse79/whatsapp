@@ -1,0 +1,8 @@
+{{ include "wa-service.fullname" . }} deployed as an Argo Rollout ({{ .Values.replicaCount }} replicas, canary).
+
+  Watch:   kubectl argo rollouts get rollout {{ include "wa-service.fullname" . }} -n {{ .Release.Namespace }} --watch
+  Promote: kubectl argo rollouts promote {{ include "wa-service.fullname" . }} -n {{ .Release.Namespace }}
+  Abort:   kubectl argo rollouts abort {{ include "wa-service.fullname" . }} -n {{ .Release.Namespace }}
+
+Config is in ConfigMap {{ include "wa-service.fullname" . }}-config; secrets come from
+{{ if .Values.envFromSecret }}Secret "{{ .Values.envFromSecret }}"{{ else }}(no secret configured){{ end }}.

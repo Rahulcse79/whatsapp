@@ -200,6 +200,58 @@ jobs:
           WA_TEST_VALKEY_ADDR: localhost:6379
         run: go test ./internal/.../adapters/... -run Integration -v
 
+  # ── Deploy: Helm charts lint + render clean for every env (no cluster) ───
+  deploy:
+    name: deploy (helm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.4
+
+      - name: Lint the reusable service chart
+        run: helm lint deploy/helm/wa-service
+
+      - name: Resolve umbrella dependencies
+        run: helm dependency update deploy/helm/wa-platform
+
+      - name: Lint the umbrella
+        run: helm lint deploy/helm/wa-platform
+
+      - name: Render every environment overlay
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/rendered
+          for env in dev staging prod offline; do
+            echo "::group::helm template ($env)"
+            helm template "wa-$env" deploy/helm/wa-platform \
+              --namespace "wa-$env" \
+              -f deploy/helm/wa-platform/values.yaml \
+              -f "deploy/helm/wa-platform/values-$env.yaml" \
+              > "/tmp/rendered/$env.yaml"
+            echo "  rendered $(grep -c '^kind:' "/tmp/rendered/$env.yaml") resources"
+            echo "::endgroup::"
+          done
+
+      - name: Validate rendered core resources (kubeconform; CRDs skipped)
+        run: |
+          set -euo pipefail
+          curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
+          for env in dev staging prod offline; do
+            ./kubeconform -ignore-missing-schemas -summary "/tmp/rendered/$env.yaml"
+          done
+
+      - name: ArgoCD manifests parse as YAML
+        run: |
+          python3 - <<'PY'
+          import glob, yaml
+          for f in glob.glob("deploy/argocd/**/*.yaml", recursive=True):
+              list(yaml.safe_load_all(open(f)))
+              print("ok", f)
+          PY
+
   # ── Docs-contract gate: interface changes require their doc (PRs only) ───
   docs-contract:
     name: docs contract

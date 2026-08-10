@@ -1,0 +1,12 @@
+WhatsApp V2 platform ({{ .Release.Name }}) rendered for namespace {{ .Release.Namespace }}.
+
+Deployables run as Argo Rollouts (canary): core-api, ws-gateway, media-svc,
+notification-svc — each enabled/scaled by the active values-<env>.yaml overlay.
+
+Bootstrap:
+  - DB roles job:    {{ if .Values.bootstrap.dbRoles.enabled }}enabled{{ else }}disabled{{ end }}
+  - offline step-ca: {{ if .Values.offline.stepCA.enabled }}enabled{{ else }}disabled{{ end }}
+
+GitOps: deployed per env by the ArgoCD ApplicationSet
+(deploy/argocd/apps/platform-appset.yaml) under the app-of-apps root.
+Watch a rollout: kubectl argo rollouts get rollout <name> -n {{ .Release.Namespace }} --watch

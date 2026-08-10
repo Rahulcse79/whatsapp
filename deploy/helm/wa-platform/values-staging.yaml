@@ -1,0 +1,48 @@
+# staging — scaled-down K8s, same charts as prod; FCM/APNs sandbox.
+bootstrap:
+  dbRoles:
+    enabled: true
+
+core-api:
+  replicaCount: 2
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 3
+  config:
+    WA_ENV: staging
+    WA_VALKEY_ADDR: valkey.data:6379
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_OTP_CHANNEL: sms
+
+ws-gateway:
+  replicaCount: 2
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    minReplicas: 2
+    maxReplicas: 4
+  config:
+    WA_ENV: staging
+    WA_VALKEY_ADDR: valkey.data:6379
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+media-svc:
+  replicaCount: 1
+  image:
+    tag: "0.1.0"
+  config:
+    WA_ENV: staging
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+notification-svc:
+  replicaCount: 1
+  image:
+    tag: "0.1.0"
+  config:
+    WA_ENV: staging
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_FCM_PROJECT: whatsapp-v2-staging

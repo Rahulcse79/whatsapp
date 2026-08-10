@@ -1,0 +1,29 @@
+# app-of-apps root: a single Application that syncs everything under
+# deploy/argocd/apps (the ApplicationSet), which in turn fans out to one
+# platform Application per environment. Bootstrap once:
+#   kubectl apply -f deploy/argocd/appproject.yaml -f deploy/argocd/root-app.yaml
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: whatsapp-v2-root
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: whatsapp-v2
+  source:
+    # Set repoURL to your GitOps repository.
+    repoURL: https://github.com/whatsapp-v2/whatsapp-v2.git
+    targetRevision: main
+    path: deploy/argocd/apps
+    directory:
+      recurse: true
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: argocd
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

@@ -1,0 +1,31 @@
+apiVersion: v2
+name: wa-platform
+description: >-
+  WhatsApp V2 umbrella — every Go deployable (aliased wa-service instances) plus
+  platform bootstrap (DB role/grant Job, offline step-ca). Same chart for every
+  env; only values overlays differ (kubernetes-deployment.md §3).
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: wa-service
+    alias: core-api
+    version: "0.1.0"
+    repository: "file://../wa-service"
+    condition: core-api.enabled
+  - name: wa-service
+    alias: ws-gateway
+    version: "0.1.0"
+    repository: "file://../wa-service"
+    condition: ws-gateway.enabled
+  - name: wa-service
+    alias: media-svc
+    version: "0.1.0"
+    repository: "file://../wa-service"
+    condition: media-svc.enabled
+  - name: wa-service
+    alias: notification-svc
+    version: "0.1.0"
+    repository: "file://../wa-service"
+    condition: notification-svc.enabled

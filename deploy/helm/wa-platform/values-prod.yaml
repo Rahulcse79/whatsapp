@@ -1,0 +1,49 @@
+# prod — full topology (kubernetes-deployment.md §1/§2); real push + SMS.
+bootstrap:
+  dbRoles:
+    enabled: true
+
+core-api:
+  replicaCount: 3
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 8
+  config:
+    WA_ENV: prod
+    WA_LOG_LEVEL: info
+    WA_VALKEY_ADDR: valkey.data:6379
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_OTP_CHANNEL: sms
+
+ws-gateway:
+  replicaCount: 3
+  image:
+    tag: "0.1.0"
+  autoscaling:
+    minReplicas: 3
+    maxReplicas: 15
+  config:
+    WA_ENV: prod
+    WA_VALKEY_ADDR: valkey.data:6379
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+media-svc:
+  replicaCount: 2
+  image:
+    tag: "0.1.0"
+  config:
+    WA_ENV: prod
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_CORE_API_GRPC_ADDR: core-api:9090
+
+notification-svc:
+  replicaCount: 2
+  image:
+    tag: "0.1.0"
+  config:
+    WA_ENV: prod
+    WA_NATS_URL: nats://nats.messaging:4222
+    WA_FCM_PROJECT: whatsapp-v2-prod

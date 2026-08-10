@@ -205,13 +205,25 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            conflict pin/star, planInboxBatch reaction/pin routing, memoryRepo
            pin/star toggles, server boundary both directions.)
 
-[ ] T0.22  Kubernetes deploy
-    PROMPT> implement task T0.22 k8s: helm charts per deployable + umbrella, argocd
-            app-of-apps with dev/staging/prod/offline overlays, argo rollouts canary,
-            ws-gateway drain hook, DB role/grant bootstrap job, step-ca for offline.
-            manifests only, no cluster access.
-    DOCS:   Docs/08-devops/kubernetes-deployment.md · Docs/08-devops/offline-local-server.md
-    DONE:   helm template renders clean in CI (add a chart-lint job)
+[x] T0.22  Kubernetes deploy
+           (deploy/helm/wa-service = reusable chart [Argo Rollout canary, Service,
+           ConfigMap WA_* via envFrom, HPA->Rollout scaleTargetRef, PDB, default-deny
+           NetworkPolicy, ServiceAccount, soft pod anti-affinity, nonroot/RO-rootfs].
+           deploy/helm/wa-platform = umbrella depending on wa-service aliased x4
+           [core-api/ws-gateway/media-svc/notification-svc; nameOverride per alias
+           since aliases don't change .Chart.Name] + bootstrap: DB role/grant Job
+           [pre-install hook, idempotent psql roles.sql, least-privilege] + offline
+           step-ca [StatefulSet + cert-manager ClusterIssuer, gated]. Overlays
+           values-{dev,staging,prod,offline}.yaml [same charts, values only — §3];
+           ws-gateway drain hook [preStop httpGet /drain, maxUnavailable 0, 150s
+           grace, PDB minAvailable 2]; binding specs from k8s-deployment §2. ArgoCD:
+           appproject + app-of-apps root-app + ApplicationSet [goTemplate, one
+           wa-platform-<env> per env]. CI: new `deploy (helm)` job — setup-helm,
+           dependency update, lint wa-service+wa-platform, `helm template` all 4 envs
+           [the DONE], kubeconform [ignore-missing-schemas for CRDs], argocd YAML
+           parse. Validated locally: all values/argocd YAML parse + all templates
+           block/brace-balanced [helm not installable here -> CI is the compiler].
+           Charts/Chart.lock gitignored [local file:// deps regenerated in CI].)
 
 [ ] T0.23  Observability wiring
     PROMPT> implement task T0.23 observability: otel SDK in all deployables (traces

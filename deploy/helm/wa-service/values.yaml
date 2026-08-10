@@ -1,0 +1,99 @@
+# Defaults for a WhatsApp V2 Go deployable. Per-service + per-env overlays set
+# image, ports, config, resources, and drain behaviour. Binding defaults come
+# from kubernetes-deployment.md §2.
+
+# nameOverride is REQUIRED when this chart is used as an aliased umbrella
+# dependency (aliases don't change .Chart.Name), so each service gets a
+# distinct fullname.
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/whatsapp-v2/core-api
+  tag: "" # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+replicaCount: 2
+revisionHistoryLimit: 5
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+# Argo Rollout canary strategy (kubernetes-deployment.md §4). ws-gateway
+# overrides maxUnavailable=0 + adds the drain lifecycle hook.
+rollout:
+  maxSurge: "25%"
+  maxUnavailable: 1
+  scaleDownDelaySeconds: 30
+  canary:
+    steps:
+      - setWeight: 5
+      - pause: { duration: 60 }
+      - setWeight: 25
+      - pause: { duration: 120 }
+      - setWeight: 50
+      - pause: { duration: 120 }
+
+ports:
+  http: 8080
+  grpc: 0 # 0 = no gRPC port
+  extra: [] # [{name, containerPort, protocol}]
+
+service:
+  type: ClusterIP
+  annotations: {}
+
+# Non-secret WA_* config → ConfigMap, mounted via envFrom.
+config: {}
+# Name of a pre-created Secret (SOPS-managed) with WA_PHONE_PEPPER,
+# WA_JWT_ED25519_SEED, WA_VALKEY_PASSWORD, provider keys, … — mounted via envFrom.
+envFromSecret: ""
+extraEnv: [] # [{name, value|valueFrom}]
+
+resources:
+  requests: { cpu: "1", memory: 2Gi }
+  limits: { cpu: "4", memory: 8Gi }
+
+probes:
+  port: 8080
+  livenessPath: /healthz
+  readinessPath: /readyz
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  metrics: [] # extra metrics (e.g. external NATS queue depth, conns/pod)
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# preStop/lifecycle drain hook (ws-gateway sets an httpGet to /drain and a long
+# terminationGracePeriodSeconds).
+lifecycle: {}
+terminationGracePeriodSeconds: 30
+
+hostNetwork: false
+dnsPolicy: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {} # empty → default soft pod anti-affinity by name (see _helpers.tpl)
+podAnnotations: {}
+podLabels: {}
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  readOnlyRootFilesystem: true
+
+networkPolicy:
+  enabled: true
+  # Default-deny; explicit allows (kubernetes-deployment.md §5). Each entry is a
+  # NetworkPolicyIngressRule / EgressRule.
+  ingress: []
+  egress: []

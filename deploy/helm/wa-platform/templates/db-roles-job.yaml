@@ -1,0 +1,82 @@
+{{- if .Values.bootstrap.dbRoles.enabled }}
+# DB role/grant bootstrap — a pre-install/pre-upgrade hook Job that applies
+# least-privilege roles before the app pods connect. Idempotent (safe to re-run).
+# Migrations (T0.07) run separately; this only manages roles + grants.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-db-roles-sql
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-6"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+data:
+  roles.sql: |
+    -- Idempotent role creation; passwords are set out-of-band (CloudNativePG /
+    -- SOPS secrets), these are the grant targets.
+    DO $$
+    DECLARE r text;
+    BEGIN
+      FOREACH r IN ARRAY ARRAY['core_api','ws_gateway','media_svc','notification_svc'] LOOP
+        IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = r) THEN
+          EXECUTE format('CREATE ROLE %I LOGIN', r);
+        END IF;
+        EXECUTE format('GRANT CONNECT ON DATABASE whatsapp TO %I', r);
+        EXECUTE format('GRANT USAGE ON SCHEMA public TO %I', r);
+      END LOOP;
+    END$$;
+    -- core-api is the primary writer; the rest are least-privilege.
+    GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO core_api;
+    ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO core_api;
+    GRANT SELECT ON ALL TABLES IN SCHEMA public TO ws_gateway;
+    GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO media_svc, notification_svc;
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-db-roles
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    app.kubernetes.io/component: bootstrap
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: whatsapp-v2
+        app.kubernetes.io/component: bootstrap
+    spec:
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+      containers:
+        - name: db-roles
+          image: {{ .Values.bootstrap.dbRoles.image | quote }}
+          command:
+            - sh
+            - -c
+            - psql "$WA_PG_ADMIN_DSN" -v ON_ERROR_STOP=1 -f /sql/roles.sql
+          env:
+            - name: WA_PG_ADMIN_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.bootstrap.dbRoles.adminSecret }}
+                  key: WA_PG_ADMIN_DSN
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+              readOnly: true
+      volumes:
+        - name: sql
+          configMap:
+            name: {{ .Release.Name }}-db-roles-sql
+{{- end }}

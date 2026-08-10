@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: whatsapp-v2
+  namespace: argocd
+spec:
+  description: WhatsApp V2 platform (all envs)
+  # Tighten sourceRepos to your GitOps repo in a real install.
+  sourceRepos:
+    - "*"
+  destinations:
+    - namespace: "wa-*"
+      server: https://kubernetes.default.svc
+    - namespace: argocd
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: "*"
+      kind: "*"
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

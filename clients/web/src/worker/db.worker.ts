@@ -1,19 +1,20 @@
 // Dedicated worker: the local DB + crypto, kept off the main thread so the UI
 // stays at 60 fps (web-app-architecture.md §1). The shell uses the in-memory
-// MemoryMessageRepo (OPFS SQLite-wasm lands with the persistence epic) and
-// MockSessionCipher (real X3DH/Double-Ratchet at T0.20). It speaks the RPC
-// protocol in ./rpc.
+// MemoryMessageRepo (OPFS SQLite-wasm lands with the persistence epic) and the
+// T0.20 DevSessionCipher (INSECURE dev double; real libsignal is the seam). It
+// speaks the RPC protocol in ./rpc.
 
 import { MemoryMessageRepo, type InboxBatch } from "@wa/client-core";
-import { MockSessionCipher } from "@wa/crypto-wrapper";
+import { DevSessionCipher, generateDevIdentity } from "@wa/crypto-wrapper";
 import type { EnqueueTextInput, MarkSentInput, RpcRequest } from "./rpc";
 
 const repo = new MemoryMessageRepo();
-const cipher = new MockSessionCipher();
+// E2EE lives in the worker so key material never reaches the UI thread. The
+// T0.20 DevSessionCipher is an INSECURE dev double; the live per-device fan-out
+// (E2EEEngine + keys directory + real libsignal) activates once the keys API is
+// wired. Self-addressed placeholder peer until then.
+const cipher = new DevSessionCipher(generateDevIdentity({ userId: "self", deviceId: "web" }));
 const encoder = new TextEncoder();
-
-// Placeholder E2EE seam: sealing runs in the worker so key material never
-// reaches the UI thread. Self-addressed + INSECURE until T0.20.
 async function seal(conversationId: string, text: string): Promise<Uint8Array> {
   const address = { userId: conversationId, deviceId: "peer" };
   if (!cipher.hasSession(address)) {

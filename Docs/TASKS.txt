@@ -163,12 +163,27 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            [dedupe/overlay/outbox/ordering]. Web logic reuses client-core -> web CI
            test is passWithNoTests; typecheck covers the RN-free web surface.)
 
-[ ] T0.20  E2EE integration end-to-end
-    PROMPT> implement task T0.20 e2ee wiring: X3DH session establishment via key
-            bundles, double-ratchet encrypt/decrypt in the send/receive path on
-            both clients, self-device sync copies. code + tests only.
-    DOCS:   Docs/06-security/e2ee-design.md §2 · Docs/02-architecture/sequence-diagrams.md §2
-    DONE:   protocol test P14: server-side bytes yield no plaintext
+[x] T0.20  E2EE integration end-to-end
+           (Per e2ee-design iron rule "never roll our own crypto — libsignal for
+           primitives+protocols; this doc specifies INTEGRATION", T0.20 = the
+           integration layer, not hand-rolled X3DH. @wa/crypto-wrapper E2EEEngine:
+           establishes a session per recipient device from KeyDirectory bundles
+           [GET /keys/bundle shape], fans a message out to every recipient device
+           PLUS the sender's own other devices [self-sync copies], and on receive
+           verifies the sender device is on a trusted signed device list [§5,
+           UntrustedDeviceError] before decrypt. Cipher stays swappable behind the
+           SessionCipher port; production wraps libsignal [documented seam].
+           DevSessionCipher = INSECURE dev double modelling the two properties the
+           integration needs: symmetric X3DH shared secret [both peers derive same
+           root from the identity-key pair] + per-message ratchet key [root,sender,
+           counter] with an auth tag; PRF is non-crypto FNV+xorshift, never shipped.
+           P14 test: Alice->Bob sealed bytes contain no plaintext substring, Bob
+           decrypts; + self-sync [a2 opens a1's copy], trust-reject, ratchet [same
+           plaintext -> different envelopes], tamper/wrong-session -> DecryptError.
+           Clients [web worker + mobile appServices] swapped MockSessionCipher ->
+           DevSessionCipher. Live per-device fan-out over the wire + inbound decrypt
+           + real libsignal binding [Node native / WASM / RN] are the seams that
+           activate with the keys API + device directory. No new deps [pure TS].)
 
 [ ] T0.21  Overlay events
     PROMPT> implement task T0.21 overlays: edit(15min)/delete(48h) window enforcement

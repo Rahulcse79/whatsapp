@@ -3,7 +3,7 @@
 // connection, the local store, and the send path. Screens never touch ports,
 // sockets, or SQL directly.
 
-import { MockSessionCipher } from "@wa/crypto-wrapper";
+import { DevSessionCipher, generateDevIdentity } from "@wa/crypto-wrapper";
 import { Cursors } from "@wa/sync-engine";
 import {
   MessageStore,
@@ -40,7 +40,7 @@ export class AppServices {
 
   private store!: MessageStore;
   private readonly cursors = new Cursors();
-  private readonly cipher = new MockSessionCipher();
+  private readonly cipher = new DevSessionCipher(generateDevIdentity({ userId: "self", deviceId: "mobile" }));
   private readonly encoder = new TextEncoder();
   private ws: WsClient | null = null;
 
@@ -138,9 +138,10 @@ export class AppServices {
     }
   }
 
-  // Placeholder E2EE seam: seals via the crypto-wrapper contract so the send
-  // path already speaks ciphertext. Real X3DH / Double-Ratchet sessions land in
-  // T0.20 — MockSessionCipher is INSECURE and self-addressed here.
+  // Seals via the T0.20 DevSessionCipher (INSECURE dev double) so the send path
+  // speaks ciphertext through the real E2EE contract. Live per-device fan-out
+  // (E2EEEngine + keys directory + real libsignal) activates once the keys API
+  // is wired; self-addressed placeholder peer until then.
   private async seal(conversationId: string, text: string): Promise<Uint8Array> {
     const address = { userId: conversationId, deviceId: "peer" };
     if (!this.cipher.hasSession(address)) {

@@ -5,6 +5,7 @@
   "description": "Local-first data layer shared by web + mobile: outbox, cursors, delta sync, conflict rules. Framework-free (no React imports).",
   "type": "module",
   "main": "src/index.ts",
+  "types": "src/index.ts",
   "scripts": {
     "typecheck": "tsc -p .",
     "test": "vitest run --passWithNoTests"

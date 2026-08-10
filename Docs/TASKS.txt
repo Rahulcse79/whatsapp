@@ -126,12 +126,23 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            no loss, no dupe, drains] + conflict/cursors + cipher contract. Standalone, no
            proto-types dep -> CI clients job safe.)
 
-[ ] T0.18  Mobile app shell (React Native + Expo)
-    PROMPT> implement task T0.18 mobile shell: create expo app in clients/mobile,
-            auth screens (otp), chat list + thread UI, sqlite local db wired to
-            @wa/sync-engine, WS client with reconnect/backoff/resume. code only.
-    DOCS:   Docs/11-clients/mobile-app-architecture.md
-    DONE:   CI typechecks + unit tests; release.yml android job now activates
+[x] T0.18  Mobile app shell (React Native + Expo)
+           (clients/mobile @wa/mobile, Expo SDK 52 + expo-router. Framework-free
+           src/core [no RN imports, Node-tested]: local wire frames + ports,
+           WsClient connection/resume state machine [Hello/HelloAck, ACK-after-
+           persist ClientAck, heartbeat ping/pong, full-jitter backoff, close-code
+           contract 4401/4403/4409/1012, outbox resend on every live transition],
+           OTP/refresh REST client, SqliteOutboxStore implements @wa/sync-engine
+           OutboxStore, planInboxBatch [pure inbox-merge: dedupe by cursor, overlay
+           routing, per-conv watermark]. Platform adapters over expo-sqlite/
+           secure-store/fetch/WebSocket/timers. expo-router screens /login /verify
+           /chats /thread/[id] via AppServices + React context. Wire codec is JSON
+           [protobuf lands with T0.20]; MockSessionCipher seals the send path as an
+           E2EE seam. app.config.ts existence flips release.yml detect gate ->
+           Android APK + iOS archive jobs activate. Added types:src/index.ts to
+           sync-engine + crypto-wrapper so mobile tsc resolves them. Tests: backoff,
+           ids, otpClient, wsClient [10 cases: handshake/resume/heartbeat/close-
+           codes/reconnect-resend], outboxStore, planInboxBatch.)
 
 [ ] T0.19  Web PWA shell (React + Vite)
     PROMPT> implement task T0.19 web shell: vite react app in clients/web, same

@@ -5,6 +5,7 @@
   "description": "The ONLY package that touches libsignal (coding standard). Framework-free; platform keystores are injected via adapter interfaces.",
   "type": "module",
   "main": "src/index.ts",
+  "types": "src/index.ts",
   "scripts": {
     "typecheck": "tsc -p .",
     "test": "vitest run --passWithNoTests"

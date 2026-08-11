@@ -270,8 +270,23 @@ LEGEND:  [x] done   [>] next up   [ ] pending
  PHASE 1 — GROUPS & MEDIA
 ================================================================================
 
-[ ] T1.01  Groups context (CRUD, roles, permissions, invite links/QR, announcements)
-    PROMPT> implement task T1.01 groups context per Docs/04-api/messaging-groups-api.md. code + tests only.
+[x] T1.01  Groups context (CRUD, roles, permissions, invite links/QR, announcements)
+           (Hexagonal context over the existing groups/group_members/invite_links
+           schema. domain/roles.go = pure permission matrix [Role member/admin/
+           owner, Settings who_can_post/who_can_edit_info/announcements, MaxMembers
+           1024, Can{ManageMembers,ChangeRoles,DeleteGroup,EditInfo,EditSettings,
+           Post,Remove}] — heavily unit-tested. service.go: Create/Get/UpdateInfo/
+           SetSettings/ListMembers/AddMembers/RemoveMember/SetRole/Leave/Delete/
+           CreateInviteLink/RevokeInviteLink/Join with per-op permission checks +
+           version bump + ordered Events emission; owner-must-transfer on leave;
+           STATE_GROUP_FULL cap; role-rules on remove (admin can't remove admin,
+           owner unremovable); idempotent Join. Ports Repo+Events. http.go wires all
+           13 REST routes (Go1.22 mux, BearerIdentity). adapters/pg.go [pgx, tx-wrapped
+           version bumps, FOR UPDATE invite consume] + nats.go [group.events.{id} JSON
+           + NoopEvents]. Wired into core-api. Tests: domain matrix + service via
+           in-memory Repo/Events fakes [create/permissions/add/remove/role/leave/
+           delete/invite+join+revoke+idempotency]. Removed scaffold doc.go. pg SQL
+           compile-checked [gofmt+go mod tidy]; integration correctness is CI.)
 [ ] T1.02  Group events -> Sender-Key rotation protocol (clients) + membership cache
     PROMPT> implement task T1.02 group key rotation per Docs/06-security/e2ee-design.md §3. code + tests only.
 [ ] T1.03  Group fan-out worker (batched async inserts, aggregate receipts)

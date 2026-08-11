@@ -24,6 +24,8 @@ import (
 	chatadapters "github.com/whatsapp-v2/server/internal/chat/adapters"
 	"github.com/whatsapp-v2/server/internal/devices"
 	devadapters "github.com/whatsapp-v2/server/internal/devices/adapters"
+	"github.com/whatsapp-v2/server/internal/groups"
+	groupadapters "github.com/whatsapp-v2/server/internal/groups/adapters"
 	"github.com/whatsapp-v2/server/internal/keys"
 	keyadapters "github.com/whatsapp-v2/server/internal/keys/adapters"
 	"github.com/whatsapp-v2/server/internal/platform/config"
@@ -125,12 +127,15 @@ func main() {
 	devEvents := devadapters.NewNATSEvents(nc, log)
 	devSvc := devices.NewService(devStore, devStore, authSvc, devEvents)
 
+	// ── groups context ────────────────────────────────────────────────────
+	groupsSvc := groups.NewService(groupadapters.NewStore(pool), groupadapters.NewNATSEvents(nc, log))
+
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
 	chatPub := chatadapters.NewNATSPublisher(nc)
 	chatSvc := chat.NewService(chatStore, chatStore,
 		chatadapters.NewDeduper(vk), chatPub, log)
-	chatSvc.SetReceipts(chatStore, chatPub) // the NATS publisher also relays receipts
+	chatSvc.SetReceipts(chatStore, chatPub)
 
 	grpcSrv := grpc.NewServer(observability.GRPCServerOption())
 	rpcv1.RegisterChatServiceServer(grpcSrv, chatadapters.NewChatGRPC(chatSvc, log))
@@ -152,6 +157,7 @@ func main() {
 	auth.Routes(mux, authSvc)
 	keys.Routes(mux, keysSvc, issuer)
 	devices.Routes(mux, devSvc, issuer)
+	groups.Routes(mux, groupsSvc, issuer)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

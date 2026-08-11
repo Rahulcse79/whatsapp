@@ -325,8 +325,29 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            devices -> Pool.Submit; group.events NATS consumer -> Membership.
            OnMembershipEvent; receipt path -> AggregateReceipts.OnDeviceReceipt;
            concrete InboxWriter[batch SQL]/DeviceResolver/DeliveryPublisher adapters.)
-[ ] T1.04  media-svc (upload sessions, presign, verify, quota gRPC)
-    PROMPT> implement task T1.04 media-svc per Docs/05-services/media-svc-lld.md. code + tests only.
+[x] T1.04  media-svc (upload sessions, presign, verify, quota gRPC)
+           (Full hexagonal media context over media_objects + MinIO. domain/upload.go:
+           state machine [pending/complete/gc], 25MB cap, multipart part math —
+           tested. service.go: CreateUpload [validate->rate 30/hr GCRA->quota gRPC
+           fail-closed->StartUpload multipart->PENDING row + Valkey session],
+           PresignMissing [resumable], CompleteUpload [Complete->Stat size verify->
+           single-part hash verify->MarkComplete + Uploaded event; mismatch ->
+           reject+cleanup, no row committed], DownloadURLs [presigned GET, skips
+           incomplete], AddRef/DecRef [refcount single-writer]. Ports Store/Objects/
+           Sessions/Quota/Rate/Events. http.go REST [POST /v1/media/uploads,
+           /{id}/presign, /{id}/complete, /download-urls]. gc.go leader-elected
+           idempotent sweep (refcount 0 AND expired/pending-stale)->remove+delete+
+           orphaned event. Adapters: pg [media_objects, DecRef sets expires=now+30d],
+           minio [minio-go v7 Core multipart + Presign + sha256 hash-verify],
+           valkey [sessions], quota [rpcv1.QuotaServiceClient — proto already
+           existed], nats [media.lifecycle JSON], rate [GCRA 30/hr]. cmd/media-svc
+           main wires it all (replaces the T0.23 shell) + GC leader gate. Tests:
+           domain + service [create happy/too-large/rate/quota-deny/quota-fail-closed,
+           complete happy/hash-mismatch-cleanup/size-mismatch/not-owner, downloads,
+           refcounting] + gc sweep. go mod tidy added minio-go; whole graph type-
+           checks. NOTE: the QuotaService SERVER + storage counter in core-api is the
+           counterpart (media-svc is the client); membership-of-conversation check on
+           download deferred to the chat gRPC wiring.)
 [ ] T1.05  Client media pipeline (compress/encrypt/thumb/blurhash, resumable upload)
     PROMPT> implement task T1.05 client media pipeline per Docs/04-api/media-stories-api.md + HLD §9. code + tests only.
 [ ] T1.06  Media UX (gallery, voice notes, documents, download manager)

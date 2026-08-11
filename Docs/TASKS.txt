@@ -305,8 +305,26 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            Store.MembersAndVersion authoritative reload. Tests: miss-reload+warm, stale
            reload, invalidate. The group.events NATS consumer that calls
            OnMembershipEvent lands with the fan-out worker T1.03.)
-[ ] T1.03  Group fan-out worker (batched async inserts, aggregate receipts)
-    PROMPT> implement task T1.03 fan-out worker per Docs/05-services/core-api-lld.md §3. code + tests only.
+[x] T1.03  Group fan-out worker (batched async inserts, aggregate receipts)
+           (internal/fanout, decoupled via ports. Worker.Fanout: resolve members
+           via MemberResolver [T1.02 groups.Membership over the Valkey versioned
+           cache, at the accept version as minVersion] -> expand to devices
+           [DeviceResolver] -> build one InboxRow per device EXCLUDING the sender's
+           own device -> batch-INSERT 500 rows/statement [InboxWriter] -> publish
+           per-device deliveries as each batch commits [DeliveryPublisher, best-
+           effort]; insert error returns [job redelivers, dedupe absorbs]. Pool =
+           bounded N=8 worker goroutines over a buffered queue; Submit non-blocking
+           [full queue -> false backpressure], QueueDepth SLI. AggregateReceipts:
+           per-(msg,kind) deduped device set vs expected total [SetExpected at
+           fan-out], flips the sender's aggregate delivered/read tick EXACTLY ONCE
+           when the last device reaches [added && count==expected]; delivered/read
+           tracked separately. Tests: batching [502 devices ->501 rows ->500+1,
+           sender excluded, minVersion passed], insert-error, nil-aggregate, pool
+           backpressure + async processing, aggregate flip-once + dedupe + per-kind.
+           INTEGRATION SEAM [next, with concretes]: chat Accept branches group>=16
+           devices -> Pool.Submit; group.events NATS consumer -> Membership.
+           OnMembershipEvent; receipt path -> AggregateReceipts.OnDeviceReceipt;
+           concrete InboxWriter[batch SQL]/DeviceResolver/DeliveryPublisher adapters.)
 [ ] T1.04  media-svc (upload sessions, presign, verify, quota gRPC)
     PROMPT> implement task T1.04 media-svc per Docs/05-services/media-svc-lld.md. code + tests only.
 [ ] T1.05  Client media pipeline (compress/encrypt/thumb/blurhash, resumable upload)

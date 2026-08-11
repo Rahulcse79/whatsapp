@@ -245,12 +245,24 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            propagation helpers ready+tested; threading them through the delivery/
            receipt adapters [ctx currently ignored there] is the next increment.)
 
-[ ] T0.24  Protocol test framework + P0 scenarios
+[~] T0.24  Protocol test framework + P0 scenarios  — PARTIAL (full-stack needs Docker)
     PROMPT> implement task T0.24 protocol tests: headless protobuf test client,
             harness spinning gateway+core against testcontainers, scenarios
             P1,P2,P3,P4,P5,P7,P8,P9,P10 from the catalog. tests only.
     DOCS:   Docs/10-testing/test-strategy.md §3 · Docs/02-architecture/sequence-diagrams.md
     DONE:   all 9 scenarios green in CI as a separate job
+    DONE-SO-FAR: reusable headless protobuf ProtoClient (internal/gateway/
+            protoclient_test.go) on the proven in-process gateway harness +
+            TestScenarioP1_LiveDeliveryInOrder (gateway-boundary slice of P1/P8:
+            handshake → ordered exactly-once live delivery). Existing gateway
+            tests already cover the boundary behaviours of P4(dup-connect 4409),
+            P5(resume), P8(replay-interleave), P9(authz-reject via CloseAuthExpired).
+    REMAINING (needs a Docker+buf environment — can't be authored blind under the
+            write-only/no-Docker/no-local-proto workflow): testcontainers PG/Valkey/
+            NATS + real core-api wired in-process, cross-service send→core→NATS→
+            recipient full path, P2(offline→push→resume), P3(SIGKILL chaos), and
+            the SEPARATE CI job running all 9. Author where `go test`+Docker+buf
+            can iterate to green.
 
 --- GATE P0: chaos-kill a gateway during protocol tests => zero message loss ---
 

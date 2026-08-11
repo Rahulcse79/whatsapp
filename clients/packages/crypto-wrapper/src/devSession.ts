@@ -50,21 +50,24 @@ export class DevSessionCipher implements SessionCipher {
     return Promise.resolve();
   }
 
-  encrypt(address: DeviceAddress, plaintext: Uint8Array): Promise<Uint8Array> {
+  // async so a thrown error (no session / bad tag) surfaces as a rejected
+  // promise the caller can `await … .catch`/`.rejects` on, not a synchronous
+  // throw at the call site.
+  async encrypt(address: DeviceAddress, plaintext: Uint8Array): Promise<Uint8Array> {
     const session = this.require(address);
     const n = session.sendCounter++;
     const mk = messageKey(session.root, this.self.publicKey, n); // sender = self
-    return Promise.resolve(sealMessage(mk, n, plaintext));
+    return sealMessage(mk, n, plaintext);
   }
 
-  decrypt(address: DeviceAddress, envelope: Uint8Array): Promise<Uint8Array> {
+  async decrypt(address: DeviceAddress, envelope: Uint8Array): Promise<Uint8Array> {
     const session = this.require(address);
     const n = readU32(envelope, 0);
     const tag = envelope.subarray(4, 12);
     const ciphertext = envelope.subarray(12);
     const mk = messageKey(session.root, session.peerPublicKey, n); // sender = peer
     if (!bytesEqual(tag, mac(mk, ciphertext))) throw new DecryptError();
-    return Promise.resolve(xor(ciphertext, keystream(mk, ciphertext.length)));
+    return xor(ciphertext, keystream(mk, ciphertext.length));
   }
 
   hasSession(address: DeviceAddress): boolean {

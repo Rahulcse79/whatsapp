@@ -49,7 +49,9 @@ jobs:
       - name: Lint
         uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          # Pinned (not `latest`) — a floating version silently enabling stricter
+          # staticcheck once turned CI red across many green commits.
+          version: v2.12.2
           working-directory: server
 
   # ── Protobuf contracts: lint, breaking-change gate, codegen proof ────────

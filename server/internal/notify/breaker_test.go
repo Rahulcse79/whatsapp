@@ -6,7 +6,7 @@ import (
 )
 
 func newTestBreaker() (*Breaker, *int64) {
-	var nowNS int64 = time.Unix(1_700_000_000, 0).UnixNano()
+	nowNS := time.Unix(1_700_000_000, 0).UnixNano()
 	b := NewBreaker(3, 30*time.Second, 60*time.Second)
 	b.now = func() time.Time { return time.Unix(0, nowNS) }
 	return b, &nowNS

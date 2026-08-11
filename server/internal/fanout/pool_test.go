@@ -8,7 +8,9 @@ import (
 
 func TestPool_SubmitBackpressure(t *testing.T) {
 	p := NewPool(nil, 1, 2, testLog()) // not Started → the queue fills up
-	if !p.Submit(FanoutJob{}) || !p.Submit(FanoutJob{}) {
+	first := p.Submit(FanoutJob{})
+	second := p.Submit(FanoutJob{})
+	if !first || !second {
 		t.Fatal("first two submits should fit the queue")
 	}
 	if p.Submit(FanoutJob{}) {

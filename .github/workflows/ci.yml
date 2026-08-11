@@ -243,13 +243,23 @@ jobs:
             ./kubeconform -ignore-missing-schemas -summary "/tmp/rendered/$env.yaml"
           done
 
-      - name: ArgoCD manifests parse as YAML
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install YAML parser
+        run: pip install --quiet pyyaml
+
+      - name: ArgoCD + observability config valid (YAML parse + dashboards JSON)
         run: |
           python3 - <<'PY'
-          import glob, yaml
+          import glob, json, yaml
           for f in glob.glob("deploy/argocd/**/*.yaml", recursive=True):
-              list(yaml.safe_load_all(open(f)))
-              print("ok", f)
+              list(yaml.safe_load_all(open(f))); print("argocd ok", f)
+          for f in glob.glob("ops/dashboards/*.json"):
+              json.load(open(f)); print("dashboard json ok", f)
+          for f in glob.glob("ops/alerts/*.yaml") + glob.glob("ops/synthetic/*.yaml") + glob.glob("ops/dashboards/*.yaml"):
+              list(yaml.safe_load_all(open(f))); print("ops yaml ok", f)
           PY
 
   # ── Docs-contract gate: interface changes require their doc (PRs only) ───

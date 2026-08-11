@@ -1,0 +1,15 @@
+# Grafana dashboard provider (dashboards as code, §4). Mount this at
+# /etc/grafana/provisioning/dashboards/ and the JSON files at the path below;
+# Grafana loads + hot-reloads them. Datasource "prometheus" is provisioned
+# separately (LGTM stack).
+apiVersion: 1
+providers:
+  - name: whatsapp-v2
+    orgId: 1
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards/whatsapp-v2
+      foldersFromFilesStructure: false

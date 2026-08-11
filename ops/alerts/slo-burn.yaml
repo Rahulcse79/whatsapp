@@ -1,0 +1,47 @@
+# Multi-window burn-rate alerts (slos-alerts.md §2, SRE-workbook style). Page on
+# user-impacting symptom (SLO budget burn); every page carries a runbook link.
+# Format: Prometheus rule groups (load via rule_files or a PrometheusRule CRD).
+groups:
+  - name: slo-burn.api-availability
+    rules:
+      # API availability SLO 99.9% ⇒ error budget 0.001 (NFR-11).
+      - alert: SLOFastBurnAPIAvailability
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[1h])) / sum(rate(http_requests_total[1h]))) > (14.4 * 0.001)
+          and
+          (sum(rate(http_requests_total{status=~"5.."}[5m])) / sum(rate(http_requests_total[5m]))) > (14.4 * 0.001)
+        for: 2m
+        labels:
+          severity: page
+          slo: api-availability
+        annotations:
+          summary: "API availability burning 14.4× budget (1h & 5m windows)"
+          runbook: "ops/runbooks/api-availability.md"
+      - alert: SLOSlowBurnAPIAvailability
+        expr: |
+          (sum(rate(http_requests_total{status=~"5.."}[6h])) / sum(rate(http_requests_total[6h]))) > (6 * 0.001)
+          and
+          (sum(rate(http_requests_total{status=~"5.."}[30m])) / sum(rate(http_requests_total[30m]))) > (6 * 0.001)
+        for: 15m
+        labels:
+          severity: page
+          slo: api-availability
+        annotations:
+          summary: "API availability burning 6× budget (6h & 30m windows)"
+          runbook: "ops/runbooks/api-availability.md"
+
+  - name: slo-burn.msg-latency
+    rules:
+      # Message E2E latency SLO p95 ≤ 500 ms (NFR-05), measured from the probe.
+      - alert: MsgLatencySLOFastBurn
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(msg_e2e_latency_bucket[5m]))) > 0.5
+          and
+          histogram_quantile(0.95, sum by (le) (rate(msg_e2e_latency_bucket[1h]))) > 0.5
+        for: 5m
+        labels:
+          severity: page
+          slo: msg-latency
+        annotations:
+          summary: "Message E2E p95 > 500 ms (probe + real traffic)"
+          runbook: "ops/runbooks/message-latency.md"

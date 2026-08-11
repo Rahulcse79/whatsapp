@@ -225,13 +225,25 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            block/brace-balanced [helm not installable here -> CI is the compiler].
            Charts/Chart.lock gitignored [local file:// deps regenerated in CI].)
 
-[ ] T0.23  Observability wiring
-    PROMPT> implement task T0.23 observability: otel SDK in all deployables (traces
-            w/ NATS header propagation, RED metrics, SLO-bucket histograms), the 7
-            grafana dashboards as code in ops/dashboards, alert rules in ops/alerts,
-            synthetic probe job. code + config only.
-    DOCS:   Docs/09-observability/monitoring-logging-tracing.md · slos-alerts.md
-    DONE:   /metrics exposed by all four deployables; dashboards json valid
+[x] T0.23  Observability wiring
+           (platform/observability: OTel SDK Init — Prometheus exporter → /metrics
+           (always on), OTLP/gRPC trace export when WA_OTEL_ENDPOINT set (head-keep,
+           collector tail-samples), W3C propagator. RED HTTP middleware [http_requests
+           +_duration+_in_flight, SLO buckets 50/100/150/250/500/1000ms] with a
+           statusWriter that passes Hijack/Flush through (WS-safe). otelhttp/otelgrpc
+           wrappers. NATS trace propagation via natsHeaderCarrier + Inject/ExtractNATS
+           [tested round-trip]. Wired /metrics + RED + telemetry init into all FOUR
+           deployables; core-api gRPC gets the otelgrpc stats handler; ws-gateway uses
+           RED-only [no otelhttp] to preserve the WS Hijack; media-svc promoted from
+           exit-scaffold to an observable health+/metrics shell [domain still T1.04].
+           config WA_OTEL_ENDPOINT. ops/dashboards: 7 Grafana dashboards as code via
+           generate.py [all valid JSON] + Grafana provider. ops/alerts: slo-burn
+           [multi-window 14.4×/6× burn] + platform [inbox-stuck/DLQ/PG-lag/breaker/
+           OTP-anomaly/cert/probe]. ops/synthetic: probe CronJob. CI deploy job now
+           validates dashboards JSON + ops YAML [DONE: dashboards json valid; /metrics
+           on all four]. go mod tidy added otel v1.45 + prometheus client. NATS
+           propagation helpers ready+tested; threading them through the delivery/
+           receipt adapters [ctx currently ignored there] is the next increment.)
 
 [ ] T0.24  Protocol test framework + P0 scenarios
     PROMPT> implement task T0.24 protocol tests: headless protobuf test client,

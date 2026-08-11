@@ -56,6 +56,9 @@ type Config struct {
 	// CoreAPIGRPCAddr is where dependents (ws-gateway, media-svc) reach
 	// core-api's gRPC surface (microservices.md §4).
 	CoreAPIGRPCAddr string
+	// OTelEndpoint is the OTLP/gRPC collector host:port for trace export;
+	// empty disables export (metrics on /metrics are always available).
+	OTelEndpoint string
 
 	PG     PG
 	Valkey Valkey
@@ -70,12 +73,13 @@ func Load(service string) (*Config, error) {
 	var errs []error
 
 	c := &Config{
-		Service:  service,
-		Env:      getStr("WA_ENV", "dev"),
-		LogLevel: getStr("WA_LOG_LEVEL", "info"),
+		Service:         service,
+		Env:             getStr("WA_ENV", "dev"),
+		LogLevel:        getStr("WA_LOG_LEVEL", "info"),
 		HTTPAddr:        getStr("WA_HTTP_ADDR", ":8080"),
 		GRPCAddr:        getStr("WA_GRPC_ADDR", ":9090"),
 		CoreAPIGRPCAddr: getStr("WA_CORE_API_GRPC_ADDR", "localhost:9090"),
+		OTelEndpoint:    getStr("WA_OTEL_ENDPOINT", ""),
 		PG: PG{
 			DSN:              getStr("WA_PG_DSN", "postgres://whatsapp:devpassword@localhost:5432/whatsapp?sslmode=disable"),
 			MaxConns:         int32(getInt("WA_PG_MAX_CONNS", 8, &errs)),

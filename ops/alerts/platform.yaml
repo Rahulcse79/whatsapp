@@ -1,0 +1,78 @@
+# Operational / cause alerts (slos-alerts.md §2–§3). Pages map to runbooks;
+# ticket-level fire into the tracker, not the pager.
+groups:
+  - name: platform.delivery
+    rules:
+      - alert: InboxDeliveryStuck
+        expr: max(inbox_oldest_undelivered_online_s) > 60
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "Undelivered message to an ONLINE device older than 60s"
+          runbook: "ops/runbooks/inbox-stuck.md"
+      - alert: NATSDLQGrowth
+        expr: increase(nats_dlq_total[10m]) > 0
+        for: 0m
+        labels: { severity: page }
+        annotations:
+          summary: "Messages dead-lettered to a NATS DLQ"
+          runbook: "ops/runbooks/nats-dlq.md"
+      - alert: SyntheticProbeFailing
+        expr: max_over_time(synthetic_probe_success[3m]) < 1
+        for: 3m
+        labels: { severity: page }
+        annotations:
+          summary: "Synthetic probe failed 3 consecutive runs"
+          runbook: "ops/runbooks/synthetic-probe.md"
+
+  - name: platform.data
+    rules:
+      - alert: PGReplicationLag
+        expr: max(pg_replication_lag_s) > 10
+        for: 5m
+        labels: { severity: page }
+        annotations:
+          summary: "PostgreSQL replica lag > 10s"
+          runbook: "ops/runbooks/pg-replication-lag.md"
+      - alert: ValkeyMemoryHigh
+        expr: valkey_memory_used_ratio > 0.8
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Valkey memory > 80%"
+          runbook: "ops/runbooks/valkey-memory.md"
+
+  - name: platform.notifications
+    rules:
+      - alert: PushBreakerOpen
+        expr: max by (provider) (push_breaker_state) == 1
+        for: 5m
+        labels: { severity: ticket }
+        annotations:
+          summary: "Push provider circuit breaker open > 5m (both providers ⇒ page)"
+          runbook: "ops/runbooks/push-breaker.md"
+      - alert: OTPRequestAnomaly
+        expr: |
+          sum(rate(otp_requests_total[5m])) > 5 * sum(rate(otp_requests_total[5m] offset 7d))
+        for: 10m
+        labels: { severity: ticket }
+        annotations:
+          summary: "OTP request rate > 5× the 7-day seasonal baseline (fraud/spend)"
+          runbook: "ops/runbooks/otp-anomaly.md"
+
+  - name: platform.certs
+    rules:
+      - alert: CertExpiringTicket
+        expr: (min(cert_manager_certificate_expiration_timestamp_seconds) - time()) < (14 * 24 * 3600)
+        for: 1h
+        labels: { severity: ticket }
+        annotations:
+          summary: "A TLS certificate expires in < 14 days"
+          runbook: "ops/runbooks/cert-expiry.md"
+      - alert: CertExpiringPage
+        expr: (min(cert_manager_certificate_expiration_timestamp_seconds) - time()) < (3 * 24 * 3600)
+        for: 15m
+        labels: { severity: page }
+        annotations:
+          summary: "A TLS certificate expires in < 3 days"
+          runbook: "ops/runbooks/cert-expiry.md"

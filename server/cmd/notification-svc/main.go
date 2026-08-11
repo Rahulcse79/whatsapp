@@ -20,6 +20,7 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/config"
 	"github.com/whatsapp-v2/server/internal/platform/logging"
 	"github.com/whatsapp-v2/server/internal/platform/natsx"
+	"github.com/whatsapp-v2/server/internal/platform/observability"
 	"github.com/whatsapp-v2/server/internal/platform/pg"
 )
 
@@ -42,6 +43,20 @@ func main() {
 	log.Info("starting", "version", version, "commit", commit, "env", cfg.Env)
 
 	ctx := context.Background()
+
+	tel, err := observability.Init(ctx, observability.Config{
+		ServiceName: "notification-svc", ServiceVersion: version, Env: cfg.Env, OTLPEndpoint: cfg.OTelEndpoint,
+	})
+	if err != nil {
+		log.Error("telemetry init failed", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = tel.Shutdown(context.Background()) }()
+	httpMetrics, err := observability.NewHTTPMetrics(tel.Meter)
+	if err != nil {
+		log.Error("telemetry metrics init failed", "err", err)
+		os.Exit(1)
+	}
 
 	pool, err := pg.NewPool(ctx, pg.Config{
 		DSN: cfg.PG.DSN, MaxConns: cfg.PG.MaxConns, MinConns: cfg.PG.MinConns,
@@ -75,8 +90,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Liveness/readiness on a small HTTP surface (K8s probes).
+	// Liveness/readiness + Prometheus /metrics on a small HTTP surface.
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", tel.MetricsHandler())
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
@@ -85,7 +101,11 @@ func main() {
 		}
 		w.WriteHeader(http.StatusOK)
 	})
-	httpSrv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	httpSrv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           observability.WrapHTTPHandler(httpMetrics.Middleware(mux), "http.server"),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	go func() {
 		log.Info("listening", "addr", cfg.HTTPAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

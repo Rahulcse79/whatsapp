@@ -29,6 +29,7 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/config"
 	"github.com/whatsapp-v2/server/internal/platform/logging"
 	"github.com/whatsapp-v2/server/internal/platform/natsx"
+	"github.com/whatsapp-v2/server/internal/platform/observability"
 	"github.com/whatsapp-v2/server/internal/platform/pg"
 	"github.com/whatsapp-v2/server/internal/platform/ratelimit"
 	"github.com/whatsapp-v2/server/internal/platform/valkey"
@@ -51,6 +52,20 @@ func main() {
 	log.Info("starting", "version", version, "commit", commit, "env", cfg.Env)
 
 	ctx := context.Background()
+
+	tel, err := observability.Init(ctx, observability.Config{
+		ServiceName: "core-api", ServiceVersion: version, Env: cfg.Env, OTLPEndpoint: cfg.OTelEndpoint,
+	})
+	if err != nil {
+		log.Error("telemetry init failed", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = tel.Shutdown(context.Background()) }()
+	httpMetrics, err := observability.NewHTTPMetrics(tel.Meter)
+	if err != nil {
+		log.Error("telemetry metrics init failed", "err", err)
+		os.Exit(1)
+	}
 
 	pool, err := pg.NewPool(ctx, pg.Config{
 		DSN: cfg.PG.DSN, MaxConns: cfg.PG.MaxConns, MinConns: cfg.PG.MinConns,
@@ -117,7 +132,7 @@ func main() {
 		chatadapters.NewDeduper(vk), chatPub, log)
 	chatSvc.SetReceipts(chatStore, chatPub) // the NATS publisher also relays receipts
 
-	grpcSrv := grpc.NewServer()
+	grpcSrv := grpc.NewServer(observability.GRPCServerOption())
 	rpcv1.RegisterChatServiceServer(grpcSrv, chatadapters.NewChatGRPC(chatSvc, log))
 	grpcLis, err := net.Listen("tcp", cfg.GRPCAddr)
 	if err != nil {
@@ -133,6 +148,7 @@ func main() {
 	}()
 
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", tel.MetricsHandler())
 	auth.Routes(mux, authSvc)
 	keys.Routes(mux, keysSvc, issuer)
 	devices.Routes(mux, devSvc, issuer)
@@ -145,7 +161,11 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	httpSrv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	httpSrv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           observability.WrapHTTPHandler(httpMetrics.Middleware(mux), "http.server"),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 	go func() {
 		log.Info("listening", "addr", cfg.HTTPAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

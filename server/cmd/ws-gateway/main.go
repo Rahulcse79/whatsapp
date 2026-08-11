@@ -25,6 +25,7 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/config"
 	"github.com/whatsapp-v2/server/internal/platform/logging"
 	"github.com/whatsapp-v2/server/internal/platform/natsx"
+	"github.com/whatsapp-v2/server/internal/platform/observability"
 	"github.com/whatsapp-v2/server/internal/platform/valkey"
 	"github.com/whatsapp-v2/server/internal/presence"
 	presadapters "github.com/whatsapp-v2/server/internal/presence/adapters"
@@ -55,6 +56,21 @@ func main() {
 	log.Info("starting", "version", version, "commit", commit, "env", cfg.Env)
 
 	ctx := context.Background()
+
+	tel, err := observability.Init(ctx, observability.Config{
+		ServiceName: "ws-gateway", ServiceVersion: version, Env: cfg.Env, OTLPEndpoint: cfg.OTelEndpoint,
+	})
+	if err != nil {
+		log.Error("telemetry init failed", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = tel.Shutdown(context.Background()) }()
+	httpMetrics, err := observability.NewHTTPMetrics(tel.Meter)
+	if err != nil {
+		log.Error("telemetry metrics init failed", "err", err)
+		os.Exit(1)
+	}
+
 	vk, err := valkey.New(ctx, valkey.Config{Addr: cfg.Valkey.Addr, Password: cfg.Valkey.Password})
 	if err != nil {
 		log.Error("valkey connect failed", "err", err)
@@ -105,6 +121,7 @@ func main() {
 	})
 
 	mux := http.NewServeMux()
+	mux.Handle("GET /metrics", tel.MetricsHandler())
 	mux.HandleFunc("/v1/ws", srv.Handle)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -115,7 +132,13 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	httpSrv := &http.Server{Addr: cfg.HTTPAddr, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	// RED middleware only (no otelhttp wrapper) so the WebSocket Hijack passes
+	// straight through to the raw ResponseWriter.
+	httpSrv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           httpMetrics.Middleware(mux),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
 
 	go func() {
 		log.Info("listening", "addr", cfg.HTTPAddr)

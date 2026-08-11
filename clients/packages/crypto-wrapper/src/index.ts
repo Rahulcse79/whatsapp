@@ -7,3 +7,4 @@
 export * from "./cipher";
 export * from "./devSession";
 export * from "./engine";
+export * from "./senderKey";

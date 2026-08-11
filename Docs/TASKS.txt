@@ -287,8 +287,24 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            in-memory Repo/Events fakes [create/permissions/add/remove/role/leave/
            delete/invite+join+revoke+idempotency]. Removed scaffold doc.go. pg SQL
            compile-checked [gofmt+go mod tidy]; integration correctness is CI.)
-[ ] T1.02  Group events -> Sender-Key rotation protocol (clients) + membership cache
-    PROMPT> implement task T1.02 group key rotation per Docs/06-security/e2ee-design.md §3. code + tests only.
+[x] T1.02  Group events -> Sender-Key rotation protocol (clients) + membership cache
+           (Client, @wa/crypto-wrapper senderKey.ts: GroupSession — Sender-Key group
+           cipher [encrypt ONCE with own chain, decrypt with peers' distributed keys],
+           SenderKeyDistribution (SKDM) create/accept, and the ORDERED rotation
+           protocol applyGroupEvent per e2ee §3: member_removed -> rotate own key +
+           redistribute to remaining + drop removed [forward secrecy]; member_added ->
+           distribute current key to the new device set [no rotation, no back-history];
+           role_changed no-op; idempotent/ordered by version [stale <= last ignored];
+           self-removal forgets own key. INSECURE mock PRF [libsignal owns crypto per
+           iron rule]. Tests: group send round-trip + no-plaintext, removed member
+           can't read post-rotation, add distributes, ordering, role no-op, self-remove.
+           Server, internal/groups membership cache [data-structures §12]: Membership
+           resolver Members(gid,minVersion) -> compare cached version vs event version,
+           reload MemberSource on miss/stale/Invalidate; MembershipCache + MemberSource
+           ports; ValkeyMembershipCache adapter [group_members:{id} set + group_ver:{id}];
+           Store.MembersAndVersion authoritative reload. Tests: miss-reload+warm, stale
+           reload, invalidate. The group.events NATS consumer that calls
+           OnMembershipEvent lands with the fan-out worker T1.03.)
 [ ] T1.03  Group fan-out worker (batched async inserts, aggregate receipts)
     PROMPT> implement task T1.03 fan-out worker per Docs/05-services/core-api-lld.md §3. code + tests only.
 [ ] T1.04  media-svc (upload sessions, presign, verify, quota gRPC)

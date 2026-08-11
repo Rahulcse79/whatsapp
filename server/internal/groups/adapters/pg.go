@@ -116,6 +116,34 @@ func (s *Store) CountMembers(ctx context.Context, gid string) (int, error) {
 	return n, err
 }
 
+// MembersAndVersion returns the full member set + the group version — the
+// authoritative reload for the membership cache (groups.MemberSource).
+func (s *Store) MembersAndVersion(ctx context.Context, gid string) ([]string, int64, error) {
+	var version int64
+	err := s.pool.QueryRow(ctx, `SELECT version FROM groups WHERE id = $1`, gid).Scan(&version)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, 0, groups.ErrNotFound
+	}
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT user_id::text FROM group_members WHERE group_id = $1`, gid)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	var members []string
+	for rows.Next() {
+		var uid string
+		if err := rows.Scan(&uid); err != nil {
+			return nil, 0, err
+		}
+		members = append(members, uid)
+	}
+	return members, version, rows.Err()
+}
+
 func (s *Store) UpdateInfo(ctx context.Context, gid string, name, description, avatarRef *string) (int64, error) {
 	var version int64
 	err := s.pool.QueryRow(ctx,

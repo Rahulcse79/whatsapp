@@ -1,5 +1,6 @@
 import { newId } from "@wa/client-core";
 import { useState } from "react";
+import { MediaProvider } from "./ui/media/MediaContext";
 import { ChatList, Login, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
@@ -34,12 +35,14 @@ function Router() {
 export function App() {
   return (
     <ServicesProvider>
-      <div className="app">
-        <header className="topbar">WhatsApp V2</header>
-        <main className="main">
-          <Router />
-        </main>
-      </div>
+      <MediaProvider>
+        <div className="app">
+          <header className="topbar">WhatsApp V2</header>
+          <main className="main">
+            <Router />
+          </main>
+        </div>
+      </MediaProvider>
     </ServicesProvider>
   );
 }

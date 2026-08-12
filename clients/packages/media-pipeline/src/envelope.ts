@@ -16,6 +16,10 @@ export interface MediaEnvelope {
   sizeBytes: number;
   /** MIME type the sender claims (advisory; recipients still sniff/verify). */
   mime: string;
+  /** Original filename, for documents (shown in the UI, used on save). */
+  filename?: string;
+  /** True when this audio was recorded in-app as a voice note (waveform UI). */
+  voice?: boolean;
   /** BlurHash placeholder rendered instantly while the full media downloads. */
   blurhash?: string;
   /** base64 of the encrypted mini-thumbnail (sealed under {@link fileKey}). */

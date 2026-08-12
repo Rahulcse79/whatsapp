@@ -1,3 +1,4 @@
+import { classifyMedia, parseMediaMessage, type MediaEnvelope } from "@wa/media-pipeline";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
 import {
@@ -11,6 +12,9 @@ import {
   View,
 } from "react-native";
 import type { ThreadMessage } from "@wa/client-core";
+import { DownloadsPanel } from "../../../src/ui/media/DownloadsPanel";
+import { Gallery } from "../../../src/ui/media/Gallery";
+import { MediaMessage } from "../../../src/ui/media/MediaMessage";
 import { useServices } from "../../../src/ui/ServicesContext";
 
 export default function Thread() {
@@ -21,6 +25,7 @@ export default function Thread() {
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
+  const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
 
   const load = useCallback(() => {
     services.messages
@@ -50,6 +55,14 @@ export default function Thread() {
     }
   }
 
+  // Every image/video in the thread, so the lightbox can page across them.
+  const visuals: MediaEnvelope[] = [];
+  for (const m of messages) {
+    if (m.deleted) continue;
+    const media = parseMediaMessage(m.body);
+    if (media) for (const a of media.attachments) if (isVisual(a)) visuals.push(a);
+  }
+
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -61,13 +74,12 @@ export default function Thread() {
         keyExtractor={(m) => m.msgUuid}
         contentContainerStyle={styles.list}
         renderItem={({ item }) => (
-          <View style={[styles.bubble, item.mine ? styles.mine : styles.theirs]}>
-            <Text style={styles.body}>{item.deleted ? "This message was deleted" : item.body}</Text>
-            {item.mine ? <Text style={styles.meta}>{item.state}</Text> : null}
-          </View>
+          <MessageBubble message={item} onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })} />
         )}
         ListEmptyComponent={<Text style={styles.empty}>Say hello 👋</Text>}
       />
+      <DownloadsPanel />
+      {gallery ? <Gallery items={gallery.items} startKey={gallery.startKey} onClose={() => setGallery(null)} /> : null}
       <View style={styles.composer}>
         <TextInput
           style={styles.input}
@@ -85,8 +97,36 @@ export default function Thread() {
   );
 }
 
+function isVisual(env: MediaEnvelope): boolean {
+  const kind = classifyMedia(env.mime);
+  return kind === "image" || kind === "video";
+}
+
+/** MessageBubble renders a text message, or — when the decrypted body carries a
+ *  media envelope — the attachment(s) plus any caption. */
+function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (env: MediaEnvelope) => void }) {
+  const media = message.deleted ? null : parseMediaMessage(message.body);
+
+  return (
+    <View style={[styles.bubble, message.mine ? styles.mine : styles.theirs]}>
+      {media ? (
+        <View style={styles.mediaWrap}>
+          {media.attachments.map((env) => (
+            <MediaMessage key={env.objectKey} env={env} onOpen={onOpen} />
+          ))}
+          {media.caption ? <Text style={styles.body}>{media.caption}</Text> : null}
+        </View>
+      ) : (
+        <Text style={styles.body}>{message.deleted ? "This message was deleted" : message.body}</Text>
+      )}
+      {message.mine ? <Text style={styles.meta}>{message.state}</Text> : null}
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  mediaWrap: { gap: 6 },
   list: { padding: 12, gap: 6 },
   bubble: { maxWidth: "80%", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },
   mine: { alignSelf: "flex-end", backgroundColor: "#DCF8C6" },

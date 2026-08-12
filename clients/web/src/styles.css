@@ -219,3 +219,258 @@ body {
   font-size: 13px;
   color: var(--muted);
 }
+
+/* ── Media UX (T1.06) ─────────────────────────────────────────────────────── */
+.bubble-media {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.bubble-caption {
+  margin-top: 4px;
+}
+
+/* Image / video thumbnail with a blurhash placeholder underneath. */
+.media-visual {
+  position: relative;
+  display: block;
+  width: 240px;
+  max-width: 60vw;
+  border: none;
+  padding: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  cursor: pointer;
+  background: #ccc;
+}
+
+.media-blur,
+.media-full {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.media-blur {
+  filter: blur(8px);
+  transform: scale(1.05);
+}
+
+.media-play {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: 34px;
+  color: #fff;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+}
+
+.media-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.15);
+}
+
+.media-retry {
+  background: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* Voice notes / audio. */
+.voice-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.voice-audio {
+  height: 34px;
+  flex: 1;
+}
+
+.voice-loading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.voice-time {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Document tiles. */
+.doc-tile {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  padding: 4px 2px;
+}
+
+.doc-icon {
+  font-size: 26px;
+}
+
+.doc-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.doc-name {
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.doc-sub {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Download manager panel. */
+.downloads {
+  border-top: 1px solid var(--line);
+  padding: 6px 10px;
+  background: #fafafa;
+  max-height: 130px;
+  overflow-y: auto;
+}
+
+.downloads-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.downloads-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.downloads-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Full-screen gallery / lightbox. */
+.gallery {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: rgba(0, 0, 0, 0.92);
+  display: grid;
+  place-items: center;
+}
+
+.gallery-stage {
+  max-width: 92vw;
+  max-height: 88vh;
+  display: grid;
+  place-items: center;
+}
+
+.gallery-media {
+  max-width: 92vw;
+  max-height: 88vh;
+  object-fit: contain;
+}
+
+.gallery-close {
+  position: absolute;
+  top: 14px;
+  right: 16px;
+  background: none;
+  border: none;
+  color: #fff;
+  font-size: 26px;
+  cursor: pointer;
+}
+
+.gallery-nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  background: rgba(255, 255, 255, 0.12);
+  border: none;
+  color: #fff;
+  font-size: 40px;
+  width: 52px;
+  height: 72px;
+  cursor: pointer;
+}
+
+.gallery-nav.left {
+  left: 10px;
+}
+.gallery-nav.right {
+  right: 10px;
+}
+
+.gallery-count {
+  position: absolute;
+  bottom: 16px;
+  color: #fff;
+  font-size: 13px;
+}
+
+/* Spinner shared by the media states. */
+.spinner {
+  width: 22px;
+  height: 22px;
+  border: 3px solid rgba(0, 0, 0, 0.15);
+  border-top-color: var(--brand);
+  border-radius: 50%;
+  display: inline-block;
+  animation: spin 0.8s linear infinite;
+}
+
+.spinner.tiny {
+  width: 14px;
+  height: 14px;
+  border-width: 2px;
+}
+
+.spinner.large {
+  width: 40px;
+  height: 40px;
+  border-width: 4px;
+  border-top-color: #fff;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}

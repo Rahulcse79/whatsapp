@@ -9,9 +9,10 @@
 // can't run — or be meaningfully tested — in this framework-free package. The
 // crypto, framing, hashing, and upload orchestration are all real and tested.
 
-import { fromBase64, toBase64 } from "./base64";
+import { toBase64 } from "./base64";
+import { decryptThumbnail, fetchAndDecrypt, type DownloadTransport } from "./download";
 import type { MediaEnvelope } from "./envelope";
-import { decryptMedia, encryptMedia, encryptWithKey, sha256 } from "./mediaCrypto";
+import { encryptMedia, encryptWithKey } from "./mediaCrypto";
 import type { ResumableUploader } from "./uploader";
 
 /** Raw source bytes plus the metadata the pipeline threads into the envelope. */
@@ -41,12 +42,7 @@ export interface ThumbnailMaker {
   make(source: MediaSource): Promise<Preview | null>;
 }
 
-/** DownloadTransport fetches a stored ciphertext blob by its object key. The
- *  concrete impl resolves a presigned GET (media-svc /download-urls) and streams
- *  the bytes; injected so the recipient path is testable without a network. */
-export interface DownloadTransport {
-  get(objectKey: string): Promise<Uint8Array>;
-}
+export type { DownloadTransport };
 
 /** MediaPipeline prepares outbound media and reconstructs inbound media. The
  *  compressor and thumbnailer are optional — omit them and the pipeline uploads
@@ -88,20 +84,14 @@ export class MediaPipeline {
   }
 
   /** open is the recipient side: download the blob, re-verify its content hash
-   *  against the envelope, then decrypt. A hash mismatch means the stored bytes
-   *  are not what the sender sealed — we refuse to decrypt them. */
-  async open(envelope: MediaEnvelope, transport: DownloadTransport): Promise<Uint8Array> {
-    const ciphertext = await transport.get(envelope.objectKey);
-    const actualHash = toBase64(await sha256(ciphertext));
-    if (actualHash !== envelope.contentHash) {
-      throw new Error("media content hash mismatch: stored bytes differ from the envelope");
-    }
-    return decryptMedia(fromBase64(envelope.fileKey), ciphertext);
+   *  against the envelope, then decrypt. Delegates to {@link fetchAndDecrypt} so
+   *  the download path is usable without constructing an uploader. */
+  open(envelope: MediaEnvelope, transport: DownloadTransport): Promise<Uint8Array> {
+    return fetchAndDecrypt(envelope, transport);
   }
 
   /** openThumbnail decrypts just the inline preview, if the envelope carries one. */
-  async openThumbnail(envelope: MediaEnvelope): Promise<Uint8Array | null> {
-    if (!envelope.encThumb) return null;
-    return decryptMedia(fromBase64(envelope.fileKey), fromBase64(envelope.encThumb));
+  openThumbnail(envelope: MediaEnvelope): Promise<Uint8Array | null> {
+    return decryptThumbnail(envelope);
   }
 }

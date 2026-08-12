@@ -23,10 +23,39 @@ export {
   type UploadTransport,
 } from "./uploader";
 export {
+  decryptThumbnail,
+  fetchAndDecrypt,
+  type DownloadTransport,
+} from "./download";
+export {
   MediaPipeline,
   type Compressor,
-  type DownloadTransport,
   type MediaSource,
   type Preview,
   type ThumbnailMaker,
 } from "./pipeline";
+export {
+  DownloadManager,
+  type DownloadItem,
+  type DownloadManagerOptions,
+  type DownloadState,
+} from "./downloadManager";
+export {
+  classifyMedia,
+  downloadName,
+  formatBytes,
+  formatDuration,
+  guessExtension,
+  isVoiceNote,
+  type MediaKind,
+} from "./mediaMeta";
+export {
+  blurhashAverageColor,
+  blurhashCssColor,
+  decodeBlurhash,
+} from "./blurhash";
+export {
+  encodeMediaMessage,
+  parseMediaMessage,
+  type MediaMessageBody,
+} from "./messageBody";

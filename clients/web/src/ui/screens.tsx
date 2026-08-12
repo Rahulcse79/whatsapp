@@ -1,7 +1,11 @@
 import { isValidPhone, type ChatSummary, type ThreadMessage } from "@wa/client-core";
+import { classifyMedia, parseMediaMessage, type MediaEnvelope } from "@wa/media-pipeline";
 import { useEffect, useState, type FormEvent } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
+import { DownloadsPanel } from "./media/DownloadsPanel";
+import { Gallery } from "./media/Gallery";
+import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
 
 export function Login({ onRequested }: { onRequested: (challengeId: string, phone: string) => void }) {
@@ -173,6 +177,7 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
   const { services } = useServices();
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [draft, setDraft] = useState("");
+  const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -202,6 +207,14 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
     setMessages(next);
   }
 
+  // Every image/video in the thread, so the lightbox can page across them.
+  const visuals: MediaEnvelope[] = [];
+  for (const m of messages) {
+    if (m.deleted) continue;
+    const media = parseMediaMessage(m.body);
+    if (media) for (const a of media.attachments) if (isVisual(a)) visuals.push(a);
+  }
+
   return (
     <div className="pane">
       <div className="pane-head">
@@ -213,18 +226,46 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
       <div className="messages">
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
         {messages.map((m) => (
-          <div key={m.msgUuid} className={m.mine ? "bubble mine" : "bubble theirs"}>
-            <span>{m.deleted ? "This message was deleted" : m.body}</span>
-            {m.mine ? <span className="state">{m.state}</span> : null}
-          </div>
+          <MessageBubble key={m.msgUuid} message={m} onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })} />
         ))}
       </div>
+      <DownloadsPanel />
       <form className="composer" onSubmit={send}>
         <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Message" />
         <button className="btn" type="submit">
           Send
         </button>
       </form>
+      {gallery ? <Gallery items={gallery.items} startKey={gallery.startKey} onClose={() => setGallery(null)} /> : null}
+    </div>
+  );
+}
+
+function isVisual(env: MediaEnvelope): boolean {
+  const kind = classifyMedia(env.mime);
+  return kind === "image" || kind === "video";
+}
+
+/** MessageBubble renders a text message, or — when the decrypted body carries a
+ *  media envelope — the attachment(s) plus any caption. */
+function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (env: MediaEnvelope) => void }) {
+  const media = message.deleted ? null : parseMediaMessage(message.body);
+
+  return (
+    <div className={message.mine ? "bubble mine" : "bubble theirs"}>
+      {media ? (
+        <>
+          <div className="bubble-media">
+            {media.attachments.map((env) => (
+              <MediaMessage key={env.objectKey} env={env} onOpen={onOpen} />
+            ))}
+          </div>
+          {media.caption ? <span className="bubble-caption">{media.caption}</span> : null}
+        </>
+      ) : (
+        <span>{message.deleted ? "This message was deleted" : message.body}</span>
+      )}
+      {message.mine ? <span className="state">{message.state}</span> : null}
     </div>
   );
 }

@@ -110,6 +110,10 @@ export interface OutgoingDraft {
   plaintext: string; // kept locally for the optimistic bubble; never sent in clear
   payload: Uint8Array; // sealed envelope actually transmitted
   now: number;
+  /** Human text for the chat-list preview. Defaults to plaintext; set it when
+   *  plaintext is an encoded body (e.g. a link-preview message) so the list
+   *  shows the message, not its JSON. */
+  listText?: string;
 }
 
 /**
@@ -195,7 +199,7 @@ export class MessageStore implements MessageRepo {
       "INSERT OR REPLACE INTO outbox(client_ref, conversation_id, payload, attempts, created_at) VALUES(?,?,?,?,?)",
       [d.clientRef, d.conversationId, d.payload, 0, d.now],
     );
-    await this.touchConversation(d.conversationId, 0, d.plaintext, d.now);
+    await this.touchConversation(d.conversationId, 0, d.listText ?? d.plaintext, d.now);
   }
 
   /** markSent clears the outbox row and flips the bubble to "sent" on MsgAck. */

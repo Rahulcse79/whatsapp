@@ -231,6 +231,48 @@ body {
   margin-top: 4px;
 }
 
+/* Sender-generated link preview (FR-MSG-08) — image is a self-contained data
+   URI carried in the envelope; nothing is fetched to render it. */
+.link-preview {
+  display: block;
+  margin-top: 6px;
+  border-radius: 8px;
+  overflow: hidden;
+  text-decoration: none;
+  color: inherit;
+  background: rgba(0, 0, 0, 0.05);
+  border-left: 3px solid #128c7e;
+}
+.head-actions {
+  display: inline-flex;
+  gap: 8px;
+}
+.link-preview-img {
+  display: block;
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+}
+.link-preview-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+}
+.link-preview-site {
+  font-size: 11px;
+  font-weight: 600;
+  color: #128c7e;
+}
+.link-preview-title {
+  font-size: 14px;
+  font-weight: 600;
+}
+.link-preview-desc {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
 /* Image / video thumbnail with a blurhash placeholder underneath. */
 .media-visual {
   position: relative;

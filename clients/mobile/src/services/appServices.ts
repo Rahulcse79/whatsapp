@@ -4,6 +4,7 @@
 // sockets, or SQL directly.
 
 import { DevSessionCipher, generateDevIdentity } from "@wa/crypto-wrapper";
+import { encodeTextMessage, generateLinkPreview } from "@wa/media-pipeline";
 import { Cursors } from "@wa/sync-engine";
 import {
   MessageStore,
@@ -18,6 +19,7 @@ import {
 } from "@wa/client-core";
 import { createHttpClient } from "../platform/httpClient";
 import { openDatabase } from "../platform/expoSqlite";
+import { rnHtmlFetcher } from "../platform/linkPreview";
 import { rnScheduler } from "../platform/scheduler";
 import { secureStore } from "../platform/secureStore";
 import { createWsTransportFactory } from "../platform/wsTransport";
@@ -115,11 +117,15 @@ export class AppServices {
   /** search runs a full-text query over the local decrypted store (ADR-005). */
   search: MessageStore["search"] = (query, opts) => this.store.search(query, opts);
 
-  /** sendText seals + enqueues a message and nudges the outbox flush. */
+  /** sendText generates a sender-side link preview (FR-MSG-08), seals the encoded
+   *  body, and enqueues it. The preview rides in the same envelope; a URL-free
+   *  message skips the fetch and any failure just sends plain text. */
   async sendText(conversationId: string, text: string): Promise<void> {
     const clientRef = newId();
-    const payload = await this.seal(conversationId, text);
-    await this.store.enqueueOutgoing({ clientRef, conversationId, plaintext: text, payload, now: Date.now() });
+    const preview = await generateLinkPreview(text, rnHtmlFetcher).catch(() => null);
+    const body = encodeTextMessage(text, preview ?? undefined);
+    const payload = await this.seal(conversationId, body);
+    await this.store.enqueueOutgoing({ clientRef, conversationId, plaintext: body, listText: text, payload, now: Date.now() });
     await this.ws?.flush();
   }
 

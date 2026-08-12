@@ -1,9 +1,17 @@
-import { classifyMedia, parseMediaMessage, type MediaEnvelope } from "@wa/media-pipeline";
+import {
+  classifyMedia,
+  parseMediaMessage,
+  parseTextMessage,
+  type LinkPreview,
+  type MediaEnvelope,
+} from "@wa/media-pipeline";
 import { useFocusEffect, useLocalSearchParams } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   FlatList,
+  Image,
   KeyboardAvoidingView,
+  Linking,
   Platform,
   Pressable,
   StyleSheet,
@@ -106,6 +114,7 @@ function isVisual(env: MediaEnvelope): boolean {
  *  media envelope — the attachment(s) plus any caption. */
 function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (env: MediaEnvelope) => void }) {
   const media = message.deleted ? null : parseMediaMessage(message.body);
+  const text = media || message.deleted ? null : parseTextMessage(message.body);
 
   return (
     <View style={[styles.bubble, message.mine ? styles.mine : styles.theirs]}>
@@ -117,10 +126,32 @@ function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (e
           {media.caption ? <Text style={styles.body}>{media.caption}</Text> : null}
         </View>
       ) : (
-        <Text style={styles.body}>{message.deleted ? "This message was deleted" : message.body}</Text>
+        <>
+          <Text style={styles.body}>{message.deleted ? "This message was deleted" : text?.text}</Text>
+          {text?.linkPreview ? <LinkPreviewCard preview={text.linkPreview} /> : null}
+        </>
       )}
       {message.mine ? <Text style={styles.meta}>{message.state}</Text> : null}
     </View>
+  );
+}
+
+/** LinkPreviewCard renders a sender-generated preview (FR-MSG-08). The image is a
+ *  self-contained data URI from the envelope — nothing is fetched here. */
+function LinkPreviewCard({ preview }: { preview: LinkPreview }) {
+  return (
+    <Pressable style={styles.preview} onPress={() => void Linking.openURL(preview.url)}>
+      {preview.image ? <Image source={{ uri: preview.image }} style={styles.previewImg} resizeMode="cover" /> : null}
+      {preview.siteName ? <Text style={styles.previewSite}>{preview.siteName}</Text> : null}
+      <Text style={styles.previewTitle} numberOfLines={2}>
+        {preview.title}
+      </Text>
+      {preview.description ? (
+        <Text style={styles.previewDesc} numberOfLines={2}>
+          {preview.description}
+        </Text>
+      ) : null}
+    </Pressable>
   );
 }
 
@@ -132,6 +163,11 @@ const styles = StyleSheet.create({
   mine: { alignSelf: "flex-end", backgroundColor: "#DCF8C6" },
   theirs: { alignSelf: "flex-start", backgroundColor: "#F0F0F0" },
   body: { fontSize: 16 },
+  preview: { marginTop: 6, borderRadius: 8, overflow: "hidden", backgroundColor: "rgba(0,0,0,0.05)", borderLeftWidth: 3, borderLeftColor: "#128C7E", paddingVertical: 6, paddingHorizontal: 8 },
+  previewImg: { width: "100%", height: 140, borderRadius: 4, marginBottom: 6, backgroundColor: "#ddd" },
+  previewSite: { fontSize: 11, color: "#128C7E", fontWeight: "600" },
+  previewTitle: { fontSize: 14, fontWeight: "600", color: "#111" },
+  previewDesc: { fontSize: 12, color: "#555", marginTop: 2 },
   meta: { fontSize: 11, color: "#5a7", marginTop: 2, textAlign: "right" },
   empty: { textAlign: "center", color: "#999", marginTop: 40 },
   composer: { flexDirection: "row", alignItems: "flex-end", padding: 8, gap: 8, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: "#e2e2e2" },

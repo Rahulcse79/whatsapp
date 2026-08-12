@@ -101,7 +101,7 @@ export class MemoryMessageRepo implements MessageRepo {
       createdAt: d.now,
     });
     this.outbox.push({ clientRef: d.clientRef, conversationId: d.conversationId, payload: d.payload, createdAt: d.now });
-    this.touch(d.conversationId, 0, d.plaintext, d.now);
+    this.touch(d.conversationId, 0, d.listText ?? d.plaintext, d.now);
     return Promise.resolve();
   }
 

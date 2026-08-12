@@ -15,8 +15,10 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
+import { encodeTextMessage, generateLinkPreview } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
+import { webHtmlFetcher } from "../platform/linkPreview";
 import { webScheduler } from "../platform/scheduler";
 import { indexedDbSecureStore } from "../platform/secureStore";
 import { createWsTransportFactory } from "../platform/wsTransport";
@@ -93,7 +95,12 @@ export class AppServices {
   }
 
   async sendText(conversationId: string, text: string): Promise<void> {
-    await this.db.enqueueText({ conversationId, text, clientRef: newId(), now: Date.now() });
+    // Generate the link preview on THIS (sender) device and carry it in the
+    // sealed body (FR-MSG-08). Best-effort: a URL-free message skips the fetch,
+    // and any failure just sends plain text.
+    const preview = await generateLinkPreview(text, webHtmlFetcher).catch(() => null);
+    const body = encodeTextMessage(text, preview ?? undefined);
+    await this.db.enqueueText({ conversationId, text: body, listText: text, clientRef: newId(), now: Date.now() });
     await this.ws?.flush();
   }
 

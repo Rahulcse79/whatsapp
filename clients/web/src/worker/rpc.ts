@@ -6,9 +6,12 @@ import type { ChatSummary, ConversationCursor, InboxBatch, MsgSend, SearchHit, T
 
 export interface EnqueueTextInput {
   conversationId: string;
+  /** The encoded plaintext body to seal + store (may carry a link preview). */
   text: string;
   clientRef: string;
   now: number;
+  /** Human text for the chat-list preview when `text` is an encoded body. */
+  listText?: string;
 }
 
 export interface MarkSentInput {

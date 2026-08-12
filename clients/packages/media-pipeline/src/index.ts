@@ -56,6 +56,21 @@ export {
 } from "./blurhash";
 export {
   encodeMediaMessage,
+  encodeTextMessage,
   parseMediaMessage,
+  parseTextMessage,
   type MediaMessageBody,
+  type TextMessageBody,
 } from "./messageBody";
+export {
+  detectFirstUrl,
+  generateLinkPreview,
+  isHttpUrl,
+  parseLinkMetadata,
+  type GeneratePreviewOptions,
+  type HtmlFetcher,
+  type ImageEmbedder,
+  type LinkMetadata,
+  type LinkPreview,
+  type PreviewFetch,
+} from "./linkPreview";

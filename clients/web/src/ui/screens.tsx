@@ -6,7 +6,13 @@ import {
   type SearchHit,
   type ThreadMessage,
 } from "@wa/client-core";
-import { classifyMedia, parseMediaMessage, type MediaEnvelope } from "@wa/media-pipeline";
+import {
+  classifyMedia,
+  parseMediaMessage,
+  parseTextMessage,
+  type LinkPreview,
+  type MediaEnvelope,
+} from "@wa/media-pipeline";
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
@@ -345,6 +351,7 @@ function isVisual(env: MediaEnvelope): boolean {
  *  media envelope — the attachment(s) plus any caption. */
 function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (env: MediaEnvelope) => void }) {
   const media = message.deleted ? null : parseMediaMessage(message.body);
+  const text = media || message.deleted ? null : parseTextMessage(message.body);
 
   return (
     <div className={message.mine ? "bubble mine" : "bubble theirs"}>
@@ -358,9 +365,27 @@ function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (e
           {media.caption ? <span className="bubble-caption">{media.caption}</span> : null}
         </>
       ) : (
-        <span>{message.deleted ? "This message was deleted" : message.body}</span>
+        <>
+          <span>{message.deleted ? "This message was deleted" : text?.text}</span>
+          {text?.linkPreview ? <LinkPreviewCard preview={text.linkPreview} /> : null}
+        </>
       )}
       {message.mine ? <span className="state">{message.state}</span> : null}
     </div>
+  );
+}
+
+/** LinkPreviewCard renders a sender-generated preview (FR-MSG-08). The image is
+ *  a self-contained data URI carried in the envelope — nothing is fetched here. */
+function LinkPreviewCard({ preview }: { preview: LinkPreview }) {
+  return (
+    <a className="link-preview" href={preview.url} target="_blank" rel="noreferrer noopener">
+      {preview.image ? <img className="link-preview-img" src={preview.image} alt="" /> : null}
+      <span className="link-preview-body">
+        {preview.siteName ? <span className="link-preview-site">{preview.siteName}</span> : null}
+        <span className="link-preview-title">{preview.title}</span>
+        {preview.description ? <span className="link-preview-desc">{preview.description}</span> : null}
+      </span>
+    </a>
   );
 }

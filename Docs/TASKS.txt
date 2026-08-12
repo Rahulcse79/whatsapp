@@ -414,7 +414,33 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            rest of MessageStore [no in-Node SQLite engine → unit tests cover the pure +
            memory paths].)
     PROMPT> implement task T1.10 client search per ADR-005 + offline-sync-local-store.md. code + tests only.
-[ ] T1.11  Sender-side link previews
+[x] T1.11  Sender-side link previews
+           (FR-MSG-08: the preview is generated on the SENDER's device and carried
+           inside the E2EE envelope — the recipient renders it with NO fetch of its
+           own [its IP is never exposed to the linked site; the server never sees
+           which URLs are shared — no server-side unfurling]. Core in @wa/media-
+           pipeline linkPreview.ts (pure + injected ports): detectFirstUrl (trims
+           trailing punctuation / unbalanced paren, http(s) only), parseLinkMetadata
+           (regex over <meta> — OpenGraph → Twitter-card → <title>/meta-description
+           fallbacks; resolves relative image URLs; decodes HTML entities; no DOM so
+           it runs in worker/RN/Node), and generateLinkPreview(text, HtmlFetcher,
+           {embedImage?}) — best-effort by contract: ANY failure (no URL, non-http,
+           fetch null/non-HTML, no title) → null so a preview never blocks the send.
+           Privacy by construction: the carried LinkPreview holds only a self-
+           contained data-URI image from the injected ImageEmbedder — never the raw
+           remote image URL. Carriage: messageBody.ts gains encodeTextMessage/
+           parseTextMessage ({t:text,v:1,text,lp} sealed body; preview-less stays a
+           bare string, back-compat). client-core OutgoingDraft gains listText so the
+           chat-list preview shows the message, not its JSON, when the stored body is
+           encoded. UX code-only both clients: sender-device HtmlFetcher adapters
+           (web fetch [CORS-limited, noted] / RN fetch, both AbortController-timeout +
+           512KB cap), sendText generates→encodes→seals the preview in the same
+           envelope (URL-free messages skip the fetch), and a link-preview card
+           renders in the thread bubble (web <a>+CSS, mobile Pressable+Linking).
+           Recipient rendering activates fully with the E2EE-decrypt seam [today the
+           sender sees their own card]. Verified: pnpm -r typecheck all 7 projects +
+           media-pipeline 57 vitest GREEN [12 new linkPreview.test.ts + messageBody
+           text/preview round-trip + back-compat].)
     PROMPT> implement task T1.11 link previews generated on sender device, carried in envelope (FR-MSG-08). code + tests only.
 [ ] T1.12  Protocol tests P6 + P13, fan-out load profile
     PROMPT> implement task T1.12 protocol tests P6 (1024-member group + rotation ordering) and P13 (media resume). tests only.

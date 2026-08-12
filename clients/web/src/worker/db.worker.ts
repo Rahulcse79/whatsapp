@@ -28,6 +28,8 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
   persistInboxBatch: (arg) => repo.persistInboxBatch(arg as InboxBatch),
   enqueueText: async (arg) => {
     const input = arg as EnqueueTextInput;
+    // input.text is the already-encoded body (text, optionally + link preview);
+    // seal the whole thing so the recipient decrypts to the same body.
     const payload = await seal(input.conversationId, input.text);
     await repo.enqueueOutgoing({
       clientRef: input.clientRef,
@@ -35,6 +37,7 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
       plaintext: input.text,
       payload,
       now: input.now,
+      listText: input.listText,
     });
   },
   markSent: async (arg) => {

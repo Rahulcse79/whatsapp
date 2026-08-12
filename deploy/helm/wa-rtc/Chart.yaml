@@ -1,0 +1,18 @@
+apiVersion: v2
+name: wa-rtc
+description: >-
+  WhatsApp V2 RTC media plane (rtc-lld.md §1): a LiveKit SFU pool (×2,
+  host-network) plus coturn (STUN + TURN/UDP/TCP/443) as a DaemonSet, both pinned
+  to a dedicated host-network media node pool. This is INFRASTRUCTURE we operate
+  (ADR-004), not a Go deployable — no HPA/canary. The control plane (call-ctl)
+  lives in core-api (wa-platform).
+type: application
+version: 0.1.0
+appVersion: "1.8"
+keywords:
+  - whatsapp-v2
+  - rtc
+  - livekit
+  - coturn
+maintainers:
+  - name: platform

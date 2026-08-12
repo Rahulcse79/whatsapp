@@ -1,0 +1,11 @@
+# prod: ×2 on the full 16 vCPU / 10 GbE media nodes (rtc-lld §5).
+livekit:
+  replicas: 2
+  resources:
+    requests: { cpu: "4", memory: 4Gi }
+    limits: { cpu: "14", memory: 12Gi }
+coturn:
+  realm: rtc.wa
+  resources:
+    requests: { cpu: "1", memory: 512Mi }
+    limits: { cpu: "4", memory: 1Gi }

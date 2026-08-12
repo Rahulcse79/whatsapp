@@ -1,0 +1,25 @@
+{{- if .Values.livekit.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-livekit
+  labels:
+    {{- include "wa-rtc.labels" . | nindent 4 }}
+    app.kubernetes.io/name: livekit
+data:
+  livekit.yaml: |
+    port: {{ .Values.livekit.signalPort }}
+    log_level: info
+    rtc:
+      tcp_port: {{ .Values.livekit.rtc.tcpPort }}
+      port_range_start: {{ .Values.livekit.rtc.udpPortStart }}
+      port_range_end: {{ .Values.livekit.rtc.udpPortEnd }}
+      use_external_ip: {{ .Values.livekit.rtc.useExternalIP }}
+    redis:
+      # Room -> node registry (rtc-lld §1) backed by Valkey.
+      address: {{ .Values.livekit.redis.address | quote }}
+    turn:
+      # coturn handles TURN/STUN (rtc-lld §1); LiveKit's built-in TURN stays off.
+      enabled: false
+    # API keys are injected via the LIVEKIT_KEYS env var (Secret) — never here.
+{{- end }}

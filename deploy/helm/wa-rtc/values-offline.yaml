@@ -1,0 +1,16 @@
+# offline / self-hosted (HLD §17.5): single node, internal realm. coturn still
+# runs (LAN clients behind NAT need STUN/TURN); TLS uses the offline step-ca.
+livekit:
+  replicas: 1
+  redis:
+    address: wa-valkey:6379
+  resources:
+    requests: { cpu: "500m", memory: 512Mi }
+    limits: { cpu: "4", memory: 4Gi }
+  pdb:
+    enabled: false
+coturn:
+  realm: rtc.wa.internal
+  resources:
+    requests: { cpu: "250m", memory: 256Mi }
+    limits: { cpu: "2", memory: 512Mi }

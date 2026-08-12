@@ -1,0 +1,43 @@
+# ApplicationSet: one wa-rtc (RTC media plane) Application per environment, same
+# chart + values-<env>.yaml overlay — mirrors wa-platform (kubernetes-deployment
+# §3). Deploys into the same wa-<env> namespace as the platform; the media plane
+# is isolated by NODE POOL (host-network media nodes), not by namespace.
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: wa-rtc
+  namespace: argocd
+spec:
+  goTemplate: true
+  goTemplateOptions: ["missingkey=error"]
+  generators:
+    - list:
+        elements:
+          - env: dev
+          - env: staging
+          - env: prod
+          - env: offline
+  template:
+    metadata:
+      name: "wa-rtc-{{ .env }}"
+    spec:
+      project: whatsapp-v2
+      source:
+        # Set repoURL to your GitOps repository.
+        repoURL: https://github.com/whatsapp-v2/whatsapp-v2.git
+        targetRevision: main
+        path: deploy/helm/wa-rtc
+        helm:
+          valueFiles:
+            - values.yaml
+            - "values-{{ .env }}.yaml"
+      destination:
+        server: https://kubernetes.default.svc
+        namespace: "wa-{{ .env }}"
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true

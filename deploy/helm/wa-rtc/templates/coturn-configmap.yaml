@@ -1,0 +1,25 @@
+{{- if .Values.coturn.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-coturn
+  labels:
+    {{- include "wa-rtc.labels" . | nindent 4 }}
+    app.kubernetes.io/name: coturn
+data:
+  turnserver.conf: |
+    listening-port={{ .Values.coturn.listeningPort }}
+    tls-listening-port={{ .Values.coturn.tlsListeningPort }}
+    min-port={{ .Values.coturn.relayPortStart }}
+    max-port={{ .Values.coturn.relayPortEnd }}
+    realm={{ .Values.coturn.realm }}
+    fingerprint
+    # Short-lived HMAC credentials (rtc-lld §1): the shared secret is supplied at
+    # runtime via --static-auth-secret (from a Secret), never written here.
+    use-auth-secret
+    no-cli
+    no-multicast-peers
+    no-tlsv1
+    no-tlsv1_1
+    stale-nonce=600
+{{- end }}

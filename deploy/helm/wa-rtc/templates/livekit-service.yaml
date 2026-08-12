@@ -1,0 +1,35 @@
+{{- if .Values.livekit.enabled }}
+# ClusterIP for the signaling/admin API — how call-ctl (core-api) mints tokens
+# and reconciles webhooks. Media rides host-network directly on the node IPs.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-livekit
+  labels:
+    {{- include "wa-rtc.labels" . | nindent 4 }}
+    app.kubernetes.io/name: livekit
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "wa-rtc.selector" (dict "instance" .Release.Name "name" "livekit") | nindent 4 }}
+  ports:
+    - name: signal
+      port: {{ .Values.livekit.signalPort }}
+      targetPort: signal
+      protocol: TCP
+{{- end }}
+{{- if and .Values.livekit.enabled .Values.livekit.pdb.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ .Release.Name }}-livekit
+  labels:
+    {{- include "wa-rtc.labels" . | nindent 4 }}
+    app.kubernetes.io/name: livekit
+spec:
+  minAvailable: {{ .Values.livekit.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "wa-rtc.selector" (dict "instance" .Release.Name "name" "livekit") | nindent 6 }}
+{{- end }}

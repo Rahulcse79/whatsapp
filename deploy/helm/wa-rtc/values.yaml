@@ -1,0 +1,56 @@
+# wa-rtc defaults (rtc-lld.md §1/§5). Env overlays (values-<env>.yaml) deep-merge
+# over these. Secrets (LiveKit keys, coturn shared secret) are per-environment
+# bootstrap and referenced by name — never created by this chart.
+
+# Dedicated host-network media node pool: 16 vCPU / 10 GbE (rtc-lld §5).
+nodePool:
+  nodeSelector:
+    wa.rtc/pool: media
+  tolerations:
+    - key: wa.rtc/dedicated
+      operator: Equal
+      value: media
+      effect: NoSchedule
+
+image:
+  pullPolicy: IfNotPresent
+
+# ── LiveKit SFU pool (×2, host-network; room pinned to node) ──────────────────
+livekit:
+  enabled: true
+  image: livekit/livekit-server:v1.8
+  replicas: 2 # ×2 (rtc-lld §1); hard anti-affinity spreads across media nodes
+  # Secret (key LIVEKIT_KEYS = "<apiKey>: <secret>") — injected as an env var so
+  # it never lands in the ConfigMap.
+  keysSecret: wa-rtc-livekit
+  # LiveKit's multi-node room registry uses Redis; we point it at Valkey.
+  redis:
+    address: wa-valkey:6379
+  signalPort: 7880
+  rtc:
+    tcpPort: 7881
+    udpPortStart: 50000
+    udpPortEnd: 60000
+    useExternalIP: true
+  resources:
+    requests: { cpu: "4", memory: 4Gi }
+    limits: { cpu: "14", memory: 12Gi }
+  pdb:
+    enabled: true
+    minAvailable: 1
+
+# ── coturn (STUN + TURN/UDP/TCP/443), DaemonSet on the media pool ─────────────
+coturn:
+  enabled: true
+  image: coturn/coturn:4.6
+  realm: rtc.wa
+  # Secret (key TURN_STATIC_AUTH_SECRET) — HMAC shared secret for short-lived
+  # (10-min TTL) TURN credentials (rtc-lld §1). Injected via arg, never in config.
+  authSecret: wa-rtc-coturn
+  listeningPort: 3478
+  tlsListeningPort: 443
+  relayPortStart: 49152
+  relayPortEnd: 65535
+  resources:
+    requests: { cpu: "1", memory: 512Mi }
+    limits: { cpu: "4", memory: 1Gi }

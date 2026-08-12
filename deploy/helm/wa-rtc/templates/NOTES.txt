@@ -1,0 +1,13 @@
+wa-rtc ({{ .Release.Name }}) — RTC media plane deployed.
+
+  LiveKit SFU pool : {{ if .Values.livekit.enabled }}{{ .Values.livekit.replicas }} × {{ .Values.livekit.image }} (host-network){{ else }}disabled{{ end }}
+  coturn           : {{ if .Values.coturn.enabled }}DaemonSet {{ .Values.coturn.image }} (STUN/TURN, realm {{ .Values.coturn.realm }}){{ else }}disabled{{ end }}
+  Node pool        : {{ .Values.nodePool.nodeSelector | toJson }}
+
+Preconditions (per-environment bootstrap — NOT created by this chart):
+  - Secret {{ .Values.livekit.keysSecret }} with key LIVEKIT_KEYS ("<apiKey>: <secret>")
+  - Secret {{ .Values.coturn.authSecret }} with key TURN_STATIC_AUTH_SECRET
+  - Media nodes labelled {{ .Values.nodePool.nodeSelector | toJson }} and tainted for the pool.
+
+call-ctl (control plane) runs in core-api (wa-platform) and talks to the LiveKit
+signal Service at {{ .Release.Name }}-livekit:{{ .Values.livekit.signalPort }}.

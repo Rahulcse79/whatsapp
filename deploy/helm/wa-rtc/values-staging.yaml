@@ -1,0 +1,8 @@
+# staging: the full ×2 topology at smaller node size than prod.
+livekit:
+  replicas: 2
+  resources:
+    requests: { cpu: "2", memory: 2Gi }
+    limits: { cpu: "6", memory: 6Gi }
+coturn:
+  realm: rtc.staging.wa

@@ -216,6 +216,9 @@ jobs:
       - name: Lint the reusable service chart
         run: helm lint deploy/helm/wa-service
 
+      - name: Lint the RTC chart (host-network media plane)
+        run: helm lint deploy/helm/wa-rtc
+
       - name: Resolve umbrella dependencies
         run: helm dependency update deploy/helm/wa-platform
 
@@ -233,7 +236,13 @@ jobs:
               -f deploy/helm/wa-platform/values.yaml \
               -f "deploy/helm/wa-platform/values-$env.yaml" \
               > "/tmp/rendered/$env.yaml"
-            echo "  rendered $(grep -c '^kind:' "/tmp/rendered/$env.yaml") resources"
+            echo "  platform: $(grep -c '^kind:' "/tmp/rendered/$env.yaml") resources"
+            helm template "wa-rtc-$env" deploy/helm/wa-rtc \
+              --namespace "wa-$env" \
+              -f deploy/helm/wa-rtc/values.yaml \
+              -f "deploy/helm/wa-rtc/values-$env.yaml" \
+              > "/tmp/rendered/rtc-$env.yaml"
+            echo "  rtc: $(grep -c '^kind:' "/tmp/rendered/rtc-$env.yaml") resources"
             echo "::endgroup::"
           done
 
@@ -243,6 +252,7 @@ jobs:
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz | tar xz kubeconform
           for env in dev staging prod offline; do
             ./kubeconform -ignore-missing-schemas -summary "/tmp/rendered/$env.yaml"
+            ./kubeconform -ignore-missing-schemas -summary "/tmp/rendered/rtc-$env.yaml"
           done
 
       - uses: actions/setup-python@v5

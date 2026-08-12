@@ -482,7 +482,32 @@ LEGEND:  [x] done   [>] next up   [ ] pending
  PHASE 2 — CALLING
 ================================================================================
 
-[ ] T2.01  RTC infra (LiveKit pool + coturn helm charts, host-network node pool)
+[x] T2.01  RTC infra (LiveKit pool + coturn helm charts, host-network node pool)
+           (New chart deploy/helm/wa-rtc — the RTC MEDIA plane (rtc-lld §1/§5),
+           deliberately NOT a wa-service: host-network + node-pinned + no HPA/
+           canary (infra we operate, ADR-004; call-ctl control plane stays in
+           core-api). LiveKit SFU pool: host-network Deployment ×2 with REQUIRED
+           hostname anti-affinity (host-network → two pods can't share a node's
+           ports, so the "×2" is one-per-media-node), livekit.yaml ConfigMap
+           (signal 7880 + rtc tcp 7881 + UDP 50000-60000 + use_external_ip; Valkey
+           as the room→node registry; built-in TURN off), LIVEKIT_KEYS from a
+           Secret (never in the ConfigMap), ClusterIP Service for the signal/admin
+           API + webhooks, PDB minAvailable 1, RO-rootfs/drop-ALL/nonroot. coturn:
+           DaemonSet on the pool (one per media node), host-network, turnserver.conf
+           ConfigMap (use-auth-secret, realm, relay 49152-65535, no-tlsv1/1.1),
+           static-auth-secret HMAC injected via --static-auth-secret=$(env) from a
+           Secret (short-lived 10-min creds), ports 3478 udp/tcp + 443 tls with
+           NET_BIND_SERVICE. Dedicated media node pool via nodeSelector
+           wa.rtc/pool=media + toleration wa.rtc/dedicated (values-configurable).
+           values.yaml + 4 env overlays (dev/offline = 1 replica no-PDB; staging/
+           prod = ×2). ArgoCD apps/rtc-appset.yaml (per-env, mirrors wa-platform,
+           into the wa-<env> namespace — isolation is by node pool, not namespace;
+           auto-discovered by the app-of-apps root). CI deploy job extended: helm
+           lint wa-rtc + template all 4 envs + kubeconform. Secrets (LiveKit keys,
+           coturn secret) are per-env bootstrap, referenced by name, never created
+           by the chart. Validated locally: all values/argocd/ci YAML parse + every
+           template block/brace-balanced (helm not installable here → CI is the
+           compiler). manifests only.)
     PROMPT> implement task T2.01 rtc infra manifests per Docs/05-services/rtc-lld.md §1. manifests only.
 [ ] T2.02  call-ctl (rooms, join tokens, ring state machine, LiveKit webhooks)
     PROMPT> implement task T2.02 call-ctl in core-api per Docs/04-api/calls-ptt-api.md. code + tests only.

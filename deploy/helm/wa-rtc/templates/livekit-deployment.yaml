@@ -1,0 +1,84 @@
+{{- if .Values.livekit.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-livekit
+  labels:
+    {{- include "wa-rtc.labels" . | nindent 4 }}
+    app.kubernetes.io/name: livekit
+spec:
+  replicas: {{ .Values.livekit.replicas }}
+  selector:
+    matchLabels:
+      {{- include "wa-rtc.selector" (dict "instance" .Release.Name "name" "livekit") | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "wa-rtc.labels" . | nindent 8 }}
+        app.kubernetes.io/name: livekit
+      annotations:
+        checksum/config: {{ .Files.Get "templates/livekit-configmap.yaml" | sha256sum }}
+    spec:
+      # Host-network so the SFU advertises the node's real IP for SRTP media
+      # (rtc-lld §1). ClusterFirstWithHostNet keeps in-cluster DNS working.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- include "wa-rtc.nodePool" . | nindent 6 }}
+      # One LiveKit per media node: with host-network two pods can't share a
+      # node's ports, so anti-affinity is REQUIRED (this is the "×2" topology).
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "wa-rtc.selector" (dict "instance" .Release.Name "name" "livekit") | nindent 18 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: livekit
+          image: {{ .Values.livekit.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/livekit/livekit.yaml"]
+          env:
+            - name: LIVEKIT_KEYS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.livekit.keysSecret }}
+                  key: LIVEKIT_KEYS
+          ports:
+            - name: signal
+              containerPort: {{ .Values.livekit.signalPort }}
+              protocol: TCP
+            - name: rtc-tcp
+              containerPort: {{ .Values.livekit.rtc.tcpPort }}
+              protocol: TCP
+          readinessProbe:
+            tcpSocket:
+              port: {{ .Values.livekit.signalPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            tcpSocket:
+              port: {{ .Values.livekit.signalPort }}
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          resources:
+            {{- toYaml .Values.livekit.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: config
+              mountPath: /etc/livekit
+              readOnly: true
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-livekit
+{{- end }}

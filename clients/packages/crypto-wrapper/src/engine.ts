@@ -7,6 +7,7 @@
 // libsignal-backed cipher in production.
 
 import { addressKey, type DeviceAddress, type PrekeyBundle, type SessionCipher } from "./cipher";
+import { decodePayload, encodeDirect, encodeSelfSync } from "./syncPayload";
 
 /** KeyDirectory resolves a user's per-device public bundles
  *  (GET /keys/bundle/{user} — one bundle per device, e2ee-design §2). */
@@ -20,10 +21,24 @@ export interface DeviceTrust {
   isTrusted(address: DeviceAddress): boolean | Promise<boolean>;
 }
 
-/** One recipient device's sealed copy — what the client fans out over msg.send. */
+/** One target device's sealed copy — what the client fans out over msg.send.
+ *  `selfSync` marks a copy addressed to the sender's own other device. */
 export interface SealedForDevice {
   address: DeviceAddress;
   envelope: Uint8Array;
+  selfSync: boolean;
+}
+
+/** DecryptedMessage is the result of opening an inbound envelope: the plaintext
+ *  content plus the multi-device framing (e2ee-design §2). For a self-sync copy,
+ *  `selfSync` is true and `sentTo` names the recipient the sender addressed;
+ *  `conversationId` is the conversation the message belongs to on this device —
+ *  the sender for a direct message, the `sentTo` recipient for a self-sync copy. */
+export interface DecryptedMessage {
+  content: Uint8Array;
+  selfSync: boolean;
+  sentTo?: string;
+  conversationId: string;
 }
 
 export class UntrustedDeviceError extends Error {
@@ -50,8 +65,11 @@ export class E2EEEngine {
 
   /**
    * seal encrypts plaintext once per recipient device AND once per other device
-   * of the sender (self-sync copies), establishing sessions on demand. Returns
-   * one sealed envelope per target device; the server relays each opaquely.
+   * of the sender (self-sync copies), establishing sessions on demand. A device
+   * that is NOT on a trusted device list is skipped — the message is never
+   * encrypted to a device a rogue server may have inserted (e2ee-design §2/§5).
+   * Recipient copies are framed DIRECT; self copies carry `sentTo` so the
+   * sender's other device knows the conversation. One envelope per target device.
    */
   async seal(recipientUserId: string, plaintext: Uint8Array): Promise<SealedForDevice[]> {
     const recipients = await this.directory.bundlesFor(recipientUserId);
@@ -60,20 +78,31 @@ export class E2EEEngine {
     );
 
     const out: SealedForDevice[] = [];
-    for (const bundle of [...recipients, ...ownOthers]) {
+    for (const bundle of recipients) {
+      if (!(await this.trust.isTrusted(bundle.address))) continue;
       await this.ensureSession(bundle.address, () => Promise.resolve(bundle));
-      out.push({ address: bundle.address, envelope: await this.cipher.encrypt(bundle.address, plaintext) });
+      out.push({ address: bundle.address, envelope: await this.cipher.encrypt(bundle.address, encodeDirect(plaintext)), selfSync: false });
+    }
+    for (const bundle of ownOthers) {
+      if (!(await this.trust.isTrusted(bundle.address))) continue;
+      await this.ensureSession(bundle.address, () => Promise.resolve(bundle));
+      out.push({
+        address: bundle.address,
+        envelope: await this.cipher.encrypt(bundle.address, encodeSelfSync(recipientUserId, plaintext)),
+        selfSync: true,
+      });
     }
     return out;
   }
 
   /**
    * open decrypts an inbound envelope after checking the sender device is
-   * trusted. The first message from a device establishes the inbound session
-   * from its bundle (real libsignal parses the X3DH header from the envelope;
-   * here we resolve the bundle from the directory).
+   * trusted, then unwraps the multi-device framing. The first message from a
+   * device establishes the inbound session from its bundle (real libsignal parses
+   * the X3DH header from the envelope; here we resolve the bundle from the
+   * directory).
    */
-  async open(from: DeviceAddress, envelope: Uint8Array): Promise<Uint8Array> {
+  async open(from: DeviceAddress, envelope: Uint8Array): Promise<DecryptedMessage> {
     if (!(await this.trust.isTrusted(from))) throw new UntrustedDeviceError(from);
     await this.ensureSession(from, async () => {
       const bundle = (await this.directory.bundlesFor(from.userId)).find(
@@ -82,7 +111,9 @@ export class E2EEEngine {
       if (!bundle) throw new NoBundleError(from);
       return bundle;
     });
-    return this.cipher.decrypt(from, envelope);
+    const payload = decodePayload(await this.cipher.decrypt(from, envelope));
+    const conversationId = payload.selfSync ? (payload.sentTo ?? from.userId) : from.userId;
+    return { content: payload.content, selfSync: payload.selfSync, sentTo: payload.sentTo, conversationId };
   }
 
   private async ensureSession(address: DeviceAddress, resolve: () => Promise<PrekeyBundle>): Promise<void> {

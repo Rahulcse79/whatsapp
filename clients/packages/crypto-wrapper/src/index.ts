@@ -7,6 +7,7 @@
 export * from "./cipher";
 export * from "./devSession";
 export * from "./engine";
+export * from "./syncPayload";
 export * from "./senderKey";
 export * from "./deviceList";
 export * from "./qrLink";

@@ -22,9 +22,12 @@ describe("E2EEEngine", () => {
     const sealed = await engineFor(alice, dir).seal("bob", pt);
     expect(sealed).toHaveLength(1); // bob's single device
     const env = sealed[0]!.envelope;
+    expect(sealed[0]!.selfSync).toBe(false);
 
     expect(indexOfBytes(env, pt)).toBe(-1); // ← P14: server sees only opaque bytes
-    expect(dec(await engineFor(bob, dir).open(alice.address, env))).toBe("meet at the docks at midnight");
+    const opened = await engineFor(bob, dir).open(alice.address, env);
+    expect(dec(opened.content)).toBe("meet at the docks at midnight");
+    expect(opened).toMatchObject({ selfSync: false, conversationId: "alice" });
   });
 
   it("fans out to recipient devices AND the sender's other devices (self-sync)", async () => {
@@ -40,9 +43,32 @@ describe("E2EEEngine", () => {
 
     const forBob = sealed.find((s) => s.address.deviceId === "b1")!;
     const forA2 = sealed.find((s) => s.address.deviceId === "a2")!;
-    expect(dec(await engineFor(bob, dir).open(a1.address, forBob.envelope))).toBe("hello from a1");
-    // Alice's second device sees the sent message via the self-sync copy.
-    expect(dec(await engineFor(a2, dir).open(a1.address, forA2.envelope))).toBe("hello from a1");
+    expect(forBob.selfSync).toBe(false);
+    expect(forA2.selfSync).toBe(true);
+
+    // Bob sees a direct message; the conversation is the sender (alice).
+    const bobGot = await engineFor(bob, dir).open(a1.address, forBob.envelope);
+    expect(dec(bobGot.content)).toBe("hello from a1");
+    expect(bobGot).toMatchObject({ selfSync: false, conversationId: "alice" });
+
+    // Alice's second device sees the sent message via the self-sync copy — same
+    // content, but the conversation is the recipient (bob) it was sent to.
+    const a2Got = await engineFor(a2, dir).open(a1.address, forA2.envelope);
+    expect(dec(a2Got.content)).toBe("hello from a1");
+    expect(a2Got).toMatchObject({ selfSync: true, sentTo: "bob", conversationId: "bob" });
+  });
+
+  it("never encrypts to a device that is not on a trusted device list", async () => {
+    const dir = new InMemoryKeyDirectory();
+    const alice = generateDevIdentity({ userId: "alice", deviceId: "a1" }, seed(1));
+    const b1 = generateDevIdentity({ userId: "bob", deviceId: "b1" }, seed(2));
+    const rogue = generateDevIdentity({ userId: "bob", deviceId: "rogue" }, seed(9));
+    [alice, b1, rogue].forEach((id) => dir.add(devBundle(id)));
+
+    // A server-inserted rogue device is not on bob's trusted list.
+    const trustExceptRogue: DeviceTrust = { isTrusted: (a) => a.deviceId !== "rogue" };
+    const sealed = await engineFor(alice, dir, trustExceptRogue).seal("bob", enc("secret"));
+    expect(sealed.map((s) => s.address.deviceId)).toEqual(["b1"]); // rogue skipped — never sealed to
   });
 
   it("rejects a sender device not on a trusted device list", async () => {
@@ -70,8 +96,8 @@ describe("E2EEEngine", () => {
     const bobEngine = engineFor(bob, dir);
     const e1 = (await aliceEngine.seal("bob", enc("one")))[0]!.envelope;
     const e2 = (await aliceEngine.seal("bob", enc("two")))[0]!.envelope;
-    expect(dec(await bobEngine.open(alice.address, e1))).toBe("one");
-    expect(dec(await bobEngine.open(alice.address, e2))).toBe("two");
+    expect(dec((await bobEngine.open(alice.address, e1)).content)).toBe("one");
+    expect(dec((await bobEngine.open(alice.address, e2)).content)).toBe("two");
   });
 });
 

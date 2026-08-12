@@ -9,13 +9,17 @@
 // frame layer, is encrypted. The control plane, ring state machine, and key
 // derivation are identical to web.
 
-import type { CallCrypto, MediaConnectOptions, MediaTransport } from "@wa/call-engine";
+import type { CallCrypto, MediaConnectOptions, MediaTransport, RtpEncoding } from "@wa/call-engine";
+import type { RnVideoTrack } from "./rnCamera";
 
 export interface RnRtcSession {
   join(roomId: string, joinToken: string): Promise<void>;
   leave(): Promise<void>;
   /** Present once react-native-webrtc gains encoded-frame transforms. */
   installFrameE2EE?(crypto: CallCrypto): void;
+  /** Publish (or, with null, unpublish) the local camera track with the given
+   *  simulcast encodings — the video seam (T2.05). */
+  publishVideo?(track: RnVideoTrack | null, encodings: RtpEncoding[]): void;
 }
 
 export class RnCallMedia implements MediaTransport {

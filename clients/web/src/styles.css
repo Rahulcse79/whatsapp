@@ -541,6 +541,17 @@ body {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 
+/* Local self-view for a video call (T2.05). */
+.call-preview {
+  width: 160px;
+  height: 120px;
+  border-radius: 10px;
+  background: #222;
+  object-fit: cover;
+  margin-bottom: 14px;
+  transform: scaleX(-1); /* mirror the local camera, like every video app */
+}
+
 .call-peer {
   font-size: 18px;
   margin-bottom: 6px;

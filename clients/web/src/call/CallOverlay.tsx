@@ -3,18 +3,22 @@
 // in-call bar, and a brief ended notice. Hidden when idle.
 
 import { active, type CallState } from "@wa/call-engine";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useCall } from "./CallContext";
 
 export function CallOverlay() {
-  const { state, accept, decline, hangup } = useCall();
+  const { state, camera, localVideo, accept, decline, hangup, toggleCamera, flipCamera } = useCall();
 
   if (state.phase === "idle") return null;
   if (state.phase === "ended") return <EndedNotice state={state} />;
 
+  const isVideo = state.kind === "video";
+  const inCall = state.phase === "connecting" || state.phase === "connected";
+
   return (
     <div className="call-overlay">
       <div className="call-card">
+        {isVideo && camera.enabled ? <LocalPreview track={localVideo()} /> : null}
         <div className="call-peer mono">{state.peerId?.slice(0, 12) ?? "unknown"}</div>
         <div className="call-status">{statusLabel(state)}</div>
         <div className="call-actions">
@@ -28,14 +32,39 @@ export function CallOverlay() {
               </button>
             </>
           ) : (
-            <button className="btn danger" onClick={hangup}>
-              {active(state) ? "End" : "Cancel"}
-            </button>
+            <>
+              {isVideo && inCall ? (
+                <>
+                  <button className="btn ghost" onClick={() => void toggleCamera()}>
+                    {camera.enabled ? "Camera off" : "Camera on"}
+                  </button>
+                  {camera.enabled ? (
+                    <button className="btn ghost" onClick={() => void flipCamera()}>
+                      Flip
+                    </button>
+                  ) : null}
+                </>
+              ) : null}
+              <button className="btn danger" onClick={hangup}>
+                {active(state) ? "End" : "Cancel"}
+              </button>
+            </>
           )}
         </div>
       </div>
     </div>
   );
+}
+
+/** LocalPreview binds the local camera track to a muted <video>. */
+function LocalPreview({ track }: { track: MediaStreamTrack | null }) {
+  const ref = useRef<HTMLVideoElement | null>(null);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.srcObject = track ? new MediaStream([track]) : null;
+  }, [track]);
+  return <video className="call-preview" ref={ref} autoPlay muted playsInline />;
 }
 
 function statusLabel(state: CallState): string {

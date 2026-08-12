@@ -8,8 +8,10 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useCall } from "./CallContext";
 
 export function CallOverlay() {
-  const { state, accept, decline, hangup } = useCall();
+  const { state, camera, accept, decline, hangup, toggleCamera, flipCamera } = useCall();
   const [showEnded, setShowEnded] = useState(false);
+  const isVideo = state.kind === "video";
+  const inCall = state.phase === "connecting" || state.phase === "connected";
 
   useEffect(() => {
     if (state.phase !== "ended") return;
@@ -29,6 +31,7 @@ export function CallOverlay() {
             <Text style={styles.status}>Call ended{state.endReason ? ` · ${state.endReason}` : ""}</Text>
           ) : (
             <>
+              {isVideo && camera.enabled ? <View style={styles.preview} /> : null}
               <Text style={styles.peer}>{state.peerId?.slice(0, 12) ?? "unknown"}</Text>
               <Text style={styles.status}>{statusLabel(state)}</Text>
               <View style={styles.actions}>
@@ -42,9 +45,23 @@ export function CallOverlay() {
                     </Pressable>
                   </>
                 ) : (
-                  <Pressable style={[styles.btn, styles.danger]} onPress={() => void hangup()}>
-                    <Text style={styles.btnText}>{active(state) ? "End" : "Cancel"}</Text>
-                  </Pressable>
+                  <>
+                    {isVideo && inCall ? (
+                      <>
+                        <Pressable style={[styles.btn, styles.ghost]} onPress={() => void toggleCamera()}>
+                          <Text style={styles.ghostText}>{camera.enabled ? "Camera off" : "Camera on"}</Text>
+                        </Pressable>
+                        {camera.enabled ? (
+                          <Pressable style={[styles.btn, styles.ghost]} onPress={() => void flipCamera()}>
+                            <Text style={styles.ghostText}>Flip</Text>
+                          </Pressable>
+                        ) : null}
+                      </>
+                    ) : null}
+                    <Pressable style={[styles.btn, styles.danger]} onPress={() => void hangup()}>
+                      <Text style={styles.btnText}>{active(state) ? "End" : "Cancel"}</Text>
+                    </Pressable>
+                  </>
                 )}
               </View>
             </>
@@ -75,8 +92,13 @@ const styles = StyleSheet.create({
   card: { backgroundColor: "#fff", borderRadius: 16, padding: 28, minWidth: 260, alignItems: "center" },
   peer: { fontSize: 18, fontFamily: "monospace", marginBottom: 6 },
   status: { color: "#777", marginBottom: 20 },
-  actions: { flexDirection: "row", gap: 12 },
+  actions: { flexDirection: "row", gap: 12, flexWrap: "wrap", justifyContent: "center" },
   btn: { backgroundColor: "#128C7E", paddingHorizontal: 20, paddingVertical: 10, borderRadius: 24 },
   danger: { backgroundColor: "#e5484d" },
+  ghost: { backgroundColor: "#eee" },
+  ghostText: { color: "#333", fontSize: 15 },
   btnText: { color: "#fff", fontSize: 15 },
+  // Self-view placeholder; bind <RTCView streamURL={localStreamURL()} /> here once
+  // react-native-webrtc is wired (T2.05 media seam).
+  preview: { width: 120, height: 160, borderRadius: 10, backgroundColor: "#222", marginBottom: 14 },
 });

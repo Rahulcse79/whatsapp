@@ -515,7 +515,29 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     PROMPT> implement task T2.03 1:1 voice per Docs/05-services/rtc-lld.md §2 + sequence-diagrams §6. code + tests only.
 [x] T2.04  Lock-screen ringing (CallKit / ConnectionService + VoIP push path)
     PROMPT> implement task T2.04 native ring integrations per Docs/11-clients/mobile-app-architecture.md §3. code only.
-[ ] T2.05  Video + simulcast + camera management
+[x] T2.05  Video + simulcast + camera management
+           (Pure core in @wa/call-engine, both tested. simulcast.ts = the rtc-lld
+           §3 ladder (f 720p/1.2Mbps, h 360p/400kbps, q 90-180p/100kbps) +
+           buildSimulcastEncodings (uplink-budgeted bottom-up, q always on) +
+           chooseReceiveLayer (downlink+tileCount+focused → f/h/q or audio-only
+           below the 80kbps floor). camera.ts = CameraController, a serialized
+           state machine over a CameraDevice port (enable/disable idempotent,
+           flip re-points a live track / just records facing when off, run() queues
+           ops so rapid toggles can't half-open the track). Web: webCamera.ts
+           (getUserMedia CameraDevice publishing the ladder), webCallMedia
+           RtcSession.publishVideo seam, CallContext wires CameraController +
+           camera state + toggle/flip + localVideo, CallOverlay renders a mirrored
+           <video> self-preview + Camera on/off/Flip on video calls (+ .call-preview
+           CSS). Mobile parity added this session: rnCamera.ts (CameraDevice over a
+           structural react-native-webrtc mediaDevices port, _switchCamera flip,
+           streamURL for <RTCView>), rnCallMedia RnRtcSession.publishVideo seam,
+           CallContext wires CameraController + camera state + toggle/flip +
+           localStreamURL (stub mediaDevices until the native dep lands), CallOverlay
+           adds camera controls + a self-view placeholder (RTCView binds via the
+           seam). Tests: camera (idempotent/flip/serialize-races/listener) +
+           simulcast (ladder/uplink-budget/receive-selection/floor). Verified: all 8
+           projects typecheck + call-engine 46 vitest GREEN. Media RTP capture +
+           RTCView rendering ride the same LiveKit/react-native-webrtc seam as T2.03.)
     PROMPT> implement task T2.05 video calling with the simulcast ladder from rtc-lld §3. code + tests only.
 [ ] T2.06  Screen share + on-device background blur
     PROMPT> implement task T2.06 screen share + blur (never server-side). code only.

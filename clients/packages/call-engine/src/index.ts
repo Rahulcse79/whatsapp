@@ -32,3 +32,19 @@ export {
   type IncomingCall,
   type NativeRinger,
 } from "./ringBridge";
+export {
+  AUDIO_ONLY_FLOOR_KBPS,
+  buildSimulcastEncodings,
+  chooseReceiveLayer,
+  SIMULCAST_LADDER,
+  type LayerId,
+  type ReceiveContext,
+  type RtpEncoding,
+  type SimulcastLayer,
+} from "./simulcast";
+export {
+  CameraController,
+  type CameraDevice,
+  type CameraFacing,
+  type CameraState,
+} from "./camera";

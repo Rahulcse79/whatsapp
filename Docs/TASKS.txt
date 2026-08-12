@@ -634,10 +634,31 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            these onto the LiveKit media path (same seam as 1:1); the adaptation +
            recovery logic is complete + tested. code only.)
     PROMPT> implement task T2.09 call quality: opus DTX/FEC config, video->audio downgrade, <5s ICE restart. code only.
-[ ] T2.10  Protocol test P12 + call-surge load profile
+[x] T2.10  Protocol test P12 + call-surge load profile
+           (Scenario P12 [test-strategy §3: call offer/answer/decline/timeout +
+           answer-elsewhere → ring-machine transitions] as scenario_p12_test.go:
+           TransitionMatrix = the EXHAUSTIVE (state×event)→(next,ok) table [ringing
+           answers/declines/busy/misses/cancels + hangup-invalid; answered only
+           hangs up; every event from a resolved/signaling-only state a no-op — the
+           idempotency that makes duplicate requests + webhook redelivery safe] +
+           service lifecycle: AnswerElsewhere [answer → caller ANSWERED + every
+           OTHER callee device gets ANSWERED_ELSEWHERE, never the answerer], Decline
+           [→declined+recorded], Timeout [45s server deadline → SweepMissed → missed
+           + caller notified + callees pushed + OutcomeMissed]. Consolidates the
+           per-flow T2.02 unit tests into the crown-jewel protocol matrix. LOAD:
+           ops/loadtest/callsurge.js [k6] — 300 simultaneous POST /v1/calls setups,
+           threshold call_setup p95 ≤ 3s [GATE P2] + call_setup_fail==0 [every setup
+           opens a ring]; README maps it to GATE P2 / scenario P12. Verified: gofmt +
+           go test ./internal/calls GREEN, callsurge.js node --check OK. tests only.)
     PROMPT> implement task T2.10 call tests: ring state matrix P12 + 300-setup surge profile. tests only.
 
 --- GATE P2: call setup p95 <= 3s in staging; locked-phone ring on both platforms ---
+    STATUS: unit-level slices GREEN in CI (P12 ring matrix + call-ctl service +
+            client 1:1/group call engine). The staging load-job run of ops/loadtest/
+            callsurge.js (setup p95≤3s) and the real locked-phone ring on device
+            (T2.04 CallKit/ConnectionService — native modules are structural seams
+            until the callkeep/VoIP deps + config plugins are wired) are infra/
+            device-gated — same class as GATE P0/P1.
 
 ================================================================================
  PHASE 3 — MULTI-DEVICE, PTT, STORIES

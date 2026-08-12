@@ -8,8 +8,14 @@ in the whole test estate.
 | Profile | File | Shape | Pass criteria |
 |---|---|---|---|
 | **Fan-out stress** | [`fanout.js`](fanout.js) | 50 senders → 1,024-member groups simultaneously | ACK p95 ≤ 500 ms · backlog drains ≤ 60 s · zero loss (`msgs_lost==0`) |
+| **Call surge** | [`callsurge.js`](callsurge.js) | 300 simultaneous call setups | call setup p95 ≤ 3 s (GATE P2) · every setup opens a ring (`call_setup_fail==0`) |
 
-This profile is what **GATE P1** ("1,024-member group send … pass in CI load
+`callsurge.js` is what **GATE P2** ("call setup p95 ≤ 3 s in staging") runs; its
+protocol-level correctness counterpart is scenario **P12** (the ring
+offer/answer/decline/timeout + answer-elsewhere transition matrix in
+`server/internal/calls/scenario_p12_test.go`).
+
+`fanout.js` is what **GATE P1** ("1,024-member group send … pass in CI load
 job") runs. Its protocol-level correctness counterpart is scenario **P6**
 (client Sender-Key rotation ordering in `clients/packages/crypto-wrapper/src/
 senderKey.p6.test.ts`; server 1,024-way fan-out + aggregate receipts in

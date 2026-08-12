@@ -16,6 +16,7 @@ export default function RootLayout() {
           <Stack.Screen name="(auth)/login" options={{ title: "Sign in" }} />
           <Stack.Screen name="(auth)/verify" options={{ title: "Verify" }} />
           <Stack.Screen name="(app)/chats" options={{ title: "Chats" }} />
+          <Stack.Screen name="(app)/search" options={{ title: "Search" }} />
           <Stack.Screen name="(app)/thread/[id]" options={{ title: "Conversation" }} />
         </Stack>
       </MediaProvider>

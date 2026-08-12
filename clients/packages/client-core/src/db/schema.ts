@@ -41,4 +41,29 @@ CREATE TABLE IF NOT EXISTS cursors (
   conversation_id TEXT PRIMARY KEY,
   last_seq        INTEGER NOT NULL DEFAULT 0
 );
+
+-- Full-text search over message bodies (ADR-005: content search is client-side
+-- FTS5 over the decrypted local store — the server holds only ciphertext, so
+-- there is nothing to index server-side). External-content index mirroring
+-- messages.body, kept in sync by triggers; porter+unicode61 with prefix indexes
+-- so as-you-type queries stay under the <30 ms / 100k-message budget.
+CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+  body,
+  content='messages',
+  content_rowid='rowid',
+  tokenize='porter unicode61',
+  prefix='2 3'
+);
+
+CREATE TRIGGER IF NOT EXISTS messages_fts_ai AFTER INSERT ON messages BEGIN
+  INSERT INTO messages_fts(rowid, body) VALUES (new.rowid, new.body);
+END;
+CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+END;
+-- Only re-index when the body actually changes; state/pin/star/seq updates skip.
+CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages WHEN old.body IS NOT new.body BEGIN
+  INSERT INTO messages_fts(messages_fts, rowid, body) VALUES ('delete', old.rowid, old.body);
+  INSERT INTO messages_fts(rowid, body) VALUES (new.rowid, new.body);
+END;
 `;

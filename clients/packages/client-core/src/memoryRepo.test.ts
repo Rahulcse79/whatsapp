@@ -72,6 +72,40 @@ describe("MemoryMessageRepo", () => {
     expect(convs.map((c) => c.conversationId)).toEqual(["new", "old"]);
   });
 
+  it("searches outgoing bodies, scopes by conversation, and excludes deletes", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.enqueueOutgoing({ clientRef: "m1", conversationId: "c1", plaintext: "Lunch at noon?", payload: new Uint8Array(), now: 1 });
+    await repo.enqueueOutgoing({ clientRef: "m2", conversationId: "c1", plaintext: "dinner plans tonight", payload: new Uint8Array(), now: 2 });
+    await repo.enqueueOutgoing({ clientRef: "m3", conversationId: "c2", plaintext: "lunch meeting elsewhere", payload: new Uint8Array(), now: 3 });
+
+    // Prefix match across conversations.
+    const all = await repo.search("lun");
+    expect(all.map((h) => h.msgUuid).sort()).toEqual(["m1", "m3"]);
+    expect(all.some((h) => h.snippet.includes("‹"))).toBe(true);
+
+    // Conversation scope.
+    const scoped = await repo.search("lunch", { conversationId: "c2" });
+    expect(scoped.map((h) => h.msgUuid)).toEqual(["m3"]);
+
+    // A whitespace query yields nothing.
+    expect(await repo.search("   ")).toEqual([]);
+
+    // The limit caps results.
+    expect(await repo.search("lunch", { limit: 1 })).toHaveLength(1);
+  });
+
+  it("does not return tombstoned messages from search", async () => {
+    const repo = new MemoryMessageRepo();
+    // An incoming message whose body an overlay deletes.
+    await repo.persistInboxBatch(batch([inbound(1, { msgUuid: "x1" })]));
+    // Give it a searchable body, then delete it.
+    (await repo.thread("c1")); // no-op read
+    await repo.enqueueOutgoing({ clientRef: "x1", conversationId: "c1", plaintext: "secret keyword", payload: new Uint8Array(), now: 5 });
+    expect(await repo.search("keyword")).toHaveLength(1);
+    await repo.persistInboxBatch(batch([inbound(2, { kind: MsgKind.OVERLAY_DELETE, overlayTarget: "x1", msgUuid: "d2" })]));
+    expect(await repo.search("keyword")).toHaveLength(0);
+  });
+
   it("pins and stars a message locally (independent, toggleable flags)", async () => {
     const repo = new MemoryMessageRepo();
     await repo.enqueueOutgoing({ clientRef: "m1", conversationId: "c1", plaintext: "hi", payload: new Uint8Array(), now: 1 });

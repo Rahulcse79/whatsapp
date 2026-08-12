@@ -1,6 +1,13 @@
-import { isValidPhone, type ChatSummary, type ThreadMessage } from "@wa/client-core";
+import {
+  SNIPPET_CLOSE,
+  SNIPPET_OPEN,
+  isValidPhone,
+  type ChatSummary,
+  type SearchHit,
+  type ThreadMessage,
+} from "@wa/client-core";
 import { classifyMedia, parseMediaMessage, type MediaEnvelope } from "@wa/media-pipeline";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
 import { DownloadsPanel } from "./media/DownloadsPanel";
@@ -127,7 +134,15 @@ export function Verify({
   );
 }
 
-export function ChatList({ onOpen, onNew }: { onOpen: (id: string) => void; onNew: () => void }) {
+export function ChatList({
+  onOpen,
+  onNew,
+  onSearch,
+}: {
+  onOpen: (id: string) => void;
+  onNew: () => void;
+  onSearch: () => void;
+}) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
 
@@ -153,9 +168,14 @@ export function ChatList({ onOpen, onNew }: { onOpen: (id: string) => void; onNe
     <div className="pane">
       <div className="pane-head">
         <span>Chats</span>
-        <button className="btn small" onClick={onNew}>
-          ＋ New
-        </button>
+        <span className="head-actions">
+          <button className="btn small ghost" onClick={onSearch} aria-label="Search messages">
+            🔍 Search
+          </button>
+          <button className="btn small" onClick={onNew}>
+            ＋ New
+          </button>
+        </span>
       </div>
       {items.length === 0 ? (
         <p className="muted center">No conversations yet. Start one with ＋ New.</p>
@@ -171,6 +191,81 @@ export function ChatList({ onOpen, onNew }: { onOpen: (id: string) => void; onNe
       )}
     </div>
   );
+}
+
+/** Search screen: debounced full-text search over the local decrypted store
+ *  (ADR-005). A result opens its conversation. */
+export function Search({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () => void }) {
+  const { services } = useServices();
+  const [query, setQuery] = useState("");
+  const [hits, setHits] = useState<SearchHit[]>([]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setHits([]);
+      return;
+    }
+    let alive = true;
+    const handle = setTimeout(() => {
+      services
+        .search(q)
+        .then((r) => {
+          if (alive) setHits(r);
+        })
+        .catch(() => {});
+    }, 150); // debounce keystrokes
+    return () => {
+      alive = false;
+      clearTimeout(handle);
+    };
+  }, [query, services]);
+
+  return (
+    <div className="pane">
+      <div className="pane-head">
+        <button className="btn small ghost" onClick={onBack}>
+          ‹ Back
+        </button>
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search messages"
+          autoFocus
+        />
+      </div>
+      {query.trim() && hits.length === 0 ? <p className="muted center">No matches.</p> : null}
+      <ul className="list">
+        {hits.map((h) => (
+          <li key={h.msgUuid} className="row" onClick={() => onOpen(h.conversationId)}>
+            <div className="row-title">{h.conversationTitle}</div>
+            <div className="row-sub">{highlightSnippet(h.snippet)}</div>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/** highlightSnippet turns the SNIPPET_OPEN/CLOSE-delimited excerpt into React
+ *  nodes, wrapping matched terms in <mark>. */
+function highlightSnippet(snippet: string): ReactNode {
+  const parts: ReactNode[] = [];
+  let rest = snippet;
+  let key = 0;
+  for (;;) {
+    const open = rest.indexOf(SNIPPET_OPEN);
+    const close = open === -1 ? -1 : rest.indexOf(SNIPPET_CLOSE, open + SNIPPET_OPEN.length);
+    if (open === -1 || close === -1) {
+      parts.push(rest);
+      break;
+    }
+    if (open > 0) parts.push(rest.slice(0, open));
+    parts.push(<mark key={key++}>{rest.slice(open + SNIPPET_OPEN.length, close)}</mark>);
+    rest = rest.slice(close + SNIPPET_CLOSE.length);
+  }
+  return parts;
 }
 
 export function Thread({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {

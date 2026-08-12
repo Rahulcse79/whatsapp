@@ -6,7 +6,15 @@
 
 import { Cursors } from "@wa/sync-engine";
 import { MsgKind, type ConversationCursor, type InboxBatch, type MsgSend } from "../frames";
-import type { SqliteDB } from "../ports";
+import type { SqliteDB, SqlValue } from "../ports";
+import {
+  DEFAULT_SEARCH_LIMIT,
+  SNIPPET_CLOSE,
+  SNIPPET_OPEN,
+  toFtsQuery,
+  type SearchHit,
+  type SearchOptions,
+} from "../search";
 import { SCHEMA } from "./schema";
 
 export interface MessageInsert {
@@ -123,6 +131,8 @@ export interface MessageRepo {
   setPinned(msgUuid: string, pinned: boolean): Promise<void>;
   /** Purely local star — never leaves the device. */
   setStarred(msgUuid: string, starred: boolean): Promise<void>;
+  /** Full-text search over decrypted local message bodies (ADR-005). */
+  search(query: string, opts?: SearchOptions): Promise<SearchHit[]>;
 }
 
 export class MessageStore implements MessageRepo {
@@ -246,6 +256,49 @@ export class MessageStore implements MessageRepo {
 
   async setStarred(msgUuid: string, starred: boolean): Promise<void> {
     await this.db.run("UPDATE messages SET starred = ? WHERE msg_uuid = ?", [starred ? 1 : 0, msgUuid]);
+  }
+
+  /**
+   * search runs the sanitised query against the FTS5 index, ranks by bm25, and
+   * returns a highlighted snippet per hit. Deleted (tombstoned) messages are
+   * excluded. The SNIPPET markers are module constants (never user input), so
+   * inlining them in the snippet() call is injection-safe; the MATCH expression
+   * and all filters are bound parameters.
+   */
+  async search(query: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
+    const match = toFtsQuery(query);
+    if (!match) return [];
+
+    const params: SqlValue[] = [match];
+    let convClause = "";
+    if (opts.conversationId) {
+      convClause = " AND m.conversation_id = ?";
+      params.push(opts.conversationId);
+    }
+    params.push(opts.limit ?? DEFAULT_SEARCH_LIMIT);
+
+    const rows = await this.db.all(
+      `SELECT m.msg_uuid, m.conversation_id, m.seq, m.body, m.mine, m.created_at,
+              snippet(messages_fts, 0, '${SNIPPET_OPEN}', '${SNIPPET_CLOSE}', '…', 12) AS snippet,
+              COALESCE(c.title, m.conversation_id) AS title
+         FROM messages_fts
+         JOIN messages m ON m.rowid = messages_fts.rowid
+         LEFT JOIN conversations c ON c.id = m.conversation_id
+        WHERE messages_fts MATCH ? AND m.deleted = 0${convClause}
+        ORDER BY bm25(messages_fts)
+        LIMIT ?`,
+      params,
+    );
+    return rows.map((r) => ({
+      msgUuid: String(r.msg_uuid),
+      conversationId: String(r.conversation_id),
+      conversationTitle: String(r.title),
+      seq: Number(r.seq),
+      body: String(r.body),
+      snippet: String(r.snippet),
+      mine: Number(r.mine) === 1,
+      createdAt: Number(r.created_at),
+    }));
   }
 
   private async touchConversation(conversationId: string, seq: number, preview: string, ts: number): Promise<void> {

@@ -10,6 +10,7 @@ export * from "./ids";
 export * from "./session";
 export * from "./otpClient";
 export * from "./wsClient";
+export * from "./search";
 export * from "./db/schema";
 export * from "./db/outboxStore";
 export * from "./db/messageStore";

@@ -1,13 +1,14 @@
 import { newId } from "@wa/client-core";
 import { useState } from "react";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { ChatList, Login, Thread, Verify } from "./ui/screens";
+import { ChatList, Login, Search, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
 type Nav =
   | { name: "login" }
   | { name: "verify"; challengeId: string; phone: string }
   | { name: "chats" }
+  | { name: "search" }
   | { name: "thread"; conversationId: string };
 
 function Router() {
@@ -25,6 +26,15 @@ function Router() {
       <ChatList
         onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
         onNew={() => setNav({ name: "thread", conversationId: newId() })}
+        onSearch={() => setNav({ name: "search" })}
+      />
+    );
+  }
+  if (nav.name === "search") {
+    return (
+      <Search
+        onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
+        onBack={() => setNav({ name: "chats" })}
       />
     );
   }

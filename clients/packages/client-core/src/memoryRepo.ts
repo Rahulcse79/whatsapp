@@ -13,6 +13,7 @@ import {
   type OutgoingDraft,
   type ThreadMessage,
 } from "./db/messageStore";
+import { DEFAULT_SEARCH_LIMIT, matchMemory, tokenize, type SearchHit, type SearchOptions } from "./search";
 
 interface MsgRow {
   msgUuid: string;
@@ -171,6 +172,38 @@ export class MemoryMessageRepo implements MessageRepo {
     const m = this.messages.get(msgUuid);
     if (m) m.starred = starred;
     return Promise.resolve();
+  }
+
+  /** search mirrors MessageStore.search over the in-memory rows with the shared
+   *  prefix-token match/score (same semantics as the FTS5 path), ranked best
+   *  first and excluding tombstoned messages. */
+  search(query: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
+    const tokens = tokenize(query);
+    if (tokens.length === 0) return Promise.resolve([]);
+    const limit = opts.limit ?? DEFAULT_SEARCH_LIMIT;
+
+    const scored: { hit: SearchHit; score: number }[] = [];
+    for (const m of this.messages.values()) {
+      if (m.deleted) continue;
+      if (opts.conversationId && m.conversationId !== opts.conversationId) continue;
+      const res = matchMemory(m.body, tokens);
+      if (!res.matched) continue;
+      scored.push({
+        score: res.score,
+        hit: {
+          msgUuid: m.msgUuid,
+          conversationId: m.conversationId,
+          conversationTitle: this.convs.get(m.conversationId)?.title || m.conversationId,
+          seq: m.seq,
+          body: m.body,
+          snippet: res.snippet,
+          mine: m.mine,
+          createdAt: m.createdAt,
+        },
+      });
+    }
+    scored.sort((a, b) => b.score - a.score || b.hit.createdAt - a.hit.createdAt);
+    return Promise.resolve(scored.slice(0, limit).map((s) => s.hit));
   }
 
   private touch(conversationId: string, seq: number, preview: string, ts: number): void {

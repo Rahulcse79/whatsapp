@@ -2,7 +2,7 @@
 // proxy; the worker implements the same method names over postMessage. Uint8Array
 // payloads survive structured clone, so MsgSend frames cross intact.
 
-import type { ChatSummary, ConversationCursor, InboxBatch, MsgSend, ThreadMessage } from "@wa/client-core";
+import type { ChatSummary, ConversationCursor, InboxBatch, MsgSend, SearchHit, ThreadMessage } from "@wa/client-core";
 
 export interface EnqueueTextInput {
   conversationId: string;
@@ -16,6 +16,12 @@ export interface MarkSentInput {
   seq: number;
 }
 
+export interface SearchInput {
+  query: string;
+  conversationId?: string;
+  limit?: number;
+}
+
 /** The data + crypto surface the worker exposes to the main thread. */
 export interface DbApi {
   init(): Promise<ConversationCursor[]>;
@@ -25,6 +31,7 @@ export interface DbApi {
   pendingSends(): Promise<MsgSend[]>;
   conversations(): Promise<ChatSummary[]>;
   thread(conversationId: string): Promise<ThreadMessage[]>;
+  search(input: SearchInput): Promise<SearchHit[]>;
 }
 
 export interface RpcRequest {
@@ -70,5 +77,6 @@ export function createDbClient(worker: Worker): DbApi {
     pendingSends: () => call<MsgSend[]>("pendingSends"),
     conversations: () => call<ChatSummary[]>("conversations"),
     thread: (conversationId) => call<ThreadMessage[]>("thread", conversationId),
+    search: (input) => call<SearchHit[]>("search", input),
   };
 }

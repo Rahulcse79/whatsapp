@@ -31,6 +31,9 @@ export default function Chats() {
 
   return (
     <View style={styles.container}>
+      <Pressable style={styles.searchBar} onPress={() => router.push("/search")} accessibilityLabel="Search messages">
+        <Text style={styles.searchText}>🔍  Search messages</Text>
+      </Pressable>
       <FlatList
         data={items}
         keyExtractor={(c) => c.conversationId}
@@ -56,6 +59,8 @@ export default function Chats() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  searchBar: { margin: 12, paddingHorizontal: 14, paddingVertical: 10, borderRadius: 10, backgroundColor: "#f0f0f0" },
+  searchText: { fontSize: 15, color: "#777" },
   row: { paddingHorizontal: 20, paddingVertical: 16, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e2e2e2" },
   title: { fontSize: 17, fontWeight: "600" },
   preview: { fontSize: 14, color: "#777", marginTop: 2 },

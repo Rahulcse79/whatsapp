@@ -6,7 +6,7 @@
 
 import { MemoryMessageRepo, type InboxBatch } from "@wa/client-core";
 import { DevSessionCipher, generateDevIdentity } from "@wa/crypto-wrapper";
-import type { EnqueueTextInput, MarkSentInput, RpcRequest } from "./rpc";
+import type { EnqueueTextInput, MarkSentInput, RpcRequest, SearchInput } from "./rpc";
 
 const repo = new MemoryMessageRepo();
 // E2EE lives in the worker so key material never reaches the UI thread. The
@@ -44,6 +44,10 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
   pendingSends: () => repo.pendingSends(),
   conversations: () => repo.conversations(),
   thread: (arg) => repo.thread(arg as string),
+  search: (arg) => {
+    const input = arg as SearchInput;
+    return repo.search(input.query, { conversationId: input.conversationId, limit: input.limit });
+  },
 };
 
 // Cast self to just the worker surface we use — avoids the DOM-vs-WebWorker

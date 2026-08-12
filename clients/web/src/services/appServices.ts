@@ -10,6 +10,7 @@ import {
   newId,
   type ChatSummary,
   type ConversationCursor,
+  type SearchHit,
   type SessionProvider,
   type ThreadMessage,
   type VerifiedSession,
@@ -102,6 +103,11 @@ export class AppServices {
 
   thread(conversationId: string): Promise<ThreadMessage[]> {
     return this.db.thread(conversationId);
+  }
+
+  /** Full-text search over the local decrypted store (runs in the DB worker). */
+  search(query: string, opts?: { conversationId?: string; limit?: number }): Promise<SearchHit[]> {
+    return this.db.search({ query, conversationId: opts?.conversationId, limit: opts?.limit });
   }
 
   async logout(): Promise<void> {

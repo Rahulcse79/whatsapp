@@ -112,6 +112,9 @@ export class AppServices {
     this.ws.start();
   }
 
+  /** search runs a full-text query over the local decrypted store (ADR-005). */
+  search: MessageStore["search"] = (query, opts) => this.store.search(query, opts);
+
   /** sendText seals + enqueues a message and nudges the outbox flush. */
   async sendText(conversationId: string, text: string): Promise<void> {
     const clientRef = newId();

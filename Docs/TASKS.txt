@@ -385,7 +385,34 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            Verified locally: gofmt + go build ./... + go vet ./... + go test
            ./internal/contacts/... green; go mod tidy no-op. Removed scaffold doc.go.)
     PROMPT> implement task T1.09 contacts context per Docs/04-api/auth-users-api.md + threat-model T11. code + tests only.
-[ ] T1.10  Client FTS5 search + search UX
+[x] T1.10  Client FTS5 search + search UX
+           (ADR-005: content search is client-side over the decrypted local store
+           — the server holds only ciphertext. Core in @wa/client-core: schema.ts
+           gains messages_fts (FTS5 external-content over messages.body, porter
+           unicode61, prefix='2 3') kept in sync by AFTER INSERT/DELETE/UPDATE
+           triggers [update re-indexes only WHEN old.body IS NOT new.body, so
+           state/pin/star/seq writes skip]. New pure search.ts: toFtsQuery turns
+           raw input into a safe FTS5 MATCH (each token → double-quoted prefix
+           "term"* so FTS operators/punctuation can't inject — token content is
+           always [\p{L}\p{N}]+), tokenize (unicode-aware), and matchMemory
+           (prefix-token AND match + hit-count score + windowed snippet preserving
+           original text, matched terms wrapped in SNIPPET_OPEN/CLOSE '‹'/'›').
+           MessageRepo.search added: MessageStore runs MATCH + bm25() rank +
+           snippet() (deleted excluded, optional conversation scope, LIMIT; markers
+           inlined as constants, query/filters bound); MemoryMessageRepo mirrors it
+           via the shared match/score (the path the web worker runs until OPFS SQLite-
+           wasm lands). Search UX both clients (code only): web — DbApi.search over
+           the worker RPC + AppServices.search + a debounced Search screen (highlight
+           via <mark>) wired into the view-state router with a 🔍 entry in ChatList;
+           mobile — AppServices.search + a /search expo-router screen (registered in
+           _layout, bold-highlighted hits) reached from a search bar on Chats.
+           Verified locally: pnpm -r typecheck GREEN (all 7 projects) + client-core
+           49 tests GREEN (13 new search.test.ts + memoryRepo search/tombstone-
+           exclusion cases). Seam: incoming bodies index as their post-decrypt
+           plaintext once the E2EE-decrypt seam writes real bodies [today '[encrypted]'
+           placeholder]; the FTS5 SQL path rides the on-device SqliteDB seam like the
+           rest of MessageStore [no in-Node SQLite engine → unit tests cover the pure +
+           memory paths].)
     PROMPT> implement task T1.10 client search per ADR-005 + offline-sync-local-store.md. code + tests only.
 [ ] T1.11  Sender-side link previews
     PROMPT> implement task T1.11 link previews generated on sender device, carried in envelope (FR-MSG-08). code + tests only.

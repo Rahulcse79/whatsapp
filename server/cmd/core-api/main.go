@@ -22,6 +22,8 @@ import (
 	"github.com/whatsapp-v2/server/internal/auth/domain"
 	"github.com/whatsapp-v2/server/internal/chat"
 	chatadapters "github.com/whatsapp-v2/server/internal/chat/adapters"
+	"github.com/whatsapp-v2/server/internal/contacts"
+	contactsadapters "github.com/whatsapp-v2/server/internal/contacts/adapters"
 	"github.com/whatsapp-v2/server/internal/devices"
 	devadapters "github.com/whatsapp-v2/server/internal/devices/adapters"
 	"github.com/whatsapp-v2/server/internal/groups"
@@ -130,6 +132,20 @@ func main() {
 	// ── groups context ────────────────────────────────────────────────────
 	groupsSvc := groups.NewService(groupadapters.NewStore(pool), groupadapters.NewNATSEvents(nc, log))
 
+	// ── contacts context ──────────────────────────────────────────────────
+	// authSvc supplies the peppered PhoneHash so registration and hashed sync
+	// key identically (contacts.Hasher). One Store backs the discovery,
+	// contact-edge, favorite, and invite ports.
+	contactsStore := contactsadapters.NewStore(pool)
+	inviteBase := os.Getenv("WA_PUBLIC_BASE_URL")
+	if inviteBase == "" {
+		inviteBase = "https://wa.local"
+	}
+	contactsSvc := contacts.NewService(
+		authSvc, contactsStore, contactsStore, contactsStore, contactsStore,
+		contactsadapters.NewSyncDailyLimiter(limiter), contactsadapters.NewSearchRate(limiter),
+		inviteBase, log)
+
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
 	chatPub := chatadapters.NewNATSPublisher(nc)
@@ -158,6 +174,7 @@ func main() {
 	keys.Routes(mux, keysSvc, issuer)
 	devices.Routes(mux, devSvc, issuer)
 	groups.Routes(mux, groupsSvc, issuer)
+	contacts.Routes(mux, contactsSvc, issuer)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

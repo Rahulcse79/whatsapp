@@ -356,7 +356,34 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     PROMPT> implement task T1.07 gif proxy (server-side, ip-hiding) + sticker packs per FR-MED-05. code + tests only.
 [x] T1.08  Media GC job + lifecycle events
     PROMPT> implement task T1.08 media GC per Docs/05-services/media-svc-lld.md §4. code + tests only.
-[ ] T1.09  Contacts (hashed sync + enumeration defenses, search, favorites, invites)
+[x] T1.09  Contacts (hashed sync + enumeration defenses, search, favorites, invites)
+           (Hexagonal internal/contacts. domain/contacts.go: enumeration-defense
+           limits (T11: ≤5k hashes/call, 4 syncs/day, ≥2-char search, ≤20 results),
+           E.164 handle norm, Invite capability validity. service.go: Sync (uniform
+           per-handle hashing — no early exit — so timing never reveals which handles
+           matched; dedups identical; persists ONLY peppered edges, best-effort so a
+           store hiccup never fails a sync the client already sees), Search (caller
+           excluded, PG-trigram), Favorites (by user_id — self/unknown guarded),
+           Invites (create/resolve-410/revoke capability tokens, T12). Hasher port
+           REUSES auth.Service.PhoneHash — one definition of the peppered HMAC so
+           registration and sync key identically. http.go: 8 REST routes (bearer-
+           gated except public GET /invite/{token}). adapters/pg.go = one Store over
+           four ports: MatchHashes (active users only, echoes queried hash) / trigram
+           SearchUsername (LIKE-metachar escaped so a query can't widen the match) /
+           UpsertMatched (contacts edges) / Favorites / Invites; FK violation on an
+           unknown favorite target → ErrNotFound. adapters/rate.go: GCRA SearchRate
+           (1/s burst10) + SyncDailyLimiter (Rate=limit/86400, Burst=limit — same
+           daily-cap technique auth uses for OTP). Migration 000013: favorites
+           (keyed by target_user_id — the contacts.favorite boolean can't represent
+           favoriting a search hit; deviation noted in migrations/README.md) +
+           contact_invites (personal, not group-scoped). Wired into core-api. Tests:
+           domain (handle/query/invite validity), service via fakes (sync match/echo/
+           dedup/empty/too-many/daily-limit/persist-failure-tolerated, search short/
+           rate/exclude-caller, favorites self/unknown/ok, invites create/resolve-
+           404-410/revoke-owner-nonowner), pg integration (match/skip-inactive/search/
+           wildcard-escape/upsert/favorites-FK/invites) behind WA_TEST_PG_DSN.
+           Verified locally: gofmt + go build ./... + go vet ./... + go test
+           ./internal/contacts/... green; go mod tidy no-op. Removed scaffold doc.go.)
     PROMPT> implement task T1.09 contacts context per Docs/04-api/auth-users-api.md + threat-model T11. code + tests only.
 [ ] T1.10  Client FTS5 search + search UX
     PROMPT> implement task T1.10 client search per ADR-005 + offline-sync-local-store.md. code + tests only.

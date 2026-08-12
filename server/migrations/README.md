@@ -27,6 +27,14 @@ format (`NNNNNN_name.up.sql` / `.down.sql`). Schema contract:
   job's cost shows up in metrics — expand-contract makes that a later ADD.
 - `accepted_at` column added (needed for overlay-window validation and
   `InboxItem.accepted_at_ms`); doc update pending.
+- **`favorites` table (000013)** keys favorites by `target_user_id` instead of
+  the design doc's `contacts.favorite` boolean. `PUT /favorites/{user_id}`
+  favorites a *user* — which may be a username-search hit with no address-book
+  edge — so the phone-hash-keyed `contacts` row can't represent it. The
+  `contacts.favorite` column is now unused (kept for expand-contract; a later
+  contract migration may drop it).
+- **`contact_invites` table (000013)** holds personal invite-a-friend
+  capability tokens (T1.09), distinct from the group-scoped `invite_links`.
 
 ## Local usage (optional — CI is the authority)
 

@@ -9,7 +9,7 @@
 // frame layer, is encrypted. The control plane, ring state machine, and key
 // derivation are identical to web.
 
-import type { CallCrypto, MediaConnectOptions, MediaTransport, RtpEncoding } from "@wa/call-engine";
+import type { CallCrypto, MediaConnectOptions, MediaTransport, RtpEncoding, ScreenEncoding } from "@wa/call-engine";
 import type { RnVideoTrack } from "./rnCamera";
 
 export interface RnRtcSession {
@@ -20,6 +20,9 @@ export interface RnRtcSession {
   /** Publish (or, with null, unpublish) the local camera track with the given
    *  simulcast encodings — the video seam (T2.05). */
   publishVideo?(track: RnVideoTrack | null, encodings: RtpEncoding[]): void;
+  /** Publish (or, with null, unpublish) a screen-share track — separate,
+   *  content-optimized (T2.06). */
+  publishScreen?(track: RnVideoTrack | null, encodings: ScreenEncoding[]): void;
 }
 
 export class RnCallMedia implements MediaTransport {

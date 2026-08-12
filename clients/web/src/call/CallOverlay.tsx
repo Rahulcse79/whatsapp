@@ -7,7 +7,8 @@ import { useEffect, useRef, useState } from "react";
 import { useCall } from "./CallContext";
 
 export function CallOverlay() {
-  const { state, camera, localVideo, accept, decline, hangup, toggleCamera, flipCamera } = useCall();
+  const { state, camera, screen, effect, localVideo, accept, decline, hangup, toggleCamera, flipCamera, toggleScreenShare, toggleBlur } =
+    useCall();
 
   if (state.phase === "idle") return null;
   if (state.phase === "ended") return <EndedNotice state={state} />;
@@ -39,11 +40,21 @@ export function CallOverlay() {
                     {camera.enabled ? "Camera off" : "Camera on"}
                   </button>
                   {camera.enabled ? (
-                    <button className="btn ghost" onClick={() => void flipCamera()}>
-                      Flip
-                    </button>
+                    <>
+                      <button className="btn ghost" onClick={() => void flipCamera()}>
+                        Flip
+                      </button>
+                      <button className="btn ghost" onClick={() => void toggleBlur()}>
+                        {effect.effect === "blur" ? "Unblur" : "Blur"}
+                      </button>
+                    </>
                   ) : null}
                 </>
+              ) : null}
+              {inCall ? (
+                <button className="btn ghost" onClick={() => void toggleScreenShare()}>
+                  {screen.sharing ? "Stop share" : "Share screen"}
+                </button>
               ) : null}
               <button className="btn danger" onClick={hangup}>
                 {active(state) ? "End" : "Cancel"}

@@ -8,7 +8,8 @@ import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useCall } from "./CallContext";
 
 export function CallOverlay() {
-  const { state, camera, accept, decline, hangup, toggleCamera, flipCamera } = useCall();
+  const { state, camera, screen, effect, accept, decline, hangup, toggleCamera, flipCamera, toggleScreenShare, toggleBlur } =
+    useCall();
   const [showEnded, setShowEnded] = useState(false);
   const isVideo = state.kind === "video";
   const inCall = state.phase === "connecting" || state.phase === "connected";
@@ -52,11 +53,21 @@ export function CallOverlay() {
                           <Text style={styles.ghostText}>{camera.enabled ? "Camera off" : "Camera on"}</Text>
                         </Pressable>
                         {camera.enabled ? (
-                          <Pressable style={[styles.btn, styles.ghost]} onPress={() => void flipCamera()}>
-                            <Text style={styles.ghostText}>Flip</Text>
-                          </Pressable>
+                          <>
+                            <Pressable style={[styles.btn, styles.ghost]} onPress={() => void flipCamera()}>
+                              <Text style={styles.ghostText}>Flip</Text>
+                            </Pressable>
+                            <Pressable style={[styles.btn, styles.ghost]} onPress={() => void toggleBlur()}>
+                              <Text style={styles.ghostText}>{effect.effect === "blur" ? "Unblur" : "Blur"}</Text>
+                            </Pressable>
+                          </>
                         ) : null}
                       </>
+                    ) : null}
+                    {inCall ? (
+                      <Pressable style={[styles.btn, styles.ghost]} onPress={() => void toggleScreenShare()}>
+                        <Text style={styles.ghostText}>{screen.sharing ? "Stop share" : "Share screen"}</Text>
+                      </Pressable>
                     ) : null}
                     <Pressable style={[styles.btn, styles.danger]} onPress={() => void hangup()}>
                       <Text style={styles.btnText}>{active(state) ? "End" : "Cancel"}</Text>

@@ -539,7 +539,31 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            projects typecheck + call-engine 46 vitest GREEN. Media RTP capture +
            RTCView rendering ride the same LiveKit/react-native-webrtc seam as T2.03.)
     PROMPT> implement task T2.05 video calling with the simulcast ladder from rtc-lld §3. code + tests only.
-[ ] T2.06  Screen share + on-device background blur
+[x] T2.06  Screen share + on-device background blur
+           (E2EE invariant drives the shape: the SFU forwards only encrypted
+           frames, so blur MUST run on the sender's device in the capture→encode
+           path — never server-side. Pure core in @wa/call-engine (tested despite
+           code-only, matching the CameraController convention): videoEffects.ts
+           (EffectController — a serialized none↔blur state machine over a
+           VideoProcessor port) + screenShare.ts (ScreenShareController serialized
+           start/stop/toggle over a ScreenSource port, reflects the OS "Stop
+           sharing" affordance via onEnded; buildScreenShareEncodings = the rtc-lld
+           §3 content-optimized ladder — SEPARATE track, "detail" content hint,
+           low fps 5, full+reduced rungs). Web: webScreenShare (getDisplayMedia,
+           detail hint, publishes the content ladder) + webVideoEffect (blur swaps
+           the published camera track for an on-device processed one; the person-
+           segmentation model [MediaPipe/WebGL] is the injected SegmentationBlur
+           seam), RtcSession.publishScreen seam, CallContext wires both controllers
+           + screen/effect state + toggleScreenShare/toggleBlur + screenVideo,
+           CallOverlay adds Share-screen / Blur controls. Mobile parity: rnScreenShare
+           (ReplayKit/MediaProjection ScreenSource over a structural getDisplayMedia
+           capturer) + rnVideoEffect (native frame-processor blur seam), RnRtcSession
+           .publishScreen seam, CallContext + CallOverlay wired (stub capturer/blur
+           until native deps). Both effects release when a call ends. Tests:
+           videoEffects 4 + screenShare 4 → call-engine 54. Verified all 8 client
+           projects typecheck + vitest GREEN. Heavy segmentation model + native
+           screen capture ride injected seams (like every media path); the control
+           logic + encodings are real. code only.)
     PROMPT> implement task T2.06 screen share + blur (never server-side). code only.
 [ ] T2.07  Group calls <=32 (active speaker, layouts, key epochs on join/leave)
     PROMPT> implement task T2.07 group calls per rtc-lld + e2ee-design §7. code + tests only.

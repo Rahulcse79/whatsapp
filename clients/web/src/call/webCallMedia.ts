@@ -4,7 +4,7 @@
 // into the build — the app injects a real LiveKit-backed session. Full media
 // (device capture, simulcast) lands in T2.05; the E2EE wiring is real now.
 
-import type { CallCrypto, MediaConnectOptions, MediaTransport, RtpEncoding } from "@wa/call-engine";
+import type { CallCrypto, MediaConnectOptions, MediaTransport, RtpEncoding, ScreenEncoding } from "@wa/call-engine";
 import { installReceiverE2EE, installSenderE2EE } from "./frameTransform";
 
 export interface RtcSession {
@@ -16,6 +16,9 @@ export interface RtcSession {
   /** Publish (or, with null, unpublish) the local camera track with the given
    *  simulcast encodings — the video seam (T2.05). */
   publishVideo?(track: MediaStreamTrack | null, encodings: RtpEncoding[]): void;
+  /** Publish (or, with null, unpublish) a screen-share track — a separate,
+   *  content-optimized track (T2.06). */
+  publishScreen?(track: MediaStreamTrack | null, encodings: ScreenEncoding[]): void;
   leave(): Promise<void>;
 }
 

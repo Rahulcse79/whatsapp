@@ -48,3 +48,17 @@ export {
   type CameraFacing,
   type CameraState,
 } from "./camera";
+export {
+  EffectController,
+  type BackgroundEffect,
+  type EffectState,
+  type VideoProcessor,
+} from "./videoEffects";
+export {
+  buildScreenShareEncodings,
+  ScreenShareController,
+  SCREEN_CONTENT_HINT,
+  type ScreenEncoding,
+  type ScreenShareState,
+  type ScreenSource,
+} from "./screenShare";

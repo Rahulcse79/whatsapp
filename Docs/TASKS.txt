@@ -513,7 +513,7 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     PROMPT> implement task T2.02 call-ctl in core-api per Docs/04-api/calls-ptt-api.md. code + tests only.
 [x] T2.03  1:1 voice calls on both clients + E2EE frames (insertable streams)
     PROMPT> implement task T2.03 1:1 voice per Docs/05-services/rtc-lld.md §2 + sequence-diagrams §6. code + tests only.
-[ ] T2.04  Lock-screen ringing (CallKit / ConnectionService + VoIP push path)
+[x] T2.04  Lock-screen ringing (CallKit / ConnectionService + VoIP push path)
     PROMPT> implement task T2.04 native ring integrations per Docs/11-clients/mobile-app-architecture.md §3. code only.
 [ ] T2.05  Video + simulcast + camera management
     PROMPT> implement task T2.05 video calling with the simulcast ladder from rtc-lld §3. code + tests only.

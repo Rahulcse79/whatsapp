@@ -26,3 +26,9 @@ export {
   type RootSecretProvider,
 } from "./callSession";
 export { createDevRootSecretProvider } from "./devRootSecret";
+export {
+  RingBridge,
+  type CallActions,
+  type IncomingCall,
+  type NativeRinger,
+} from "./ringBridge";

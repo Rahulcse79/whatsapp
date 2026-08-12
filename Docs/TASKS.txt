@@ -696,7 +696,7 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     PROMPT> implement task T3.03 multi-device fan-out per e2ee-design §2. code + tests only.
 [x] T3.04  PTT (floor lua, WS frames, SFU perm flip, room UX)
     PROMPT> implement task T3.04 ptt floor control per Docs/04-api/calls-ptt-api.md + DS&A §8 + valkey-keyspace §2. code + tests only.
-[ ] T3.05  Stories (per-story keys, audience snapshot, expiry, viewers)
+[x] T3.05  Stories (per-story keys, audience snapshot, expiry, viewers)
     PROMPT> implement task T3.05 stories per Docs/04-api/media-stories-api.md. code + tests only.
 [ ] T3.06  Encrypted backups (create/restore, argon2id key)
     PROMPT> implement task T3.06 encrypted backups per FR-SYNC-04 + relay-model ADR-001. code + tests only.

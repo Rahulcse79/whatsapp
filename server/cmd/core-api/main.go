@@ -42,6 +42,8 @@ import (
 	rpcv1 "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/rpc/v1"
 	"github.com/whatsapp-v2/server/internal/ptt"
 	pttadapters "github.com/whatsapp-v2/server/internal/ptt/adapters"
+	"github.com/whatsapp-v2/server/internal/stories"
+	storiesadapters "github.com/whatsapp-v2/server/internal/stories/adapters"
 )
 
 // Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
@@ -228,6 +230,30 @@ func main() {
 		}
 	}()
 
+	// ── stories context (status posts) ───────────────────────────────────
+	// Audience is the author's contacts (frozen at post time); content is E2EE
+	// with client-distributed per-story keys — the server holds ciphertext refs
+	// + metadata only.
+	storiesSvc := stories.NewService(storiesadapters.NewStore(pool), storiesadapters.NewAudience(pool))
+	// 24 h hard-expiry purge (MinIO ILM is the media backstop). Hourly, a plain
+	// DELETE, so overlap across pods is harmless.
+	go func() {
+		t := time.NewTicker(time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n, err := storiesSvc.PurgeExpired(ctx); err != nil {
+					log.Warn("stories: expiry purge failed", "err", err)
+				} else if n > 0 {
+					log.Info("stories: purged expired stories", "count", n)
+				}
+			}
+		}
+	}()
+
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
 	chatPub := chatadapters.NewNATSPublisher(nc)
@@ -259,6 +285,7 @@ func main() {
 	contacts.Routes(mux, contactsSvc, issuer)
 	calls.Routes(mux, callsSvc, issuer, callsWebhook)
 	ptt.Routes(mux, pttSvc, pttMinter, issuer)
+	stories.Routes(mux, storiesSvc, issuer)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

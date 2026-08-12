@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // Overrides the base's ES2022-only lib: this is the one client package that
+    // touches WebCrypto (crypto.subtle / CryptoKey) — the DOM lib supplies those
+    // ambient types. No DOM APIs beyond WebCrypto are used; HTTP is an injected port.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src"]
+}

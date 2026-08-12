@@ -348,7 +348,7 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            checks. NOTE: the QuotaService SERVER + storage counter in core-api is the
            counterpart (media-svc is the client); membership-of-conversation check on
            download deferred to the chat gRPC wiring.)
-[ ] T1.05  Client media pipeline (compress/encrypt/thumb/blurhash, resumable upload)
+[x] T1.05  Client media pipeline (compress/encrypt/thumb/blurhash, resumable upload)
     PROMPT> implement task T1.05 client media pipeline per Docs/04-api/media-stories-api.md + HLD §9. code + tests only.
 [ ] T1.06  Media UX (gallery, voice notes, documents, download manager)
     PROMPT> implement task T1.06 media UX on both clients. code only.

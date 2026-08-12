@@ -142,4 +142,45 @@ describe("ResumableUploader", () => {
     expect(t.completeBody?.map((p) => p.part_number)).toEqual([1, 2, 3]);
     expect(t.reassemble()).toEqual(data);
   });
+
+  // ── Protocol scenario P13 (test-strategy.md §3): upload-interrupt-resume-
+  //    complete; hash mismatch → resumability, reject path. ──────────────────
+
+  it("P13: recovers from a mid-upload interruption, re-presigning ONLY the interrupted window", async () => {
+    const partSize = 100;
+    const data = blob(20 * partSize); // 20 parts
+    // A dropped connection fails parts 7..12 on their first attempt.
+    const failWindow = new Map<number, number>();
+    for (let n = 7; n <= 12; n++) failWindow.set(n, 1);
+    const t = new FakeTransport(20 * partSize, partSize, failWindow);
+
+    const outcome = await new ResumableUploader(t).upload(data, "aGFzaA==", "application/octet-stream");
+
+    expect(outcome.mediaId).toBe("med_1");
+    expect(t.presignCalls).toEqual([[7, 8, 9, 10, 11, 12]]); // resumed exactly the missing parts
+    expect(t.reassemble()).toEqual(data); // every byte recovered, in the right slots
+    expect(t.completeBody?.map((p) => p.part_number)).toEqual(range(1, 20)); // all finalized, sorted
+  });
+
+  it("P13: surfaces the server's reject on a content-hash mismatch (never reports success)", async () => {
+    const base = new FakeTransport(250, 100);
+    // media-svc re-derives the hash on complete and rejects a mismatch; the
+    // uploader must propagate that failure rather than fabricate a media id.
+    const rejectingComplete: UploadTransport = {
+      postJSON<T>(path: string, body: unknown): Promise<T> {
+        if (path.endsWith("/complete")) return Promise.reject(new Error("MEDIA_HASH_MISMATCH"));
+        return base.postJSON<T>(path, body);
+      },
+      putPart: (url, bytes) => base.putPart(url, bytes),
+    };
+    await expect(new ResumableUploader(rejectingComplete).upload(blob(250), "wronghash", "image/webp")).rejects.toThrow(
+      /HASH_MISMATCH/,
+    );
+  });
+
+  it("P13: a 25 MB blob splits into independently-resumable parts (GATE P1 scale)", () => {
+    const MB = 1024 * 1024;
+    expect(partCount(25 * MB, 5 * MB)).toBe(5); // 5 MB parts → five resumable slices
+    expect(partCount(25 * MB + 1, 5 * MB)).toBe(6); // a trailing byte spills into one more part
+  });
 });

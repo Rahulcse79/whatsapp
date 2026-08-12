@@ -442,10 +442,41 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            media-pipeline 57 vitest GREEN [12 new linkPreview.test.ts + messageBody
            text/preview round-trip + back-compat].)
     PROMPT> implement task T1.11 link previews generated on sender device, carried in envelope (FR-MSG-08). code + tests only.
-[ ] T1.12  Protocol tests P6 + P13, fan-out load profile
+[x] T1.12  Protocol tests P6 + P13, fan-out load profile
+           (Scenario catalog test-strategy.md §3. P6 [group 1,024: send, member
+           remove, key-rotation ordering → "rotation before next msg, aggregate
+           receipts"] split into its two authored-able halves: CLIENT
+           crypto-wrapper/senderKey.p6.test.ts — a 1,024-member group where
+           member_removed(v1) rotates the Sender-Key, redistributes to the 1,022
+           remaining, drops the removed [forward secrecy: removed can't read the
+           NEXT message], and is ordered by version [a replayed v≤last is ignored,
+           no re-rotation]; SERVER fanout/scenario_p6_test.go — 1,024 members→
+           devices fan out to 1,023 rows [500+500+23 batches, sender excluded],
+           aggregate delivered/read tick flips EXACTLY once at the last device
+           [dup receipts don't re-emit], membership resolved at the accept version
+           so a lagging cache is bypassed [rotation ordering, DS&A §12]. P13 [media
+           upload-interrupt-resume-complete; hash mismatch → "resumability, reject
+           path"] in media-pipeline/uploader.test.ts: a dropped connection fails a
+           window of parts → resume re-presigns ONLY those → completes with the
+           blob intact + all etags sorted; a /complete rejection [server hash
+           re-derivation] propagates as an error [never a fake media id]; 25MB
+           part-count math [GATE P1 scale]. Fan-out LOAD PROFILE ops/loadtest/
+           fanout.js [k6]: 50 senders→1,024-member group, thresholds ACK p95≤500ms
+           + 60s drain + msgs_lost==0 [the per-conversation-numbered zero-loss
+           auditor], with the wsv1 protobuf framing as a documented codec seam
+           [ops/loadtest/README.md]. Verified: crypto-wrapper 22 + media-pipeline
+           60 vitest GREEN, go test ./internal/fanout GREEN, fanout.js node --check
+           OK. NOTE: the full cross-service P6/P13 protocol run and the fanout.js
+           load job itself are Docker/staging-infra-gated [like GATE P0]; the CI-
+           runnable slices [client rotation, server fan-out/receipts, uploader
+           resume] are authored here and green in the unit jobs.)
     PROMPT> implement task T1.12 protocol tests P6 (1024-member group + rotation ordering) and P13 (media resume). tests only.
 
 --- GATE P1: 1,024-member group send + 25MB resumable upload pass in CI load job ---
+    STATUS: unit-level slices GREEN in CI (P6 rotation+fan-out+aggregate receipts,
+            P13 uploader resume/reject). The staging load-job run of ops/loadtest/
+            fanout.js (ACK p95≤500ms, zero loss) is infra-gated — run it where a
+            1,024-member group + gateway/core stack is live (same class as GATE P0).
 
 ================================================================================
  PHASE 2 — CALLING

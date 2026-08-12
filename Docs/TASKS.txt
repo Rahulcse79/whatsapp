@@ -610,7 +610,29 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            deletes only the >90d row] behind WA_TEST_PG_DSN. Verified: gofmt + go
            build ./... + go vet + go test ./internal/calls GREEN. code + tests.)
     PROMPT> implement task T2.08 call history (metadata only, 90d) + missed-call notifications. code + tests only.
-[ ] T2.09  Quality adaptation + ICE-restart recovery
+[x] T2.09  Quality adaptation + ICE-restart recovery
+           (Three pure controllers in @wa/call-engine (tested despite code-only,
+           matching the tested-core convention). opusConfig.ts (rtc-lld §3, HLD
+           §10.5): buildOpusParams (DTX + in-band FEC on, bitrate clamped to the
+           6–32 kbps voice band) + applyOpusConfig — SDP munger that finds the opus
+           payload type and rewrites/inserts a=fmtp with usedtx=1;useinbandfec=1;
+           maxaveragebitrate, PRESERVING other params (minptime…), no-op when Opus
+           absent (portable web + RN way to enable DTX/FEC). qualityAdaptation.ts:
+           QualityController — video→audio downgrade with hysteresis (drops video
+           below the 100 kbps floor [90p], restores only past 250 kbps so a wobbly
+           link doesn't flap), audio bitrate slides within the Opus band as loss
+           rises (FEC carries recovery). iceRecovery.ts: IceRecoveryController — on
+           'disconnected' a grace window (may self-heal) then ICE restart (cheap,
+           keeps the room); on 'failed' immediate restart; after maxRestarts
+           escalate to rejoin (fresh token, POST /calls/{room}/rejoin) — defaults
+           (1s grace + 2×1.5s) keep worst-case recovery <5s (rtc-lld §1);
+           deterministic via an injected Timers port. Tests: opus munge/clamp/
+           insert/no-opus, quality floor-restore-hysteresis + audio-loss + notify,
+           ice restart→escalate / reconnect-cancels / disconnect-grace → call-engine
+           81 (16 files). Verified all 8 client projects typecheck + vitest GREEN.
+           SEAM: real RTCPeerConnection stats/state + setLocalDescription(SDP) wire
+           these onto the LiveKit media path (same seam as 1:1); the adaptation +
+           recovery logic is complete + tested. code only.)
     PROMPT> implement task T2.09 call quality: opus DTX/FEC config, video->audio downgrade, <5s ICE restart. code only.
 [ ] T2.10  Protocol test P12 + call-surge load profile
     PROMPT> implement task T2.10 call tests: ring state matrix P12 + 300-setup surge profile. tests only.

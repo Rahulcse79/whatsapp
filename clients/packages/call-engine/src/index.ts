@@ -30,6 +30,30 @@ export { GroupCallCrypto, type GroupCallContext } from "./groupCallCrypto";
 export { ActiveSpeakerTracker, type ActiveSpeakerOptions, type AudioLevel } from "./activeSpeaker";
 export { computeLayout, desiredReceiveLayers, type GroupLayout, type Tile } from "./layout";
 export {
+  applyOpusConfig,
+  buildOpusParams,
+  opusFmtpParams,
+  OPUS_MAX_KBPS,
+  OPUS_MIN_KBPS,
+  type OpusParams,
+} from "./opusConfig";
+export {
+  QualityController,
+  VIDEO_FLOOR_KBPS,
+  VIDEO_RESTORE_KBPS,
+  type ConnectionStats,
+  type QualityOptions,
+  type SendQuality,
+} from "./qualityAdaptation";
+export {
+  IceRecoveryController,
+  type IceConnState,
+  type IceRecoveryOptions,
+  type IceTransport,
+  type Rejoiner,
+  type Timers,
+} from "./iceRecovery";
+export {
   RingBridge,
   type CallActions,
   type IncomingCall,

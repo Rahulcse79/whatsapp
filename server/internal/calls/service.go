@@ -38,6 +38,9 @@ type RingStore interface {
 type History interface {
 	Upsert(ctx context.Context, rec CallRecord) error
 	List(ctx context.Context, userID, cursor string, limit int) ([]CallRecord, string, error)
+	// PurgeOlderThan deletes call_records started before cutoff, returning the
+	// number removed (FR-CALL-06 retention).
+	PurgeOlderThan(ctx context.Context, cutoff time.Time) (int, error)
 }
 
 // Signaler pushes call WS frames to specific devices (via the delivery path).
@@ -207,6 +210,14 @@ func (s *Service) History(ctx context.Context, ident auth.Identity, cursor strin
 		return nil, "", httpx.Transient()
 	}
 	return recs, next, nil
+}
+
+// PurgeHistory deletes call_records past the retention window (FR-CALL-06:
+// metadata-only history, 90 days). Idempotent (a plain DELETE) — safe to run on
+// every pod's daily ticker. Returns the number of records removed.
+func (s *Service) PurgeHistory(ctx context.Context) (int, error) {
+	cutoff := s.now().Add(-domain.HistoryRetention)
+	return s.history.PurgeOlderThan(ctx, cutoff)
 }
 
 // SweepMissed transitions rings whose deadline elapsed to missed, notifying the

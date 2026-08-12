@@ -185,6 +185,25 @@ func main() {
 		}
 	}()
 
+	// Call-history retention: purge records past the 90-day window daily
+	// (FR-CALL-06). A plain DELETE, so overlap across pods is harmless.
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n, err := callsSvc.PurgeHistory(ctx); err != nil {
+					log.Warn("calls: history purge failed", "err", err)
+				} else if n > 0 {
+					log.Info("calls: purged expired call history", "count", n)
+				}
+			}
+		}
+	}()
+
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
 	chatPub := chatadapters.NewNATSPublisher(nc)

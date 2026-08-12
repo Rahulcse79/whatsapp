@@ -593,7 +593,22 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            active-speaker/subscription events wire onto this engine at the same media
            seam as 1:1 (stub RTC); the epoch/speaker/layout logic is complete + tested.)
     PROMPT> implement task T2.07 group calls per rtc-lld + e2ee-design §7. code + tests only.
-[ ] T2.08  Call history + missed-call flow
+[x] T2.08  Call history + missed-call flow
+           (T2.02 already shipped the history QUERY [History.List keyset cursor +
+           GET /v1/calls/history] and the missed-call NOTIFICATION flow [SweepMissed
+           45s deadline→missed → Ring frame to caller + Pusher.Missed to callees +
+           recordOutcome]. T2.08's genuine gap was the 90-DAY RETENTION purge the
+           migration promised but nobody built. Added: domain.HistoryRetention =
+           90d (FR-CALL-06); History port gained PurgeOlderThan(cutoff)→count;
+           Service.PurgeHistory computes cutoff = now−90d and calls it; pg adapter
+           PurgeOlderThan = `DELETE FROM call_records WHERE started_at < $1` [served
+           by the calls_by_time index], returns RowsAffected; core-api runs it on a
+           daily ticker [plain idempotent DELETE → pod overlap harmless, like the
+           missed-sweep ticker]. Tests: service PurgeHistory [cutoff = now−90d
+           exactly + old purged / recent kept] + NEW pg integration test [Upsert→
+           List round-trip incl. the kind±1 DB shift + Outcome, then PurgeOlderThan
+           deletes only the >90d row] behind WA_TEST_PG_DSN. Verified: gofmt + go
+           build ./... + go vet + go test ./internal/calls GREEN. code + tests.)
     PROMPT> implement task T2.08 call history (metadata only, 90d) + missed-call notifications. code + tests only.
 [ ] T2.09  Quality adaptation + ICE-restart recovery
     PROMPT> implement task T2.09 call quality: opus DTX/FEC config, video->audio downgrade, <5s ICE restart. code only.

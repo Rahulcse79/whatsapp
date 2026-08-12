@@ -57,7 +57,10 @@ func (r *fakeRing) ExpiredRinging(_ context.Context, now time.Time, _ int) ([]Ri
 	return out, nil
 }
 
-type fakeHistory struct{ recs map[string]CallRecord }
+type fakeHistory struct {
+	recs        map[string]CallRecord
+	purgeCutoff time.Time
+}
 
 func newFakeHistory() *fakeHistory { return &fakeHistory{recs: map[string]CallRecord{}} }
 func (h *fakeHistory) Upsert(_ context.Context, rec CallRecord) error {
@@ -66,6 +69,17 @@ func (h *fakeHistory) Upsert(_ context.Context, rec CallRecord) error {
 }
 func (h *fakeHistory) List(_ context.Context, _, _ string, _ int) ([]CallRecord, string, error) {
 	return nil, "", nil
+}
+func (h *fakeHistory) PurgeOlderThan(_ context.Context, cutoff time.Time) (int, error) {
+	h.purgeCutoff = cutoff
+	n := 0
+	for id, rec := range h.recs {
+		if rec.StartedAt != nil && rec.StartedAt.Before(cutoff) {
+			delete(h.recs, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 type ringSignal struct {
@@ -337,5 +351,31 @@ func TestHandleWebhook_RoomFinishedForceEndsZombie(t *testing.T) {
 	// Idempotent redelivery.
 	if err := h.svc.HandleWebhook(context.Background(), WebhookEvent{Event: "room_finished", Room: WebhookRoom{Name: res.RoomID}}); err != nil {
 		t.Fatalf("redelivered webhook should be idempotent, got %v", err)
+	}
+}
+
+func TestPurgeHistory_DeletesBeyondRetention(t *testing.T) {
+	h := newHarness()
+	old := h.now.Add(-100 * 24 * time.Hour) // beyond the 90-day window
+	recent := h.now.Add(-1 * time.Hour)
+	h.hist.recs["old"] = CallRecord{ID: "old", StartedAt: &old}
+	h.hist.recs["recent"] = CallRecord{ID: "recent", StartedAt: &recent}
+
+	n, err := h.svc.PurgeHistory(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("purged %d, want 1", n)
+	}
+	// Cutoff is exactly now − retention.
+	if want := h.now.Add(-domain.HistoryRetention); !h.hist.purgeCutoff.Equal(want) {
+		t.Errorf("cutoff = %v, want %v (now − 90d)", h.hist.purgeCutoff, want)
+	}
+	if _, ok := h.hist.recs["old"]; ok {
+		t.Error("record beyond retention should be purged")
+	}
+	if _, ok := h.hist.recs["recent"]; !ok {
+		t.Error("recent record must be retained")
 	}
 }

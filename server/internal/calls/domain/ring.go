@@ -19,6 +19,9 @@ const (
 	// CallMaxTTL retains an answered call's ring record for its lifetime, so
 	// rejoin (network recovery) can re-authorize a participant.
 	CallMaxTTL = 8 * time.Hour
+	// HistoryRetention is how long call_records are kept before the purge job
+	// deletes them (FR-CALL-06: metadata-only history, 90 days).
+	HistoryRetention = 90 * 24 * time.Hour
 )
 
 // CallKind is voice or video (values match wsv1.CallKind).

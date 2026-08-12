@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -70,6 +71,17 @@ func (h *History) List(ctx context.Context, userID, cursor string, limit int) ([
 		out = out[:limit]
 	}
 	return out, next, nil
+}
+
+// PurgeOlderThan deletes call_records started before cutoff (FR-CALL-06
+// retention). The calls_by_time index on started_at serves the scan. Returns the
+// number of rows removed.
+func (h *History) PurgeOlderThan(ctx context.Context, cutoff time.Time) (int, error) {
+	tag, err := h.pool.Exec(ctx, `DELETE FROM call_records WHERE started_at < $1`, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return int(tag.RowsAffected()), nil
 }
 
 // call_records.kind is 0 voice | 1 video | 2 ptt (schema); domain.CallKind is

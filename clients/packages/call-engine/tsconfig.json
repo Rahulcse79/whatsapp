@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // WebCrypto (crypto.subtle) types come from the DOM lib, like @wa/media-pipeline.
+    // Frame data is handled as Uint8Array — no RTC DOM types leak into the crypto.
+    "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src"]
+}

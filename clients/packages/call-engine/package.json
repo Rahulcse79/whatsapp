@@ -1,0 +1,13 @@
+{
+  "name": "@wa/call-engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Client call engine (rtc-lld §2): SFrame-style E2EE media-frame encryption over WebCrypto, per-epoch frame keys derived from the Signal session, and the 1:1 call state machine. Framework-free; LiveKit/WebRTC and signaling are injected ports.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run"
+  }
+}

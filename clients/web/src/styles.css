@@ -516,3 +516,47 @@ body {
     transform: rotate(360deg);
   }
 }
+
+/* ── Calls (T2.03) ────────────────────────────────────────────────────────── */
+.call-btn {
+  margin-left: auto;
+  font-size: 18px;
+}
+
+.call-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.call-card {
+  background: #fff;
+  border-radius: 16px;
+  padding: 28px 32px;
+  min-width: 260px;
+  text-align: center;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
+}
+
+.call-peer {
+  font-size: 18px;
+  margin-bottom: 6px;
+}
+
+.call-status {
+  color: var(--muted);
+  margin-bottom: 20px;
+}
+
+.call-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.btn.danger {
+  background: #e5484d;
+}

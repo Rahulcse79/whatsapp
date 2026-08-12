@@ -1,5 +1,7 @@
 import { newId } from "@wa/client-core";
 import { useState } from "react";
+import { CallOverlay } from "./call/CallOverlay";
+import { CallProvider } from "./call/CallContext";
 import { MediaProvider } from "./ui/media/MediaContext";
 import { ChatList, Login, Search, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
@@ -46,12 +48,15 @@ export function App() {
   return (
     <ServicesProvider>
       <MediaProvider>
-        <div className="app">
-          <header className="topbar">WhatsApp V2</header>
-          <main className="main">
-            <Router />
-          </main>
-        </div>
+        <CallProvider>
+          <div className="app">
+            <header className="topbar">WhatsApp V2</header>
+            <main className="main">
+              <Router />
+            </main>
+            <CallOverlay />
+          </div>
+        </CallProvider>
       </MediaProvider>
     </ServicesProvider>
   );

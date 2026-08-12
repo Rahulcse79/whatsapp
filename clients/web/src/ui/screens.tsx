@@ -16,6 +16,7 @@ import {
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
+import { useCall } from "../call/CallContext";
 import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
@@ -276,6 +277,7 @@ function highlightSnippet(snippet: string): ReactNode {
 
 export function Thread({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {
   const { services } = useServices();
+  const call = useCall();
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
@@ -323,6 +325,9 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
           ‹ Back
         </button>
         <span className="mono">{conversationId.slice(0, 12)}</span>
+        <button className="btn small ghost call-btn" title="Voice call" onClick={() => void call.startCall(conversationId, "voice")}>
+          📞
+        </button>
       </div>
       <div className="messages">
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}

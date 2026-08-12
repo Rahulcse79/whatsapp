@@ -23,10 +23,12 @@ import type { ThreadMessage } from "@wa/client-core";
 import { DownloadsPanel } from "../../../src/ui/media/DownloadsPanel";
 import { Gallery } from "../../../src/ui/media/Gallery";
 import { MediaMessage } from "../../../src/ui/media/MediaMessage";
+import { useCall } from "../../../src/call/CallContext";
 import { useServices } from "../../../src/ui/ServicesContext";
 
 export default function Thread() {
   const { services } = useServices();
+  const call = useCall();
   const params = useLocalSearchParams<{ id?: string }>();
   const conversationId = String(params.id ?? "");
 
@@ -77,6 +79,11 @@ export default function Thread() {
       behavior={Platform.OS === "ios" ? "padding" : undefined}
       keyboardVerticalOffset={90}
     >
+      <View style={styles.callBar}>
+        <Pressable onPress={() => void call.startCall(conversationId, "voice")} accessibilityLabel="Voice call">
+          <Text style={styles.callBtn}>📞 Call</Text>
+        </Pressable>
+      </View>
       <FlatList
         data={messages}
         keyExtractor={(m) => m.msgUuid}
@@ -157,6 +164,8 @@ function LinkPreviewCard({ preview }: { preview: LinkPreview }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  callBar: { flexDirection: "row", justifyContent: "flex-end", paddingHorizontal: 12, paddingVertical: 6, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: "#e2e2e2" },
+  callBtn: { color: "#128C7E", fontSize: 15 },
   mediaWrap: { gap: 6 },
   list: { padding: 12, gap: 6 },
   bubble: { maxWidth: "80%", borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 },

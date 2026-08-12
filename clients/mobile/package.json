@@ -12,6 +12,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@wa/call-engine": "workspace:*",
     "@wa/client-core": "workspace:*",
     "@wa/crypto-wrapper": "workspace:*",
     "@wa/media-pipeline": "workspace:*",

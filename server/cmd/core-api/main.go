@@ -40,6 +40,8 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/ratelimit"
 	"github.com/whatsapp-v2/server/internal/platform/valkey"
 	rpcv1 "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/rpc/v1"
+	"github.com/whatsapp-v2/server/internal/ptt"
+	pttadapters "github.com/whatsapp-v2/server/internal/ptt/adapters"
 )
 
 // Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
@@ -204,6 +206,28 @@ func main() {
 		}
 	}()
 
+	// ── ptt context (push-to-talk floor control) ─────────────────────────
+	// Atomic Valkey-Lua fenced floor + FIFO queue; SFU publish flip is the media-
+	// plane seam (NoopSFU until the LiveKit RoomService client is wired).
+	pttSvc := ptt.NewService(pttadapters.NewValkeyFloorStore(vk), pttadapters.NewNoopSFU(log), pttadapters.NewSignaler(nc), log)
+	pttMinter := pttTokenMinter{m: calls.NewTokenMinter(liveKitKey, liveKitSecret)}
+	// Floor lapse recovery: promote queue heads for rooms whose holder stopped
+	// heartbeating (~every second; heartbeat is 500 ms). Idempotent across pods.
+	go func() {
+		t := time.NewTicker(time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := pttSvc.SweepAll(ctx); err != nil {
+					log.Warn("ptt: floor sweep failed", "err", err)
+				}
+			}
+		}
+	}()
+
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
 	chatPub := chatadapters.NewNATSPublisher(nc)
@@ -234,6 +258,7 @@ func main() {
 	groups.Routes(mux, groupsSvc, issuer)
 	contacts.Routes(mux, contactsSvc, issuer)
 	calls.Routes(mux, callsSvc, issuer, callsWebhook)
+	ptt.Routes(mux, pttSvc, pttMinter, issuer)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
@@ -276,6 +301,15 @@ func main() {
 		grpcSrv.Stop() // deadline passed; cut remaining streams
 	}
 	log.Info("stopped")
+}
+
+// pttTokenMinter adapts the LiveKit token minter to ptt.Minter: an audio-only,
+// server-muted join token (canPublish=false — the floor grant flips publish via
+// the SFU, so everyone joins muted).
+type pttTokenMinter struct{ m *calls.TokenMinter }
+
+func (p pttTokenMinter) Mint(room, identity string) (string, error) {
+	return p.m.Mint(calls.JoinGrant{Identity: identity, Room: room, CanPublish: false, CanSubscribe: true}, 60*time.Second, time.Now())
 }
 
 func buildIssuer(cfg *config.Config, log *slog.Logger) (*auth.TokenIssuer, error) {

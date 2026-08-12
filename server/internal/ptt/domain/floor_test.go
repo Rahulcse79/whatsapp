@@ -148,7 +148,7 @@ func TestFenceIsMonotonic(t *testing.T) {
 	f1 := f.Release("a", t0, ttl).Next.Fence // b granted
 	f.Acquire("c", t0, ttl)
 	f2 := f.Release("b", t0, ttl).Next.Fence // c granted
-	if !(f1 == 2 && f2 == 3) {
+	if f1 != 2 || f2 != 3 {
 		t.Fatalf("fences = %d,%d, want 2,3 (monotonic)", f1, f2)
 	}
 }

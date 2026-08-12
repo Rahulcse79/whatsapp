@@ -114,12 +114,14 @@ func TestIntegration_SearchUsername(t *testing.T) {
 	st := NewStore(pool)
 	ctx := context.Background()
 
+	// The unique tag is a PREFIX so the search term is a real prefix of the
+	// seeded usernames (tg+"alic" is a substring of tg+"alice" / tg+"alicia").
 	tg := tag(t)
-	seedUser(t, pool, "alice"+tg, rnd(t, 32))
-	seedUser(t, pool, "alicia"+tg, rnd(t, 32))
-	seedUser(t, pool, "bob"+tg, rnd(t, 32))
+	seedUser(t, pool, tg+"alice", rnd(t, 32))
+	seedUser(t, pool, tg+"alicia", rnd(t, 32))
+	seedUser(t, pool, tg+"bob", rnd(t, 32))
 
-	res, err := st.SearchUsername(ctx, "alic"+tg, 10)
+	res, err := st.SearchUsername(ctx, tg+"alic", 10)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,10 +136,10 @@ func TestIntegration_SearchUsername_EscapesWildcard(t *testing.T) {
 	ctx := context.Background()
 
 	tg := tag(t)
-	seedUser(t, pool, "zoe"+tg, rnd(t, 32))
+	seedUser(t, pool, tg+"zoe", rnd(t, 32))
 
 	// A '%' in the query must be matched literally, not as a wildcard.
-	res, err := st.SearchUsername(ctx, "z%"+tg, 10)
+	res, err := st.SearchUsername(ctx, tg+"z%", 10)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -354,7 +354,7 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     PROMPT> implement task T1.06 media UX on both clients. code only.
 [x] T1.07  GIF proxy + sticker packs
     PROMPT> implement task T1.07 gif proxy (server-side, ip-hiding) + sticker packs per FR-MED-05. code + tests only.
-[ ] T1.08  Media GC job + lifecycle events
+[x] T1.08  Media GC job + lifecycle events
     PROMPT> implement task T1.08 media GC per Docs/05-services/media-svc-lld.md §4. code + tests only.
 [ ] T1.09  Contacts (hashed sync + enumeration defenses, search, favorites, invites)
     PROMPT> implement task T1.09 contacts context per Docs/04-api/auth-users-api.md + threat-model T11. code + tests only.

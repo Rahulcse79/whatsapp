@@ -110,20 +110,35 @@ func main() {
 	}
 
 	store := mediaadapters.NewStore(pool)
+	sessions := mediaadapters.NewValkeySessions(vk)
 	events := mediaadapters.NewNATSEvents(nc, log)
 	svc := media.NewService(
 		store,
 		objects,
-		mediaadapters.NewValkeySessions(vk),
+		sessions,
 		mediaadapters.NewQuotaClient(coreConn),
 		mediaadapters.NewRate(ratelimit.NewValkeyLimiter(vk)),
 		events,
 	)
 
+	// media.lifecycle consumer: apply inbound dereference commands (delete-for-
+	// everyone with media, account purge) to the refcount (media-svc-lld §4).
+	// Queue-grouped so exactly one pod handles each event; idempotent via a
+	// Valkey seen-set against duplicate publishes.
+	lifecycle := mediaadapters.NewLifecycleSubscriber(
+		nc, media.NewLifecycleConsumer(svc, mediaadapters.NewLifecycleDeduper(vk), log), log,
+	)
+	unsubscribe, err := lifecycle.Start()
+	if err != nil {
+		log.Error("media.lifecycle subscribe failed", "err", err)
+		os.Exit(1)
+	}
+	defer unsubscribe()
+
 	// GC is a leader-elected singleton (K8s Lease). Until the lease is wired,
 	// only the pod flagged leader sweeps, so ×2 pods don't double-run it.
 	if os.Getenv("WA_MEDIA_GC_LEADER") == "true" {
-		go media.NewGC(store, objects, events, log).Run(ctx, time.Hour, 500)
+		go media.NewGC(store, objects, sessions, events, log).Run(ctx, time.Hour, 500)
 		log.Info("gc sweeper running (leader)")
 	}
 

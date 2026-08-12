@@ -93,11 +93,16 @@ func Next(cur RingState, ev Event) (RingState, bool) {
 			return StateMissed, true
 		case EventCancel:
 			return StateEnded, true
+		default:
+			// EventHangup is not valid while still ringing — no transition.
 		}
 	case StateAnswered:
 		if ev == EventHangup {
 			return StateEnded, true
 		}
+	default:
+		// Terminal / signaling-only states (declined/busy/missed/ended/
+		// answered-elsewhere) accept no further transition.
 	}
 	return cur, false
 }

@@ -73,8 +73,12 @@ func (s *RingStore) GetByRoom(ctx context.Context, roomID string) (calls.RingRec
 }
 
 func (s *RingStore) ExpiredRinging(ctx context.Context, now time.Time, limit int) ([]calls.RingRecord, error) {
-	ids, err := s.client.ZRangeByScore(ctx, ringingZSet, &redis.ZRangeBy{
-		Min: "-inf", Max: strconv.FormatInt(now.Unix(), 10), Count: int64(limit),
+	ids, err := s.client.ZRangeArgs(ctx, redis.ZRangeArgs{
+		Key:     ringingZSet,
+		ByScore: true,
+		Start:   "-inf",
+		Stop:    strconv.FormatInt(now.Unix(), 10),
+		Count:   int64(limit),
 	}).Result()
 	if err != nil {
 		return nil, err

@@ -134,6 +134,23 @@ CREATE TABLE stories (
 CREATE TABLE story_views (story_id uuid, viewer_id uuid, viewed_at timestamptz DEFAULT now(),
   PRIMARY KEY (story_id, viewer_id));
 
+-- Sticker packs (migration 000012, FR-MED-05). PUBLIC catalog assets — NOT E2EE
+-- media_objects: a sticker's object_key points at a shared blob. Local packs are
+-- the offline fallback when the GIF proxy is disabled (air-gap profile).
+CREATE TABLE sticker_packs (
+  id text PRIMARY KEY, title text NOT NULL, author text NOT NULL DEFAULT '',
+  tray_key text NOT NULL DEFAULT '', animated boolean NOT NULL DEFAULT false,
+  created_at timestamptz DEFAULT now());
+CREATE TABLE stickers (
+  id text PRIMARY KEY, pack_id text NOT NULL REFERENCES sticker_packs(id) ON DELETE CASCADE,
+  emoji text NOT NULL DEFAULT '', object_key text NOT NULL, position int NOT NULL DEFAULT 0);
+CREATE INDEX stickers_by_pack ON stickers(pack_id, position);
+CREATE TABLE user_sticker_packs (                        -- per-user install set (idempotent PK)
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  pack_id text NOT NULL REFERENCES sticker_packs(id) ON DELETE CASCADE,
+  installed_at timestamptz DEFAULT now(), PRIMARY KEY (user_id, pack_id));
+CREATE INDEX user_sticker_packs_by_user ON user_sticker_packs(user_id);
+
 -- ═══ contacts / social ═══
 CREATE TABLE contacts (owner_id uuid, contact_phone_hash bytea, matched_user_id uuid,
   favorite boolean DEFAULT false, PRIMARY KEY (owner_id, contact_phone_hash));

@@ -27,3 +27,25 @@ func (r *Rate) Allow(ctx context.Context, key string) (bool, error) {
 }
 
 var _ media.Rate = (*Rate)(nil)
+
+// SearchRate gates GIF search (FR-MED-05) at a more interactive rate than
+// uploads — ~1/sec sustained with a burst of 20, ample for a typing-ahead picker
+// while still capping automated scraping through the proxy.
+type SearchRate struct {
+	limiter *ratelimit.ValkeyLimiter
+	params  ratelimit.Params
+}
+
+func NewSearchRate(limiter *ratelimit.ValkeyLimiter) *SearchRate {
+	return &SearchRate{limiter: limiter, params: ratelimit.Params{Rate: 1.0, Burst: 20}}
+}
+
+func (r *SearchRate) Allow(ctx context.Context, key string) (bool, error) {
+	res, err := r.limiter.Allow(ctx, key, r.params)
+	if err != nil {
+		return false, err
+	}
+	return res.Allowed, nil
+}
+
+var _ media.Rate = (*SearchRate)(nil)

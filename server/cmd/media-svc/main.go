@@ -127,9 +127,24 @@ func main() {
 		log.Info("gc sweeper running (leader)")
 	}
 
+	// GIF search proxy (FR-MED-05): server-side, so the client's IP never reaches
+	// the provider. Disabled in the air-gap (offline) profile or when no provider
+	// key is configured — GifService then answers FEATURE_DISABLED.
+	var gifProvider media.GifProvider
+	if cfg.Env != "offline" {
+		if key := os.Getenv("WA_GIF_TENOR_KEY"); key != "" {
+			gifProvider = mediaadapters.NewTenorProvider(key)
+		}
+	}
+	gifSvc := media.NewGifService(gifProvider, mediaadapters.NewSearchRate(ratelimit.NewValkeyLimiter(vk)))
+	stickerSvc := media.NewStickerService(mediaadapters.NewStickerStore(pool))
+	log.Info("gif proxy", "enabled", gifSvc.Enabled(), "profile", cfg.Env)
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", tel.MetricsHandler())
 	media.Routes(mux, svc, verifier)
+	media.GifRoutes(mux, gifSvc, verifier)
+	media.StickerRoutes(mux, stickerSvc, verifier)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

@@ -664,7 +664,31 @@ LEGEND:  [x] done   [>] next up   [ ] pending
  PHASE 3 — MULTI-DEVICE, PTT, STORIES
 ================================================================================
 
-[ ] T3.01  Device linking QR + signed device lists
+[x] T3.01  Device linking QR + signed device lists
+           (Server QR link flow [LinkInit/Approve(stores cert)/Complete + migration
+           000010] already shipped T0.09; the engine's DeviceTrust port + trustAll
+           interim shipped T0.20. T3.01 fills the §5 CLIENT crypto in @wa/crypto-
+           wrapper. deviceList.ts: signed device lists — the PRIMARY signs each
+           device cert [canonical length-framed (userId,deviceId,identityKey)] + the
+           whole versioned list; verifyDeviceList checks the list sig AND every cert
+           against the carried primary key [any failure rejects all]. SignedDeviceList
+           Trust implements the engine's DeviceTrust: learn() accepts a list only if
+           it verifies AND its primary key matches the PINNED one [TOFU] — a list
+           under a different primary key is REJECTED = the visible key-change warning
+           §5 describes [server inserting a rogue device fails here]; isTrusted =
+           device on the currently-verified list. SignatureScheme is INJECTED
+           (production = libsignal XEdDSA, verifiers hold only the public key);
+           createDevSignatureScheme = INSECURE symmetric-hash dev double (like
+           DevSessionCipher stands in for X3DH) so the LOGIC is exercised end-to-end.
+           qrLink.ts: encode/parseLinkQr — the {link_token, deviceId, identityKey}
+           payload (seq §8), hex-keyed, rejects malformed/wrong-version/bad-hex.
+           Tests: sign/verify round-trip, tampered-cert / swapped-key / wrong-primary
+           reject, trust on/off-list, add/remove same-primary, key-change reject,
+           unverifiable-list reject; QR round-trip + malformed → crypto-wrapper 34.
+           Verified all 8 client projects typecheck + vitest GREEN. SEAM: wiring
+           SignedDeviceListTrust into the clients' E2EEEngine (replacing trustAll)
+           rides the same live-E2EE seam as inbound decrypt + real libsignal. code +
+           tests.)
     PROMPT> implement task T3.01 device linking per e2ee-design §5 + sequence-diagrams §8. code + tests only.
 [ ] T3.02  History bootstrap transfer (primary -> new device, E2EE chunks)
     PROMPT> implement task T3.02 history bootstrap per offline-sync-local-store §6. code + tests only.

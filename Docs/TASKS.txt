@@ -509,7 +509,7 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            template block/brace-balanced (helm not installable here → CI is the
            compiler). manifests only.)
     PROMPT> implement task T2.01 rtc infra manifests per Docs/05-services/rtc-lld.md §1. manifests only.
-[ ] T2.02  call-ctl (rooms, join tokens, ring state machine, LiveKit webhooks)
+[x] T2.02  call-ctl (rooms, join tokens, ring state machine, LiveKit webhooks)
     PROMPT> implement task T2.02 call-ctl in core-api per Docs/04-api/calls-ptt-api.md. code + tests only.
 [ ] T2.03  1:1 voice calls on both clients + E2EE frames (insertable streams)
     PROMPT> implement task T2.03 1:1 voice per Docs/05-services/rtc-lld.md §2 + sequence-diagrams §6. code + tests only.

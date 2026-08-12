@@ -20,6 +20,8 @@ import (
 	"github.com/whatsapp-v2/server/internal/auth"
 	authadapters "github.com/whatsapp-v2/server/internal/auth/adapters"
 	"github.com/whatsapp-v2/server/internal/auth/domain"
+	"github.com/whatsapp-v2/server/internal/calls"
+	callsadapters "github.com/whatsapp-v2/server/internal/calls/adapters"
 	"github.com/whatsapp-v2/server/internal/chat"
 	chatadapters "github.com/whatsapp-v2/server/internal/chat/adapters"
 	"github.com/whatsapp-v2/server/internal/contacts"
@@ -146,6 +148,43 @@ func main() {
 		contactsadapters.NewSyncDailyLimiter(limiter), contactsadapters.NewSearchRate(limiter),
 		inviteBase, log)
 
+	// ── calls context (call control plane; media plane is LiveKit) ────────
+	// LiveKit API key/secret sign join tokens + authenticate webhooks. Unset in
+	// bare dev → empty secret (like the ephemeral JWT fallback); staging/prod
+	// inject a Secret.
+	liveKitKey := os.Getenv("WA_LIVEKIT_API_KEY")
+	liveKitSecret := os.Getenv("WA_LIVEKIT_API_SECRET")
+	if liveKitKey == "" || liveKitSecret == "" {
+		log.Warn("WA_LIVEKIT_API_KEY/SECRET unset — call join tokens signed with an empty secret (dev only)")
+	}
+	callsSvc := calls.NewService(
+		calls.NewTokenMinter(liveKitKey, liveKitSecret),
+		callsadapters.NewRingStore(vk),
+		callsadapters.NewHistory(pool),
+		callsadapters.NewSignaler(nc),
+		callsadapters.NewPusher(nc),
+		callsadapters.NewDevices(pool),
+		log,
+	)
+	callsWebhook := calls.NewWebhookVerifier(liveKitKey, liveKitSecret)
+	// Server-authoritative missed timeout: sweep expired rings on a ticker.
+	// Transitions are idempotent (domain.Next + ZREM), so overlap across pods is
+	// harmless.
+	go func() {
+		t := time.NewTicker(5 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if _, err := callsSvc.SweepMissed(ctx, 200); err != nil {
+					log.Warn("calls: missed-ring sweep failed", "err", err)
+				}
+			}
+		}
+	}()
+
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
 	chatPub := chatadapters.NewNATSPublisher(nc)
@@ -175,6 +214,7 @@ func main() {
 	devices.Routes(mux, devSvc, issuer)
 	groups.Routes(mux, groupsSvc, issuer)
 	contacts.Routes(mux, contactsSvc, issuer)
+	calls.Routes(mux, callsSvc, issuer, callsWebhook)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

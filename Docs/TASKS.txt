@@ -565,7 +565,33 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            screen capture ride injected seams (like every media path); the control
            logic + encodings are real. code only.)
     PROMPT> implement task T2.06 screen share + blur (never server-side). code only.
-[ ] T2.07  Group calls <=32 (active speaker, layouts, key epochs on join/leave)
+[x] T2.07  Group calls <=32 (active speaker, layouts, key epochs on join/leave)
+           (Pure, tested core in @wa/call-engine — the three things group calling
+           adds over 1:1. groupCallCrypto.ts: GroupCallCrypto — E2EE for ≤32
+           (HLD §10.4, e2ee-design §7). Each member seals ONCE with a per-(room,
+           epoch,self) key; every other member derives that sender's key to open
+           (shared group root = dev double for the distributed sender keys). KEY
+           INSIGHT: FrameCryptor selects a recv key by keyId=epoch ALONE, so two
+           senders in one epoch collide → each remote sender gets its OWN recv
+           FrameCryptor (one send cryptor + a Map<peer,cryptor>). Epochs bump on
+           join/leave (call-ctl signals the epoch) = forward secrecy: memberLeft
+           drops the peer's keys + rotates so the leaver can't open the new epoch;
+           memberJoined rotates so the joiner can't open prior epochs; prev epoch
+           retained one generation for in-flight frames. activeSpeaker.ts:
+           ActiveSpeakerTracker — dominant speaker from RTP-header audio levels
+           (readable under E2EE, rtc-lld §3) with hysteresis (holds focus until the
+           current speaker drops below threshold / stays quiet holdMs) so the
+           layout doesn't thrash. layout.ts: computeLayout (pinned>active-speaker
+           focused tile + grid capped at maxTiles, extras audio-only) +
+           desiredReceiveLayers (ties the layout→per-participant receive layer via
+           chooseReceiveLayer T2.05 → the SFU subscription switch). createDevGroupRootSecret
+           helper (room-wide shared dev root). Tests: group crypto cross-open/
+           unknown-peer-reject/join/leave-forward-secrecy/in-flight-then-retired,
+           active-speaker loudest/hold/switch/silence-clear/leaver, layout focus/
+           pin/cap/receive-layers/floor → call-engine 70 (13 files). Verified all 8
+           client projects typecheck + vitest GREEN. SEAM: the group grid UI + LiveKit
+           active-speaker/subscription events wire onto this engine at the same media
+           seam as 1:1 (stub RTC); the epoch/speaker/layout logic is complete + tested.)
     PROMPT> implement task T2.07 group calls per rtc-lld + e2ee-design §7. code + tests only.
 [ ] T2.08  Call history + missed-call flow
     PROMPT> implement task T2.08 call history (metadata only, 90d) + missed-call notifications. code + tests only.

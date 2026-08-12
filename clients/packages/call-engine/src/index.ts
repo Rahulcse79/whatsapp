@@ -25,7 +25,10 @@ export {
   type MediaTransport,
   type RootSecretProvider,
 } from "./callSession";
-export { createDevRootSecretProvider } from "./devRootSecret";
+export { createDevGroupRootSecret, createDevRootSecretProvider } from "./devRootSecret";
+export { GroupCallCrypto, type GroupCallContext } from "./groupCallCrypto";
+export { ActiveSpeakerTracker, type ActiveSpeakerOptions, type AudioLevel } from "./activeSpeaker";
+export { computeLayout, desiredReceiveLayers, type GroupLayout, type Tile } from "./layout";
 export {
   RingBridge,
   type CallActions,

@@ -25,3 +25,15 @@ export function createDevRootSecretProvider(selfId: string, seed: string): RootS
     },
   };
 }
+
+/**
+ * createDevGroupRootSecret returns a shared room-wide root for a GROUP call:
+ * every member derives it identically from the room id, so each can compute every
+ * sender's per-epoch frame key (GroupCallCrypto). INSECURE dev double — production
+ * distributes random per-sender keys over the pairwise Signal sessions rather than
+ * deriving them from a shared seed — and never ships.
+ */
+export async function createDevGroupRootSecret(roomId: string, seed: string): Promise<Uint8Array> {
+  const material = new TextEncoder().encode(`wa-group-call-dev|${seed}|${roomId}`);
+  return new Uint8Array(await crypto.subtle.digest("SHA-256", material));
+}

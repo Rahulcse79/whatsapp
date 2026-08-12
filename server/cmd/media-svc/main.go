@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/whatsapp-v2/server/internal/auth"
+	"github.com/whatsapp-v2/server/internal/backups"
+	backupsadapters "github.com/whatsapp-v2/server/internal/backups/adapters"
 	"github.com/whatsapp-v2/server/internal/media"
 	mediaadapters "github.com/whatsapp-v2/server/internal/media/adapters"
 	"github.com/whatsapp-v2/server/internal/platform/config"
@@ -155,11 +158,17 @@ func main() {
 	stickerSvc := media.NewStickerService(mediaadapters.NewStickerStore(pool))
 	log.Info("gif proxy", "enabled", gifSvc.Enabled(), "profile", cfg.Env)
 
+	// Encrypted backups (FR-SYNC-04): presigned multipart for the client-
+	// encrypted archive + 1-active-backup registry. Reuses the MinIO adapter
+	// (blobs go client↔MinIO directly). Size cap from env (per-profile).
+	backupsSvc := backups.NewService(objects, backupsadapters.NewStore(pool), parseBytes(os.Getenv("WA_MAX_BACKUP_BYTES")))
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", tel.MetricsHandler())
 	media.Routes(mux, svc, verifier)
 	media.GifRoutes(mux, gifSvc, verifier)
 	media.StickerRoutes(mux, stickerSvc, verifier)
+	backups.Routes(mux, backupsSvc, verifier)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {
@@ -199,6 +208,16 @@ func getenv(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// parseBytes reads a byte count from an env value; 0 (empty/invalid) leaves the
+// backup size cap at its per-profile default.
+func parseBytes(s string) int64 {
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // buildVerifier returns the JWT verifier from the shared signing seed (media-svc

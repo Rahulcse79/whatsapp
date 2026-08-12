@@ -74,3 +74,9 @@ export {
   type LinkPreview,
   type PreviewFetch,
 } from "./linkPreview";
+export {
+  decryptBackup,
+  encryptBackup,
+  newBackupSalt,
+  type BackupKeyDeriver,
+} from "./backup";

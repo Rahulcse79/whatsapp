@@ -134,6 +134,16 @@ CREATE TABLE stories (
 CREATE TABLE story_views (story_id uuid, viewer_id uuid, viewed_at timestamptz DEFAULT now(),
   PRIMARY KEY (story_id, viewer_id));
 
+-- Encrypted backups (migration 000014, FR-SYNC-04). Registry only: the archive is
+-- client-encrypted (Argon2id-derived key, never sent) and lives in MinIO; this
+-- table holds the ciphertext ref + size, never the key. 1 COMPLETE backup/user.
+CREATE TABLE backups (
+  id uuid PRIMARY KEY, user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  object_key text NOT NULL UNIQUE, size_bytes bigint NOT NULL,
+  upload_state smallint NOT NULL DEFAULT 0,   -- 0 pending | 1 complete
+  handle text, created_at timestamptz NOT NULL DEFAULT now());
+CREATE INDEX backups_by_user ON backups(user_id, upload_state, created_at DESC);
+
 -- Sticker packs (migration 000012, FR-MED-05). PUBLIC catalog assets — NOT E2EE
 -- media_objects: a sticker's object_key points at a shared blob. Local packs are
 -- the offline fallback when the GIF proxy is disabled (air-gap profile).

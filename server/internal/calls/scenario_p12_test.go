@@ -84,6 +84,8 @@ func TestScenarioP12_AnswerElsewhere(t *testing.T) {
 			for _, d := range r.devices {
 				elsewhere[d] = true
 			}
+		default:
+			// other ring states aren't emitted on the answer path
 		}
 	}
 	if !sawAnswered {

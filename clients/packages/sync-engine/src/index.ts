@@ -5,3 +5,4 @@
 export * from "./outbox";
 export * from "./cursors";
 export * from "./conflict";
+export * from "./bootstrap";

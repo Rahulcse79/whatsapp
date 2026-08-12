@@ -690,7 +690,7 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            rides the same live-E2EE seam as inbound decrypt + real libsignal. code +
            tests.)
     PROMPT> implement task T3.01 device linking per e2ee-design §5 + sequence-diagrams §8. code + tests only.
-[ ] T3.02  History bootstrap transfer (primary -> new device, E2EE chunks)
+[x] T3.02  History bootstrap transfer (primary -> new device, E2EE chunks)
     PROMPT> implement task T3.02 history bootstrap per offline-sync-local-store §6. code + tests only.
 [ ] T3.03  Per-device session fan-out + self-sync copies
     PROMPT> implement task T3.03 multi-device fan-out per e2ee-design §2. code + tests only.

@@ -713,7 +713,31 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     PROMPT> implement task T4.01 admin console per HLD §15.6 + security-architecture §4. code + tests only.
 [ ] T4.02  Feature-flag management UI + kill switches
     PROMPT> implement task T4.02 flag management per core-api-lld §5. code + tests only.
-[ ] T4.03  Analytics rollups + product dashboard + crash reporting
+[x] T4.03  Analytics rollups + product dashboard + crash reporting
+           (Metadata-only product analytics, HLD §18.1 — the server can't analyse
+           content it can't read. NEW internal/analytics (hexagonal): domain/rollup.go
+           (event taxonomy signup/active_user/message_relayed/call_started/call_minutes/
+           flag_exposure, UTC day bucketing, MAU 30d window, ~13mo retention),
+           service.go (Ingest routes counters→analytics_daily / distinct→sketch;
+           RollupDistinct condenses HLL→DAU/MAU cells+gauges; Purge trims retention),
+           metrics.go (OTel product_signups/dau/mau/crash_free gauges, nil-safe),
+           adapters (NATS pub[fire-and-forget]/queue-consumer, PG analytics_daily
+           IncrDaily/SetDaily/Query/Purge, Valkey HyperLogLog Distinct — PFADD/PFCOUNT,
+           NO user id stored, that's the privacy guarantee). Migration 000017
+           analytics_daily [(day,metric)→value grid, no user column]. internal/platform/
+           crash/scrub.go PII scrubber (JWT/bearer/email/UUID/IP/phone redaction most-
+           specific-first + sensitive-key drop, non-mutating) + product_crash_free_ratio.
+           The analytics engine + crash scrubber + product.json dashboard were pre-
+           written (parallel account); I ADDED: tests [domain rollup, service Ingest-
+           routing/RollupDistinct-DAU-MAU/Purge via fakes, crash scrub redaction+key-
+           drop+non-mutation], WIRED core-api [metrics register, consumer.Start, 1-min
+           RollupDistinct + daily Purge tickers], and the PRODUCER path [auth.Deps
+           optional AnalyticsSink [dependency-inverted, Publisher satisfies it] emits
+           Signup on NewUser + Active(userID) on register/refresh → signups + DAU/MAU
+           flow]. Verified: gofmt + go build ./... + go vet + go test [analytics/crash/
+           auth] GREEN; product.json valid JSON. Producer SEAM: messages_relayed/
+           calls_started/flag_exposure counters emit when their contexts adopt the
+           Emitter (available now). code + config.)
     PROMPT> implement task T4.03 metadata-only analytics per HLD §18.1. code + config only.
 [ ] T4.04  Full load suite + durability auditor
     PROMPT> implement task T4.04 load profiles (sustained/burst/reconnect-storm/fanout/inbox-soak/media/call) + the zero-loss auditor per Docs/10-testing/load-and-chaos-testing.md. tests only.

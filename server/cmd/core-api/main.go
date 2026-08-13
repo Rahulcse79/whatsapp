@@ -19,6 +19,8 @@ import (
 
 	"github.com/whatsapp-v2/server/internal/admin"
 	adminadapters "github.com/whatsapp-v2/server/internal/admin/adapters"
+	"github.com/whatsapp-v2/server/internal/analytics"
+	analyticsadapters "github.com/whatsapp-v2/server/internal/analytics/adapters"
 	"github.com/whatsapp-v2/server/internal/auth"
 	authadapters "github.com/whatsapp-v2/server/internal/auth/adapters"
 	"github.com/whatsapp-v2/server/internal/auth/domain"
@@ -79,6 +81,11 @@ func main() {
 		log.Error("telemetry metrics init failed", "err", err)
 		os.Exit(1)
 	}
+	analyticsMetrics, err := analytics.NewMetrics(tel.Meter)
+	if err != nil {
+		log.Error("analytics metrics init failed", "err", err)
+		os.Exit(1)
+	}
 
 	pool, err := pg.NewPool(ctx, pg.Config{
 		DSN: cfg.PG.DSN, MaxConns: cfg.PG.MaxConns, MinConns: cfg.PG.MinConns,
@@ -118,6 +125,11 @@ func main() {
 		log.Error("building OTP sender", "err", err)
 		os.Exit(1)
 	}
+	// Product-analytics emitter (metadata-only; HLD §18.1). Fire-and-forget — it
+	// never blocks or fails a producing request. The aggregation consumer + rollup
+	// tickers are wired below.
+	analyticsPub := analyticsadapters.NewPublisher(nc)
+
 	authSvc := auth.NewService(auth.Deps{
 		Challenges: authStore.Challenges,
 		Users:      authStore.Users,
@@ -128,6 +140,7 @@ func main() {
 		Attempts:   authStore.Attempts,
 		Issuer:     issuer,
 		Log:        log,
+		Analytics:  analyticsPub, // emits signup + active (DAU/MAU) — never per-user rows
 	}, cfg.Auth.PhonePepper, cfg.Auth.RefreshTTL)
 
 	// ── keys context ──────────────────────────────────────────────────────
@@ -252,6 +265,51 @@ func main() {
 					log.Warn("stories: expiry purge failed", "err", err)
 				} else if n > 0 {
 					log.Info("stories: purged expired stories", "count", n)
+				}
+			}
+		}
+	}()
+
+	// ── analytics (metadata-only product analytics; HLD §18.1) ────────────
+	// A NATS consumer aggregates privacy-preserving events into daily PG rollups
+	// (analytics_daily) and Prometheus gauges; distinct users (DAU/MAU) ride a
+	// Valkey HyperLogLog sketch — no per-user rows exist. Emitters are
+	// fire-and-forget; the consumer + tickers are here.
+	analyticsSvc := analytics.NewService(analyticsadapters.NewRollups(pool), analyticsadapters.NewDistinct(vk), analyticsMetrics)
+	analyticsConsumer := analyticsadapters.NewConsumer(nc, analyticsSvc, log)
+	if err := analyticsConsumer.Start(); err != nil {
+		log.Error("analytics consumer start failed", "err", err)
+		os.Exit(1)
+	}
+	defer analyticsConsumer.Stop()
+	// Condense the distinct sketch into DAU/MAU rollups + gauges each minute.
+	go func() {
+		t := time.NewTicker(time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if err := analyticsSvc.RollupDistinct(ctx, time.Now()); err != nil {
+					log.Warn("analytics: distinct rollup failed", "err", err)
+				}
+			}
+		}
+	}()
+	// Trim rollups past the ~13-month retention window daily (idempotent DELETE).
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n, err := analyticsSvc.Purge(ctx); err != nil {
+					log.Warn("analytics: retention purge failed", "err", err)
+				} else if n > 0 {
+					log.Info("analytics: purged old rollups", "count", n)
 				}
 			}
 		}

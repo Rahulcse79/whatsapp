@@ -134,6 +134,16 @@ type Deps struct {
 	Attempts   AttemptLog
 	Issuer     *TokenIssuer
 	Log        *slog.Logger
+	Analytics  AnalyticsSink // optional; nil disables product-analytics emits
+}
+
+// AnalyticsSink is an optional metadata-only product-analytics hook (HLD §18.1):
+// a new registration is a signup, and any token issue marks the user active
+// (DAU/MAU). Dependency-inverted — auth never imports the analytics package; the
+// analytics Publisher structurally satisfies this.
+type AnalyticsSink interface {
+	Signup(ctx context.Context)
+	Active(ctx context.Context, userID string)
 }
 
 // Service orchestrates the auth flows (FR-AUTH-01…08 subset for T0.08).
@@ -417,6 +427,12 @@ func (s *Service) register(ctx context.Context, phoneHash []byte, dev DeviceInfo
 		s.d.Log.Error("token issue failed", "err", err)
 		return TokenPair{}, transientErr()
 	}
+	if s.d.Analytics != nil {
+		if res.NewUser {
+			s.d.Analytics.Signup(ctx)
+		}
+		s.d.Analytics.Active(ctx, res.UserID)
+	}
 	return TokenPair{
 		AccessJWT:    access,
 		RefreshToken: refresh,
@@ -474,6 +490,9 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (TokenPair, 
 	access, err := s.d.Issuer.Issue(sess.UserID, sess.DeviceID, sess.ID)
 	if err != nil {
 		return TokenPair{}, transientErr()
+	}
+	if s.d.Analytics != nil {
+		s.d.Analytics.Active(ctx, sess.UserID) // a live session is a daily-active user
 	}
 	return TokenPair{
 		AccessJWT:    access,

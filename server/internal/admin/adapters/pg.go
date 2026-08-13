@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/hex"
 	"errors"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -128,10 +129,10 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]admin.Us
 	}
 	rows, err := s.pool.Query(ctx,
 		selectUser+` WHERE u.status <> 2 AND (
-			u.username ILIKE '%' || $1 || '%'
+			u.username ILIKE $1 ESCAPE '\'
 			OR ($2 <> '' AND u.phone_hash = decode($2, 'hex'))
 		) ORDER BY u.created_at DESC LIMIT $3`,
-		query, phoneHex, limit)
+		"%"+escapeLike(query)+"%", phoneHex, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +147,15 @@ func (s *Store) Search(ctx context.Context, query string, limit int) ([]admin.Us
 		out = append(out, u)
 	}
 	return out, rows.Err()
+}
+
+// escapeLike neutralises LIKE/ILIKE metacharacters (\ % _) so an admin's search
+// term is matched literally under `ESCAPE '\'` — a query of "%" or "_" can't be
+// turned into a wildcard that widens the metadata scan. NewReplacer substitutes
+// simultaneously, so the backslash rule does not re-process the escapes it adds.
+// (Mirrors contacts/adapters.escapeLike; kept local to avoid a cross-context dep.)
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
 }
 
 func (s *Store) Summary(ctx context.Context, userID string) (admin.UserSummary, error) {

@@ -3,6 +3,13 @@ server/bin/
 *.test
 *.out
 coverage/
+# Compiled deployables from `go build ./cmd/<svc>` run at the module root
+# (start.sh builds into .run/bin instead). These are large native binaries —
+# never commit them.
+/server/core-api
+/server/ws-gateway
+/server/media-svc
+/server/notification-svc
 
 # --- Generated protobuf code (never committed: `make proto` locally; CI runs
 # --- buf generate before every Go compile — ci.yml backend/migrations jobs) ---

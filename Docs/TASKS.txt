@@ -700,7 +700,7 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     PROMPT> implement task T3.05 stories per Docs/04-api/media-stories-api.md. code + tests only.
 [x] T3.06  Encrypted backups (create/restore, argon2id key)
     PROMPT> implement task T3.06 encrypted backups per FR-SYNC-04 + relay-model ADR-001. code + tests only.
-[ ] T3.07  Protocol tests P11 + multi-device suite
+[x] T3.07  Protocol tests P11 + multi-device suite
     PROMPT> implement task T3.07 ptt fencing tests P11 (concurrent acquire, zombie fence) + device link/revoke suite. tests only.
 
 --- GATE P3: PTT p95 grant <= 200ms @ 200 listeners; link/revoke flows clean ---

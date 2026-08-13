@@ -108,18 +108,28 @@ export function verifyDeviceList(scheme: SignatureScheme, list: SignedDeviceList
 export class SignedDeviceListTrust implements DeviceTrust {
   private readonly pinned = new Map<string, string>(); // userId → primaryKey (hex)
   private readonly devices = new Map<string, Set<string>>(); // userId → trusted deviceIds
+  private readonly versions = new Map<string, number>(); // userId → last accepted version
 
   constructor(private readonly scheme: SignatureScheme) {}
 
-  /** learn accepts a signed device list iff it verifies and its primary key
-   *  matches the pinned one (or none is pinned yet). Returns false on rejection —
-   *  the caller surfaces a key-change warning. */
+  /** learn accepts a signed device list iff it verifies, its primary key matches
+   *  the pinned one (or none is pinned yet), AND its version is newer than the
+   *  last accepted one. The version guard makes revocation durable: a rogue
+   *  server can't replay an older, pre-revocation list to re-trust a removed
+   *  device (a downgrade attack). Returns false on rejection — the caller
+   *  surfaces a key-change warning (primary-key mismatch) or ignores a stale list.
+   */
   learn(list: SignedDeviceList): boolean {
     if (!verifyDeviceList(this.scheme, list)) return false;
     const key = toHex(list.primaryKey);
     const pinned = this.pinned.get(list.userId);
     if (pinned === undefined) this.pinned.set(list.userId, key);
     else if (pinned !== key) return false; // primary key changed → reject
+
+    const lastVersion = this.versions.get(list.userId);
+    if (lastVersion !== undefined && list.version <= lastVersion) return false; // stale/replayed
+
+    this.versions.set(list.userId, list.version);
     this.devices.set(list.userId, new Set(list.devices.map((d) => d.deviceId)));
     return true;
   }

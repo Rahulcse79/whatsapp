@@ -709,10 +709,53 @@ LEGEND:  [x] done   [>] next up   [ ] pending
  PHASE 4 — HARDENING & LAUNCH
 ================================================================================
 
-[ ] T4.01  Admin console (SSO/OIDC, RBAC, report queue, actions, audit log)
-    PROMPT> implement task T4.01 admin console per HLD §15.6 + security-architecture §4. code + tests only.
-[ ] T4.02  Feature-flag management UI + kill switches
-    PROMPT> implement task T4.02 flag management per core-api-lld §5. code + tests only.
+[x] T4.01  Admin console (SSO/OIDC, RBAC, report queue, actions, audit log)
+           (Committed c7588b2 — checkbox reconciled after the fact. NEW
+           internal/admin (hexagonal). Narrowed by E2EE: admins see METADATA +
+           action reports, never content (no God mode — the data isn't server-
+           side). domain/rbac.go PURE role lattice viewer<agent<operator<owner
+           (AtLeast gate) + Resolution machine (dismiss/warn/suspend, per-
+           resolution MinRole). oidc.go RS256 ID-token verify on golang-jwt
+           (issuer/aud/exp checked; RS256 pinned via WithValidMethods = no alg-
+           confusion downgrade; role from configurable claim; JWKS parsed from
+           BYTES → fetch is an ops seam; IdP owns admin membership). service.go
+           every method RBAC-gated: report queue + user metadata search
+           (username trigram OR phone-hash hex) + suspend/reactivate. adapters/
+           pg.go — EVERY mutation writes its audit_log row in the SAME tx
+           (security-arch §4: action can't land without its trace; state-guard
+           WHERE state=0 makes a concurrent-resolve loser a 404). http.go
+           /admin/v1/* + OIDC bearer middleware (401 unauth vs 403 role-too-low;
+           edge controls = Envoy). Migration 000015 audit_log.actor uuid→text
+           (admin actor = OIDC subject; append-only unchanged; target stays
+           uuid). Wired core-api gated on WA_ADMIN_OIDC_ISSUER/_JWKS (unset →
+           not mounted, so offline/dev skip it). Tests: rbac + resolution; OIDC
+           happy + 9 rejection paths incl. HS256-confusion; service RBAC-gating
+           + audit-on-every-mutation; pg integration proving atomic resolve→
+           suspend→audit (WA_TEST_PG_DSN). code + tests.)
+[x] T4.02  Feature-flag management UI + kill switches
+           (Committed 369db1e — checkbox reconciled after the fact. NEW
+           internal/platform/flags (platform primitive — any context may import
+           it, it imports none). rule.go PURE Rule{enabled,rollout,allow,deny}
+           + Eval (deny>allow>rollout; flag name folded into the fnv rollout
+           hash → equal-% flags target INDEPENDENT cohorts, and raising rollout
+           only GROWS the cohort = stable buckets). flags.go Service.Enabled
+           (feature gate, fails CLOSED) + Allowed=!Enabled(killflag) (kill
+           switch, fails OPEN — a flag-store outage never pauses the product;
+           the asymmetry falls out of the two APIs) + KillSwitch consts +
+           KillSwitchMiddleware (503 FEATURE_PAUSED at the routing edge = an
+           operational circuit breaker, no deploy). pg.go read-side + cache.go
+           ValkeyCache (30s TTL, negative caching, Del busts on write).
+           Management RIDES the T4.01 admin plane (RBAC+audit+OIDC): admin/
+           flags.go FlagConsole List(agent+)/Set+Delete(operator+, validate
+           rollout∈[0,100]+reason) — write is co-transactional with its audit
+           row, then cache-bust (immediate on this pod, ≤30s elsewhere via TTL).
+           Migration 000016 feature_flags.updated_by uuid→text (as 000015).
+           Wired core-api: flagsSvc built always, KillSwitchMiddleware wraps the
+           mux, FlagConsole mounted when admin enabled. Tests: rule precedence +
+           rollout monotonic/proportional/flag-scoped cohorts; Service read-
+           through + neg-cache + fail-closed-gate/fail-open-switch + middleware-
+           503; FlagConsole RBAC+validation+audit+cache-bust; pg integration.
+           code + tests.)
 [x] T4.03  Analytics rollups + product dashboard + crash reporting
            (Metadata-only product analytics, HLD §18.1 — the server can't analyse
            content it can't read. NEW internal/analytics (hexagonal): domain/rollup.go

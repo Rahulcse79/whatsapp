@@ -57,7 +57,14 @@ jobs:
 
       - name: Install workspace
         working-directory: clients
-        run: pnpm install --no-frozen-lockfile
+        run: |
+          # Expo + React Native need a flat node_modules: pnpm's default
+          # isolated layout hides transitive deps (expo-asset) from
+          # @expo/metro-config during the release JS bundle. Hoist for THIS
+          # build only — the .npmrc is written in-CI, not committed, so the
+          # clients (ts) job keeps its isolated layout.
+          echo "node-linker=hoisted" >> .npmrc
+          pnpm install --no-frozen-lockfile
 
       - name: Generate native Android project (Expo prebuild)
         working-directory: clients/mobile

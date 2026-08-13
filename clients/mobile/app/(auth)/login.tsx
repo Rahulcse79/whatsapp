@@ -6,7 +6,7 @@ import { useServices } from "../../src/ui/ServicesContext";
 import { messageOf } from "../../src/ui/errors";
 
 export default function Login() {
-  const { services } = useServices();
+  const { services, editServer } = useServices();
   const [phone, setPhone] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -47,6 +47,12 @@ export default function Login() {
       <Pressable style={[styles.button, busy && styles.buttonDisabled]} onPress={onSubmit} disabled={busy}>
         {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>Send code</Text>}
       </Pressable>
+      <Pressable style={styles.serverRow} onPress={editServer} disabled={busy}>
+        <Text style={styles.serverText} numberOfLines={1}>
+          Server: {services.config.apiBaseUrl}
+        </Text>
+        <Text style={styles.serverChange}>Change</Text>
+      </Pressable>
     </View>
   );
 }
@@ -60,4 +66,7 @@ const styles = StyleSheet.create({
   button: { backgroundColor: "#128C7E", borderRadius: 10, padding: 16, alignItems: "center", marginTop: 8 },
   buttonDisabled: { opacity: 0.6 },
   buttonText: { color: "#fff", fontSize: 16, fontWeight: "600" },
+  serverRow: { flexDirection: "row", justifyContent: "center", alignItems: "center", gap: 6, marginTop: 16 },
+  serverText: { color: "#888", fontSize: 12, flexShrink: 1 },
+  serverChange: { color: "#128C7E", fontSize: 12, fontWeight: "600" },
 });

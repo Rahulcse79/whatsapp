@@ -24,7 +24,6 @@ import {
   type ScreenShareState,
 } from "@wa/call-engine";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { defaultConfig } from "../services/appServices";
 import { useServices } from "../ui/ServicesContext";
 import { createCallControl } from "./callControl";
 import { RnCallMedia, type RnRtcSession } from "./rnCallMedia";
@@ -107,7 +106,7 @@ export function CallProvider({ children }: { children: ReactNode }) {
     const selfId = services.sessions.current()?.deviceId ?? "self";
     let ring: RingBridge | undefined;
     const s = new CallSession(
-      createCallControl(defaultConfig.apiBaseUrl, token),
+      createCallControl(services.config.apiBaseUrl, token),
       new RnCallMedia(stubRtc),
       createDevRootSecretProvider(selfId, "dev-seed"),
       selfId,

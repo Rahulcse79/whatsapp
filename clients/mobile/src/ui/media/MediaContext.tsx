@@ -5,7 +5,6 @@
 
 import type { DownloadItem, MediaEnvelope } from "@wa/media-pipeline";
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import { defaultConfig } from "../../services/appServices";
 import { useServices } from "../ServicesContext";
 import { RnMediaService, rnDownloadTransport, type RnMediaHandlers } from "./rnMediaService";
 
@@ -16,7 +15,7 @@ export function MediaProvider({ children, handlers }: { children: ReactNode; han
 
   const service = useMemo(() => {
     const token = (): string => services.sessions.current()?.accessJwt ?? "";
-    return new RnMediaService(rnDownloadTransport(defaultConfig.apiBaseUrl, token), handlers);
+    return new RnMediaService(rnDownloadTransport(services.config.apiBaseUrl, token), handlers);
   }, [services, handlers]);
 
   useEffect(() => () => service.dispose(), [service]);

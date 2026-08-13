@@ -59,6 +59,11 @@ export class AppServices {
     this.sessions = new SessionManager(secureStore);
   }
 
+  /** The backend endpoints this instance is bound to (user-configured). */
+  get config(): AppConfig {
+    return this.cfg;
+  }
+
   static async create(cfg: AppConfig = defaultConfig): Promise<AppServices> {
     const svc = new AppServices(cfg, createHttpClient(cfg.apiBaseUrl));
     const db: SqliteDB = await openDatabase();

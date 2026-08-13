@@ -45,6 +45,11 @@ format (`NNNNNN_name.up.sql` / `.down.sql`). Schema contract:
   as 000015: feature flags (T4.02) are written from the admin plane, whose
   actor is an OIDC subject, not a user uuid. No Go writer read it as uuid, so
   expand-safe.
+- **`analytics_daily` table (000017)** — metadata-only product rollups (T4.03,
+  HLD §18.1): a `(day, metric) → value` grid, deliberately with **no user
+  column**. Distinct-user counting (DAU/MAU) lives in a Valkey HyperLogLog
+  sketch, so the database records how many users were active, never which —
+  the privacy guarantee is structural, not policy.
 
 ## Local usage (optional — CI is the authority)
 

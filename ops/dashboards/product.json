@@ -52,7 +52,7 @@
     },
     {
       "id": 2,
-      "title": "Signups (rate)",
+      "title": "Monthly active users (30d)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -75,14 +75,14 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(rate(product_signups_total[1h]))",
+          "expr": "sum(product_mau)",
           "legendFormat": "__auto"
         }
       ]
     },
     {
       "id": 3,
-      "title": "Messages per day",
+      "title": "Signups (rate)",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -105,14 +105,14 @@
             "type": "prometheus",
             "uid": "prometheus"
           },
-          "expr": "sum(increase(msg_accept_total[24h]))",
+          "expr": "sum(rate(product_signups_total[1h]))",
           "legendFormat": "__auto"
         }
       ]
     },
     {
       "id": 4,
-      "title": "Crash-free sessions",
+      "title": "Messages per day",
       "type": "timeseries",
       "datasource": {
         "type": "prometheus",
@@ -123,6 +123,36 @@
         "w": 12,
         "x": 12,
         "y": 8
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "prometheus"
+          },
+          "expr": "sum(increase(msg_accept_total[24h]))",
+          "legendFormat": "__auto"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Crash-free sessions",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
       },
       "fieldConfig": {
         "defaults": {

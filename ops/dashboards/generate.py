@@ -91,8 +91,13 @@ DASHBOARDS = {
         ("Push breaker open", "max by (provider) (push_breaker_state)", {}),
         ("Report queue depth", "sum(report_queue_depth)", {}),
     ]),
+    # Metadata-only product analytics (HLD §18.1). DAU/MAU come from the
+    # analytics service's distinct sketch (product_dau/product_mau gauges);
+    # signups is a counter; messages ride the existing chat counter; crash-free
+    # is fed by client health pings (internal/platform/crash).
     "product": ("Product (metadata-only)", [
         ("Daily active users", "sum(product_dau)", {}),
+        ("Monthly active users (30d)", "sum(product_mau)", {}),
         ("Signups (rate)", "sum(rate(product_signups_total[1h]))", {}),
         ("Messages per day", "sum(increase(msg_accept_total[24h]))", {}),
         ("Crash-free sessions", "avg(product_crash_free_ratio)", {"unit": "percentunit"}),

@@ -34,6 +34,7 @@ SERVICES=(core-api ws-gateway media-svc notification-svc)
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 RUNTIME=""
 MINIO_OK=1   # media-svc is started only when MinIO is available
+case "$(uname -m)" in arm64) OS_ARCH=arm64 ;; *) OS_ARCH=amd64 ;; esac  # for prebuilt downloads
 
 # ── pretty output ───────────────────────────────────────────────────────────
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; D=$'\033[2m'; X=$'\033[0m'; else B= G= Y= R= D= X=; fi
@@ -42,6 +43,14 @@ ok()   { printf '  %s✓%s %s\n' "$G" "$X" "$*"; }
 warn() { printf '  %s!%s %s\n' "$Y" "$X" "$*"; }
 die()  { printf '%s✗ %s%s\n' "$R" "$*" "$X" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
+port_up()   { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
+port_wait() { local i; for i in $(seq 1 "${2:-30}"); do port_up "$1" && return 0; printf '.'; sleep 1; done; return 1; }
+# fetch_bin URL DEST — download a single prebuilt binary (official release host).
+fetch_bin() { curl -fsSL "$1" -o "$2" && chmod +x "$2"; }
+# lan_ip echoes this machine's WiFi/LAN address (for phones on the same network),
+# falling back to localhost. Services bind 0.0.0.0 regardless — this is just the
+# address to hand the app.
+lan_ip() { ipconfig getifaddr en0 2>/dev/null || ipconfig getifaddr en1 2>/dev/null || echo localhost; }
 
 # ── runtime selection ───────────────────────────────────────────────────────
 detect_runtime() {
@@ -65,7 +74,10 @@ load_env() {
   export WA_NATS_URL=nats://localhost:4222
   export WA_JWT_ED25519_SEED="$(cat "$SEED_FILE")"
   export WA_OTP_CHANNEL=mock                 # dev: OTP codes are logged, not sent
-  export WA_MINIO_ENDPOINT=localhost:9000 WA_MINIO_ACCESS_KEY=minioadmin \
+  # MinIO endpoint uses the LAN IP so the presigned media URLs media-svc mints are
+  # reachable from a phone on the same WiFi (localhost:9000 would be the phone
+  # itself). MinIO binds 0.0.0.0 (--address :9000). Falls back to localhost.
+  export WA_MINIO_ENDPOINT="$(lan_ip):9000" WA_MINIO_ACCESS_KEY=minioadmin \
          WA_MINIO_SECRET_KEY=minioadmin WA_MINIO_BUCKET=media WA_MINIO_SECURE=false
   export WA_CORE_API_GRPC_ADDR=localhost:9090
 }
@@ -163,9 +175,7 @@ infra_up_native() {
   else brew_ensure valkey; brew services start valkey >/dev/null 2>&1 || true; ok "Valkey on :6379"; fi
 
   # NATS
-  brew_ensure nats-server
-  brew services start nats-server >/dev/null 2>&1 || true
-  ok "NATS on :4222"
+  nats_up_native
 
   # MinIO — object storage for media/backups. Best-effort: if it can't be
   # installed/started (e.g. low disk), we skip it and media-svc, and the rest of
@@ -173,25 +183,68 @@ infra_up_native() {
   minio_up_native || MINIO_OK=0
 }
 
-minio_up_native() {
-  if ! command -v minio >/dev/null 2>&1; then
-    command -v brew >/dev/null 2>&1 && { say "Installing minio (brew)…"; brew install minio >/dev/null 2>&1 || true; }
+# nats_up_native ensures a JETSTREAM-enabled NATS on :4222 — the PUSH durable
+# stream (notification-svc) needs it. Crucially we do NOT use `brew services
+# start nats-server`: that runs the binary with no args (no -js), so JetStream is
+# OFF and the PUSH stream fails with "no responders available". Instead we run
+# the binary ourselves with -js, preferring an installed nats-server, else a
+# prebuilt release binary (Homebrew source-builds on unsupported macOS). An
+# already-running :4222 is reused only if its monitor answers (JetStream on).
+nats_up_native() {
+  if port_up 4222; then
+    if curl -fsS http://localhost:8222/healthz >/dev/null 2>&1; then ok "Reusing NATS (JetStream) on :4222"; return 0; fi
+    warn "NATS on :4222 has no JetStream/monitor — replacing it with a -js instance"
+    brew services stop nats-server >/dev/null 2>&1 || true
+    local held; held="$(lsof -nP -iTCP:4222 -sTCP:LISTEN -t 2>/dev/null | head -1)"
+    [ -n "$held" ] && kill "$held" 2>/dev/null || true
   fi
-  command -v minio >/dev/null 2>&1 || { warn "minio unavailable — skipping media-svc (media/avatars/backups off)"; return 1; }
+  local bin ver=v2.10.22 tmp
+  bin="$(command -v nats-server 2>/dev/null || true)"; [ -x "$bin" ] || bin="$BIN_DIR/nats-server"
+  if [ ! -x "$bin" ]; then
+    say "Fetching prebuilt nats-server $ver ($OS_ARCH)…"
+    tmp="$(mktemp -d)"
+    if fetch_bin "https://github.com/nats-io/nats-server/releases/download/${ver}/nats-server-${ver}-darwin-${OS_ARCH}.tar.gz" "$tmp/n.tgz" \
+       && tar -xzf "$tmp/n.tgz" -C "$tmp" && mv "$tmp"/nats-server-*/nats-server "$BIN_DIR/nats-server"; then
+      chmod +x "$BIN_DIR/nats-server"; bin="$BIN_DIR/nats-server"; rm -rf "$tmp"
+    else
+      rm -rf "$tmp"; warn "could not fetch nats-server — delivery/presence degraded; install it manually and re-run"; return 1
+    fi
+  fi
+  mkdir -p "$RUN_DIR/nats-js"
+  "$bin" -js -sd "$RUN_DIR/nats-js" -m 8222 >"$LOG_DIR/nats.log" 2>&1 &
+  echo $! > "$PID_DIR/nats.pid"
+  printf '  waiting for NATS (JetStream)'
+  curl -fsS --retry 20 --retry-delay 1 --retry-connrefused -o /dev/null http://localhost:8222/healthz 2>/dev/null \
+    && { printf '\n'; ok "NATS on :4222 (JetStream)"; } || { printf '\n'; warn "NATS not ready — see ./start.sh logs nats"; return 1; }
+}
+
+minio_up_native() {
+  local minio_bin mc_bin
+  minio_bin="$(command -v minio 2>/dev/null || echo "$BIN_DIR/minio")"
+  # No brew install on unsupported macOS (source build) — fetch the prebuilt
+  # single-file binary from the official release host instead.
+  if [ ! -x "$minio_bin" ]; then
+    say "Fetching prebuilt minio ($OS_ARCH)…"
+    fetch_bin "https://dl.min.io/server/minio/release/darwin-${OS_ARCH}/minio" "$BIN_DIR/minio" || true
+    minio_bin="$BIN_DIR/minio"
+  fi
+  [ -x "$minio_bin" ] || { warn "minio unavailable — skipping media-svc (media/avatars/backups off)"; return 1; }
   if ! curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
     mkdir -p "$MINIO_DATA"
     MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
-      minio server "$MINIO_DATA" --address :9000 --console-address :9001 >"$LOG_DIR/minio.log" 2>&1 &
+      "$minio_bin" server "$MINIO_DATA" --address :9000 --console-address :9001 >"$LOG_DIR/minio.log" 2>&1 &
     echo $! > "$PID_DIR/minio.pid"
     printf '  waiting for MinIO'
     for _ in $(seq 1 30); do curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; printf '.'; sleep 1; done; printf '\n'
   fi
   curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 || { warn "MinIO did not become ready — skipping media-svc"; return 1; }
-  # Buckets the services expect (media-svc, backups). Best-effort via mc.
-  command -v mc >/dev/null 2>&1 || brew install minio-mc >/dev/null 2>&1 || true
-  if command -v mc >/dev/null 2>&1; then
-    mc alias set wa-local http://localhost:9000 minioadmin minioadmin >/dev/null 2>&1 || true
-    for b in media backups wal-archive; do mc mb -p "wa-local/$b" >/dev/null 2>&1 || true; done
+  # Buckets the services expect (media-svc, backups). Best-effort via mc (prebuilt).
+  mc_bin="$(command -v mc 2>/dev/null || echo "$BIN_DIR/mc")"
+  [ -x "$mc_bin" ] || fetch_bin "https://dl.min.io/client/mc/release/darwin-${OS_ARCH}/mc" "$BIN_DIR/mc" || true
+  mc_bin="$(command -v mc 2>/dev/null || echo "$BIN_DIR/mc")"
+  if [ -x "$mc_bin" ]; then
+    "$mc_bin" alias set wa-local http://localhost:9000 minioadmin minioadmin >/dev/null 2>&1 || true
+    for b in media backups wal-archive; do "$mc_bin" mb -p "wa-local/$b" >/dev/null 2>&1 || true; done
   fi
   ok "MinIO on :9000 (console :9001, minioadmin/minioadmin)"
 }
@@ -200,18 +253,35 @@ migrate_native() {
   say "Applying migrations…"
   if command -v migrate >/dev/null 2>&1; then
     migrate -path "$REPO_ROOT/server/migrations" -database "$WA_PG_DSN" up
-  else
-    # No golang-migrate installed — apply *.up.sql in order via psql (fresh dev
-    # DB; migrations use no PG15+ features, so this is safe). Re-running is fine:
-    # 000001 uses IF NOT EXISTS, later files fail only if already applied, which
-    # we surface. For a clean re-run use ./start.sh down then a fresh DB.
-    local psql; psql="$(pg_client)" || die "no psql client found to apply migrations"
-    local f
-    for f in $(ls "$REPO_ROOT"/server/migrations/*.up.sql | sort); do
-      PGPASSWORD=devpassword "$psql" -h localhost -U whatsapp -d whatsapp -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null \
-        || die "migration failed at $(basename "$f") — see the error above"
-    done
+    ok "migrations applied"; return 0
   fi
+  # No golang-migrate — apply *.up.sql via psql, tracked in a tiny ledger so
+  # re-runs are IDEMPOTENT (the plain psql path has no schema_migrations table,
+  # so without this a second run re-applies 000002 and hits "users already
+  # exists"). Migrations use no PG15+ features, so psql is a safe applier.
+  local psql; psql="$(pg_client)" || die "no psql client found to apply migrations"
+  local q=(env PGPASSWORD=devpassword "$psql" -h localhost -U whatsapp -d whatsapp -v ON_ERROR_STOP=1 -q)
+  "${q[@]}" -c "CREATE TABLE IF NOT EXISTS _startsh_migrations (filename text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())" >/dev/null \
+    || die "could not create the migration ledger"
+  # Bootstrap: a DB migrated before this ledger existed (e.g. an earlier run of
+  # this script) already carries the full schema — record every file as applied
+  # so we don't try to re-run it. The psql applier is all-or-nothing, so a
+  # present `users` table means the prior run completed.
+  local count sentinel f base
+  count="$("${q[@]}" -tAc "SELECT count(*) FROM _startsh_migrations" | tr -d '[:space:]')"
+  sentinel="$("${q[@]}" -tAc "SELECT (to_regclass('public.users') IS NOT NULL)" | tr -d '[:space:]')"
+  if [ "$count" = "0" ] && [ "$sentinel" = "t" ]; then
+    for f in "$REPO_ROOT"/server/migrations/*.up.sql; do
+      "${q[@]}" -c "INSERT INTO _startsh_migrations(filename) VALUES ('$(basename "$f")') ON CONFLICT DO NOTHING" >/dev/null
+    done
+    warn "existing schema detected — recorded current migrations as applied (no re-run)"
+  fi
+  for f in $(ls "$REPO_ROOT"/server/migrations/*.up.sql | sort); do
+    base="$(basename "$f")"
+    [ "$("${q[@]}" -tAc "SELECT 1 FROM _startsh_migrations WHERE filename='$base'" | tr -d '[:space:]')" = "1" ] && continue
+    "${q[@]}" -f "$f" >/dev/null || die "migration failed at $base — see the error above"
+    "${q[@]}" -c "INSERT INTO _startsh_migrations(filename) VALUES ('$base') ON CONFLICT DO NOTHING" >/dev/null
+  done
   ok "migrations applied"
 }
 
@@ -250,13 +320,17 @@ services_up() {
 # ── web (optional) ──────────────────────────────────────────────────────────
 web_up() {
   command -v pnpm >/dev/null 2>&1 || { warn "pnpm not found — skipping the web app (backend is still up)"; return 0; }
+  if running web; then warn "web already running (pid $(cat "$PID_DIR/web.pid"))"; return 0; fi
   say "Starting web app (Vite)…"
-  local webenv="$REPO_ROOT/clients/web/.env.local"
-  [ -f "$webenv" ] || printf 'VITE_API_URL=http://localhost:8080\nVITE_WS_URL=ws://localhost:8081/v1/ws\n' > "$webenv"
+  local ip; ip="$(lan_ip)"
+  # Point the web app at the LAN IP (not localhost) so it also works when opened
+  # from a phone browser on the same WiFi; regenerated each run to track the IP.
+  printf 'VITE_API_URL=http://%s:8080\nVITE_WS_URL=ws://%s:8081/v1/ws\n' "$ip" "$ip" > "$REPO_ROOT/clients/web/.env.local"
   ( cd "$REPO_ROOT/clients" && pnpm install --no-frozen-lockfile >/dev/null 2>&1 || true )
-  ( cd "$REPO_ROOT/clients/web" && exec pnpm dev ) >"$LOG_DIR/web.log" 2>&1 &
+  # --host binds Vite to 0.0.0.0 so other devices on the LAN can load the PWA.
+  ( cd "$REPO_ROOT/clients/web" && exec pnpm dev -- --host 0.0.0.0 ) >"$LOG_DIR/web.log" 2>&1 &
   echo $! > "$PID_DIR/web.pid"
-  ok "web starting → http://localhost:5173  ($LOG_DIR/web.log)"
+  ok "web starting → http://localhost:5173  (LAN: http://$ip:5173)"
 }
 
 # ── lifecycle helpers ───────────────────────────────────────────────────────
@@ -281,6 +355,7 @@ infra_down_native() {
 }
 
 urls() {
+  local ip; ip="$(lan_ip)"
   cat <<EOF
 
 ${B}Stack is up (${RUNTIME}).${X}
@@ -288,12 +363,17 @@ ${B}Stack is up (${RUNTIME}).${X}
   ${D}ws-gateway   ${X}ws://localhost:8081/v1/ws
   ${D}media-svc    ${X}http://localhost:8082
   ${D}notify-svc   ${X}http://localhost:8083
-  ${D}web app      ${X}http://localhost:5173
+  ${D}web app      ${X}http://localhost:5173   (LAN: http://${ip}:5173)
   ${D}MinIO console${X}http://localhost:9001    (minioadmin / minioadmin)
   ${D}Postgres     ${X}localhost:5432           (whatsapp / devpassword)
 
+  ${B}📱 Phone on the same WiFi${X} — set the app's server URL to:
+       API   http://${ip}:8080
+       WS    ws://${ip}:8081/v1/ws
+     (services already bind 0.0.0.0; if the phone can't reach it, allow incoming
+      connections in System Settings ▸ Network ▸ Firewall.)
+
   Logs:  ./start.sh logs core-api      Stop:  ./start.sh down
-  Phone/emulator: point the app's API base at http://<this-machine-ip>:8080 (see .github/ANDROID.md).
 EOF
 }
 
@@ -323,7 +403,7 @@ cmd_status() {
   detect_runtime
   say "Runtime: $RUNTIME"
   say "Host processes:"
-  for s in "${SERVICES[@]}" minio web; do
+  for s in "${SERVICES[@]}" nats minio web; do
     if running "$s"; then ok "$s (pid $(cat "$PID_DIR/$s.pid"))"; else printf '  %s·%s %s stopped\n' "$D" "$X" "$s"; fi
   done
   if [ "$RUNTIME" = docker ] && docker info >/dev/null 2>&1; then say "Infra (docker):"; "${COMPOSE[@]}" ps
@@ -332,7 +412,7 @@ cmd_status() {
 
 cmd_logs() {
   local s="${1:-core-api}"; local f="$LOG_DIR/$s.log"
-  [ -f "$f" ] || die "no log for '$s' (choose: ${SERVICES[*]} web minio)"
+  [ -f "$f" ] || die "no log for '$s' (choose: ${SERVICES[*]} nats minio web)"
   tail -f "$f"
 }
 

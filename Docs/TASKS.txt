@@ -799,8 +799,23 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            severity defs, escalation policy, the zero-loss (NFR-12) invariant,
            rollback + kill-switch mitigations, postmortem trigger. Verified: all 10
            distinct alert runbook refs resolve. docs only.)
-[ ] T4.09  UAT matrix (FR x AC) + accessibility audit fixes
-    PROMPT> implement task T4.09 UAT: generate the FR-to-AC checklist from Docs/01-requirements + fix axe findings. mixed.
+[x] T4.09  UAT matrix (FR x AC) + accessibility audit fixes
+           (Two halves. UAT: Docs/01-requirements/uat-matrix.md — the full FR→AC→
+           verify→status checklist for all 65 FRs across 12 domains, each row a
+           testable acceptance criterion [Given/When/Then per user-stories §2] +
+           how it's verified [the actual test/scenario] + honest status [CI /
+           staging / device / manual — most FRs CI-green, the gate-bound ones
+           staging/device]. A11Y (axe findings fixed in web screens.tsx): form
+           controls that were placeholder-only now have aria-labels + autoComplete
+           (login phone, verify PIN/code, search, composer); click-only <li> chat/
+           search rows made keyboard-operable via a shared onActivate [role=button
+           + tabIndex + Enter/Space onKeyDown, axe interactive-supports-focus]; the
+           icon-only voice-call button gets aria-label + the emoji aria-hidden.
+           Already-good [verified, not regressed]: Gallery role=dialog/aria-modal +
+           alt, MediaMessage img alt="" inside labelled buttons, BlurhashCanvas
+           aria-hidden, index.html lang/viewport/title. Matrix's a11y section +
+           mobile accessibilityLabel audit noted as ongoing/device-tier. Verified:
+           all 8 client projects typecheck. mixed.)
 [ ] T4.10  Offline-profile validation
     PROMPT> implement task T4.10 offline profile: values overlays + ntfy/step-ca/email-otp wiring end to end per HLD §17.5. config + code.
 [ ] T4.11  Go-live checklist + staged launch

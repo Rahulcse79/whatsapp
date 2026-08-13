@@ -13,7 +13,7 @@ import {
   type LinkPreview,
   type MediaEnvelope,
 } from "@wa/media-pipeline";
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
 import { useCall } from "../call/CallContext";
@@ -21,6 +21,18 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
+
+/** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
+ *  Space fires it, matching native button behaviour (a11y: interactive controls
+ *  must be focusable and keyboard-operable, axe rule interactive-supports-focus). */
+function onActivate(handler: () => void) {
+  return (e: KeyboardEvent) => {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      handler();
+    }
+  };
+}
 
 export function Login({ onRequested }: { onRequested: (challengeId: string, phone: string) => void }) {
   const { services } = useServices();
@@ -56,7 +68,9 @@ export function Login({ onRequested }: { onRequested: (challengeId: string, phon
         value={phone}
         onChange={(e) => setPhone(e.target.value)}
         placeholder="+14155550123"
+        aria-label="Phone number in international format"
         inputMode="tel"
+        autoComplete="tel"
         autoFocus
         disabled={busy}
       />
@@ -117,8 +131,10 @@ export function Verify({
           value={pin}
           onChange={(e) => setPin(e.target.value)}
           placeholder="••••••"
+          aria-label="2-step verification PIN"
           inputMode="numeric"
           type="password"
+          autoComplete="one-time-code"
           autoFocus
           disabled={busy}
         />
@@ -128,7 +144,9 @@ export function Verify({
           value={code}
           onChange={(e) => setCode(e.target.value)}
           placeholder="123456"
+          aria-label="One-time verification code"
           inputMode="numeric"
+          autoComplete="one-time-code"
           autoFocus
           disabled={busy}
         />
@@ -189,7 +207,14 @@ export function ChatList({
       ) : (
         <ul className="list">
           {items.map((c) => (
-            <li key={c.conversationId} className="row" onClick={() => onOpen(c.conversationId)}>
+            <li
+              key={c.conversationId}
+              className="row"
+              role="button"
+              tabIndex={0}
+              onClick={() => onOpen(c.conversationId)}
+              onKeyDown={onActivate(() => onOpen(c.conversationId))}
+            >
               <div className="row-title">{c.title}</div>
               <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
             </li>
@@ -236,16 +261,25 @@ export function Search({ onOpen, onBack }: { onOpen: (id: string) => void; onBac
         </button>
         <input
           className="input"
+          type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="Search messages"
+          aria-label="Search messages"
           autoFocus
         />
       </div>
       {query.trim() && hits.length === 0 ? <p className="muted center">No matches.</p> : null}
       <ul className="list">
         {hits.map((h) => (
-          <li key={h.msgUuid} className="row" onClick={() => onOpen(h.conversationId)}>
+          <li
+            key={h.msgUuid}
+            className="row"
+            role="button"
+            tabIndex={0}
+            onClick={() => onOpen(h.conversationId)}
+            onKeyDown={onActivate(() => onOpen(h.conversationId))}
+          >
             <div className="row-title">{h.conversationTitle}</div>
             <div className="row-sub">{highlightSnippet(h.snippet)}</div>
           </li>
@@ -325,8 +359,13 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
           ‹ Back
         </button>
         <span className="mono">{conversationId.slice(0, 12)}</span>
-        <button className="btn small ghost call-btn" title="Voice call" onClick={() => void call.startCall(conversationId, "voice")}>
-          📞
+        <button
+          className="btn small ghost call-btn"
+          title="Voice call"
+          aria-label="Start voice call"
+          onClick={() => void call.startCall(conversationId, "voice")}
+        >
+          <span aria-hidden>📞</span>
         </button>
       </div>
       <div className="messages">
@@ -337,7 +376,13 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
       </div>
       <DownloadsPanel />
       <form className="composer" onSubmit={send}>
-        <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Message" />
+        <input
+          className="input"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Message"
+          aria-label="Type a message"
+        />
         <button className="btn" type="submit">
           Send
         </button>

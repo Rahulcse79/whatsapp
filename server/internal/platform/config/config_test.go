@@ -85,3 +85,36 @@ func TestLoad_MinConnsAboveMax(t *testing.T) {
 		t.Fatal("want error when min conns > max conns")
 	}
 }
+
+// ── offline profile (HLD §17.5) validation ─────────────────────────────────
+
+func TestLoad_OfflineForbidsMockOTP(t *testing.T) {
+	t.Setenv("WA_ENV", "offline") // default WA_OTP_CHANNEL is mock
+	_, err := Load("core-api")
+	if err == nil || !strings.Contains(err.Error(), "WA_OTP_CHANNEL=mock is not allowed in offline") {
+		t.Fatalf("offline + mock OTP must be rejected, got: %v", err)
+	}
+}
+
+func TestLoad_EmailChannelRequiresSMTP(t *testing.T) {
+	t.Setenv("WA_ENV", "offline")
+	t.Setenv("WA_OTP_CHANNEL", "email") // but no WA_SMTP_HOST / WA_SMTP_FROM
+	_, err := Load("core-api")
+	if err == nil || !strings.Contains(err.Error(), "WA_SMTP_HOST") {
+		t.Fatalf("email OTP without SMTP must be rejected, got: %v", err)
+	}
+}
+
+func TestLoad_OfflineEmailValid(t *testing.T) {
+	t.Setenv("WA_ENV", "offline")
+	t.Setenv("WA_OTP_CHANNEL", "email")
+	t.Setenv("WA_SMTP_HOST", "smtp")
+	t.Setenv("WA_SMTP_FROM", "no-reply@wa.internal")
+	c, err := Load("core-api")
+	if err != nil {
+		t.Fatalf("a coherent offline+email config must load: %v", err)
+	}
+	if c.Auth.SMTPHost != "smtp" || c.Auth.SMTPFrom != "no-reply@wa.internal" || c.Auth.SMTPPort != 587 {
+		t.Fatalf("SMTP config not loaded: %+v", c.Auth)
+	}
+}

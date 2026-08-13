@@ -816,8 +816,25 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            aria-hidden, index.html lang/viewport/title. Matrix's a11y section +
            mobile accessibilityLabel audit noted as ongoing/device-tier. Verified:
            all 8 client projects typecheck. mixed.)
-[ ] T4.10  Offline-profile validation
-    PROMPT> implement task T4.10 offline profile: values overlays + ntfy/step-ca/email-otp wiring end to end per HLD §17.5. config + code.
+[x] T4.10  Offline-profile validation
+           (Wired + validated the self-hosted offline profile end-to-end (HLD §17.5)
+           — most substitutes existed (ntfy T0.16, email-OTP sender T0.08, step-ca
+           helm T0.22), the gap was coherent CONFIG wiring + guards. CODE:
+           platform/config gained SMTPHost/Port/From/User/Password (WA_SMTP_*) and
+           two guards — WA_OTP_CHANNEL=mock is now rejected in `offline` (not just
+           prod; a self-hosted box must run a real OTP path or anyone logs in), and
+           `email` requires WA_SMTP_HOST+WA_SMTP_FROM (fail-fast, not silent);
+           buildOTPSender now reads the EmailSender's SMTP from config (was raw
+           os.Getenv, port hardcoded 587). CONFIG: values-offline.yaml core-api adds
+           the SMTP env (+ notes GIF stays off via unset Tenor key); compose gains
+           the offline stack — mailhog (`smtp`, SMTP 1025/UI 8025) + step-ca
+           (DOCKER_STEPCA_INIT_* non-interactive ACME init) alongside ntfy, + the
+           stepca volume + README run guide (`docker compose --profile offline up`).
+           TEST/validation: config_test offline cases — mock-in-offline rejected,
+           email-without-SMTP rejected, coherent offline+email loads (SMTP fields +
+           :587 default). Verified: gofmt + go build ./... + go vet + go test
+           [config, auth] GREEN; compose + values-offline YAML parse; offline
+           profile = {ntfy, smtp, step-ca}. config + code.)
 [ ] T4.11  Go-live checklist + staged launch
     PROMPT> implement task T4.11 go-live: final checklist doc, version tag flow, staged rollout plan. docs only.
 

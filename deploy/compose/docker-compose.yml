@@ -78,7 +78,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
 
-  # ── offline profile (HLD §17.5): self-hosted push ─────────────────────────
+  # ── offline profile (HLD §17.5): self-hosted push / OTP / CA ──────────────
   ntfy:
     profiles: ["offline"]
     image: binwiederhier/ntfy:latest
@@ -87,8 +87,31 @@ services:
       - "8090:80"
     volumes:
       - ntfycache:/var/cache/ntfy
-    # step-ca (private CA) joins this profile at task T0.22 — needs an
-    # interactive init ceremony; see Docs/08-devops/offline-local-server.md §2.
+
+  # Email OTP relay: a local SMTP catcher (mailhog) for the pilot — SMTP on 1025,
+  # web UI on 8025. Real deployments point WA_SMTP_HOST at Postfix/Stalwart:587.
+  # Set WA_OTP_CHANNEL=email, WA_SMTP_HOST=smtp, WA_SMTP_PORT=1025 to use it.
+  smtp:
+    profiles: ["offline"]
+    image: mailhog/mailhog:latest
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
+  # Private CA (step-ca): ACME-compatible, so cert-manager config barely changes.
+  # The DOCKER_STEPCA_INIT_* vars run a non-interactive first init; the CA root is
+  # then pre-installed on enrolled devices (offline-local-server.md §2).
+  step-ca:
+    profiles: ["offline"]
+    image: smallstep/step-ca:latest
+    environment:
+      DOCKER_STEPCA_INIT_NAME: WhatsApp V2 Offline CA
+      DOCKER_STEPCA_INIT_DNS_NAMES: ca.wa.internal,localhost
+      DOCKER_STEPCA_INIT_ACME: "true"
+    ports:
+      - "9000:9000"
+    volumes:
+      - stepca:/home/step
 
   # ── observability profile ─────────────────────────────────────────────────
   prometheus:
@@ -131,6 +154,7 @@ volumes:
   natsdata:
   miniodata:
   ntfycache:
+  stepca:
   promdata:
   lokidata:
   grafanadata:

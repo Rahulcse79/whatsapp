@@ -454,11 +454,11 @@ func buildOTPSender(cfg *config.Config, log *slog.Logger) (auth.Sender, error) {
 		return authadapters.SMSSender{}, nil
 	case "email":
 		return authadapters.EmailSender{
-			Host:     os.Getenv("WA_SMTP_HOST"),
-			Port:     587,
-			From:     os.Getenv("WA_SMTP_FROM"),
-			Username: os.Getenv("WA_SMTP_USER"),
-			Password: os.Getenv("WA_SMTP_PASSWORD"),
+			Host:     cfg.Auth.SMTPHost,
+			Port:     cfg.Auth.SMTPPort,
+			From:     cfg.Auth.SMTPFrom,
+			Username: cfg.Auth.SMTPUser,
+			Password: cfg.Auth.SMTPPassword,
 		}, nil
 	default:
 		return nil, errors.New("unknown OTP channel " + cfg.Auth.OTPChannel)

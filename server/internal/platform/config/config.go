@@ -42,6 +42,14 @@ type Auth struct {
 	RefreshTTL     time.Duration
 	// OTPChannel: mock (dev) | sms | email (offline profile, HLD §17.5).
 	OTPChannel string
+	// SMTP config for the email OTP channel (offline profile). Host/From are
+	// required when OTPChannel=email; Username empty = an unauthenticated
+	// trusted-LAN relay (offline-local-server.md §2).
+	SMTPHost     string
+	SMTPPort     int
+	SMTPFrom     string
+	SMTPUser     string
+	SMTPPassword string
 }
 
 // Config is the common configuration shared by all deployables.
@@ -99,6 +107,11 @@ func Load(service string) (*Config, error) {
 			AccessTTL:      getDur("WA_ACCESS_TTL", 10*time.Minute, &errs),
 			RefreshTTL:     getDur("WA_REFRESH_TTL", 90*24*time.Hour, &errs),
 			OTPChannel:     getStr("WA_OTP_CHANNEL", "mock"),
+			SMTPHost:       os.Getenv("WA_SMTP_HOST"),
+			SMTPPort:       getInt("WA_SMTP_PORT", 587, &errs),
+			SMTPFrom:       os.Getenv("WA_SMTP_FROM"),
+			SMTPUser:       os.Getenv("WA_SMTP_USER"),
+			SMTPPassword:   os.Getenv("WA_SMTP_PASSWORD"),
 		},
 	}
 
@@ -118,6 +131,15 @@ func Load(service string) (*Config, error) {
 	default:
 		errs = append(errs, fmt.Errorf("config: WA_OTP_CHANNEL %q is not one of mock|sms|email", c.Auth.OTPChannel))
 	}
+	// mock is a dev-only channel — a real deployment (prod OR the self-hosted
+	// offline profile, HLD §17.5) must run a real OTP path, else anyone logs in.
+	if c.Auth.OTPChannel == "mock" && (c.Env == "prod" || c.Env == "offline") {
+		errs = append(errs, fmt.Errorf("config: WA_OTP_CHANNEL=mock is not allowed in %s", c.Env))
+	}
+	// The email channel (the offline default) needs an SMTP endpoint to send to.
+	if c.Auth.OTPChannel == "email" && (c.Auth.SMTPHost == "" || c.Auth.SMTPFrom == "") {
+		errs = append(errs, errors.New("config: WA_OTP_CHANNEL=email requires WA_SMTP_HOST and WA_SMTP_FROM"))
+	}
 	// Production must never run on development secrets.
 	if c.Env == "prod" {
 		if c.Auth.PhonePepper == devPepper {
@@ -125,9 +147,6 @@ func Load(service string) (*Config, error) {
 		}
 		if c.Auth.JWTEd25519Seed == "" {
 			errs = append(errs, errors.New("config: WA_JWT_ED25519_SEED must be set in prod"))
-		}
-		if c.Auth.OTPChannel == "mock" {
-			errs = append(errs, errors.New("config: WA_OTP_CHANNEL=mock is not allowed in prod"))
 		}
 	}
 

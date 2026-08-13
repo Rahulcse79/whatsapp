@@ -22,7 +22,13 @@ core-api:
     WA_ENV: offline
     WA_VALKEY_ADDR: valkey:6379
     WA_NATS_URL: nats://nats:4222
+    # OTP over email via the self-hosted SMTP relay (HLD §17.5); no SMS/FCM/APNs.
+    # WA_OTP_CHANNEL=email now REQUIRES WA_SMTP_HOST + WA_SMTP_FROM (config guard).
     WA_OTP_CHANNEL: email
+    WA_SMTP_HOST: smtp
+    WA_SMTP_PORT: "587"
+    WA_SMTP_FROM: no-reply@wa.internal
+    # GIF proxy stays off (WA_GIF_TENOR_KEY unset) — local sticker packs only.
 
 ws-gateway:
   replicaCount: 1

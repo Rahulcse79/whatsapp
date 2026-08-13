@@ -2,14 +2,25 @@
 
 k6 + custom WS-client load profiles (load-and-chaos-testing.md §1). Every profile
 numbers each message per conversation and reconciles **sent-ACKed vs delivered**
-after the run — a zero-loss auditor that is the single most important assertion
-in the whole test estate.
+via the shared zero-loss auditor ([`auditor.js`](auditor.js), §4, NFR-12) — the
+single most important assertion in the whole test estate. A message the server
+ACKed (durable in the PG inbox) that never reaches a recipient fails the run
+(`msgs_lost==0`).
 
 | Profile | File | Shape | Pass criteria |
 |---|---|---|---|
-| **Fan-out stress** | [`fanout.js`](fanout.js) | 50 senders → 1,024-member groups simultaneously | ACK p95 ≤ 500 ms · backlog drains ≤ 60 s · zero loss (`msgs_lost==0`) |
-| **Call surge** | [`callsurge.js`](callsurge.js) | 300 simultaneous call setups | call setup p95 ≤ 3 s (GATE P2) · every setup opens a ring (`call_setup_fail==0`) |
-| **PTT floor** | [`ptt.js`](ptt.js) | 1 speaker + 200 listeners, contended floor | floor-grant p95 ≤ 200 ms (GATE P3) · every ACQUIRE resolves (`ptt_grant_fail==0`) |
+| **Sustained** | [`sustained.js`](sustained.js) | 20k WS · ~300 msg/s · 12% media · 6% calls · 24 h | all SLOs green (ACK p95 ≤ 250 ms, deliver p95 ≤ 1 s) · zero loss |
+| **Burst** | [`burst.js`](burst.js) | ramp to 60k conns in 10 min (3× headroom) | connect success ≥ 99.5% · recovery ≤ 5 min |
+| **Reconnect storm** | [`reconnectstorm.js`](reconnectstorm.js) | kill 1/3 gateways at 20k conns | zero loss (resume+outbox mask it) · reconnect ≤ 3 min |
+| **Fan-out stress** | [`fanout.js`](fanout.js) | 50 senders → 1,024-member groups simultaneously | ACK p95 ≤ 500 ms · backlog drains ≤ 60 s · zero loss |
+| **Inbox soak** | [`inboxsoak.js`](inboxsoak.js) | 60% recipients offline 24 h, then mass reconnect | exactly-once replay (`replay_dupes==0`) · zero loss · PG partition health |
+| **Media flood** | [`mediaflood.js`](mediaflood.js) | 500 parallel 25 MB uploads + downloads | presign p95 ≤ 500 ms · API pods unaffected (isolation) |
+| **Call surge** | [`callsurge.js`](callsurge.js) | 300 simultaneous call setups | call setup p95 ≤ 3 s (GATE P2) · every setup opens a ring |
+| **PTT floor** | [`ptt.js`](ptt.js) | 1 speaker + 200 listeners, contended floor | floor-grant p95 ≤ 200 ms (GATE P3) · every ACQUIRE resolves |
+
+**GATE P4 / launch** requires the sustained profile green for two consecutive
+weeks with the §2 chaos scenarios enabled — the whole suite, audited, is what
+proves it.
 
 `callsurge.js` is what **GATE P2** ("call setup p95 ≤ 3 s in staging") runs; its
 protocol-level correctness counterpart is scenario **P12** (the ring

@@ -739,8 +739,27 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            calls_started/flag_exposure counters emit when their contexts adopt the
            Emitter (available now). code + config.)
     PROMPT> implement task T4.03 metadata-only analytics per HLD §18.1. code + config only.
-[ ] T4.04  Full load suite + durability auditor
-    PROMPT> implement task T4.04 load profiles (sustained/burst/reconnect-storm/fanout/inbox-soak/media/call) + the zero-loss auditor per Docs/10-testing/load-and-chaos-testing.md. tests only.
+[x] T4.04  Full load suite + durability auditor
+           (Completes the ops/loadtest/ k6 suite (fanout T1.12 / callsurge T2.10 /
+           ptt T3.04 already existed). NEW shared auditor.js = the §4 zero-loss
+           durability auditor (NFR-12, "the single most important assertion"): a
+           per-VU ledger numbers messages per conversation (${vu}:${seq}), tracks
+           sent→acked→delivered, and finalize() at drain counts anything the server
+           ACKed [durable in the PG inbox] but never delivered as msgs_lost — the
+           msgs_lost==0 threshold is the proof, spread into every profile via
+           auditThresholds. NEW profiles (§1): sustained.js (20k WS ramping-vus,
+           ~300 msg/s, realistic 12%-media/6%-call mix on one numbered ledger, 24h
+           hold; ACK p95≤250ms + deliver p95≤1s SLOs), burst.js (ramp 60k conns/
+           10min, connect-success≥99.5%), reconnectstorm.js (20k held while external
+           chaos SIGKILLs 1/3 gateways; per-VU resume-token state persists across k6
+           iterations = the reconnect; zero-loss + reconnect p95≤3min), inboxsoak.js
+           (200 senders + 300 offline recipients that sleep the soak then reconnect
+           and drain backlog; replay_dupes==0 exactly-once + zero loss), mediaflood.js
+           (500 parallel 25MB REST upload→complete→download; presign p95≤500ms +
+           isolation check that the control-plane RED SLO holds). README documents
+           all 8 profiles + the auditor + GATE P4. Verified: node --check all 9
+           scripts. Authored-blind config (no k6/infra locally); the wsv1 protobuf
+           codec is the documented seam. tests only.)
 [ ] T4.05  Chaos suite (always-on staging scenarios)
     PROMPT> implement task T4.05 chaos scenarios per load-and-chaos-testing §2. config + tests only.
 [ ] T4.06  External pentest remediation window

@@ -1,0 +1,102 @@
+# Android APK — on-demand, standalone, installable build you can download from
+# the run's Artifacts and sideload onto any device or emulator.
+#
+# It runs `assembleRelease`, which on an Expo-prebuilt project bundles the JS
+# AND signs with the auto-generated debug keystore (Expo's default release
+# signingConfig), so the APK is self-contained and installs without any signing
+# secrets or a running Metro server. (A *debug* APK would need Metro — useless
+# for "download and run".) release.yml does the tag-driven, store-signable
+# version; this one is for grabbing a runnable build whenever you want.
+#
+# Run it:  Actions → "Android APK" → Run workflow (optionally set the backend
+# URL your phone/emulator can reach). Then download "whatsapp-v2-android-apk".
+name: Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_url:
+        description: "Backend API base URL the app should call (device-reachable)"
+        default: "http://10.0.2.2:8080" # Android emulator → host machine
+      ws_url:
+        description: "WebSocket URL"
+        default: "ws://10.0.2.2:8081/v1/ws"
+  push:
+    branches: [main]
+    paths:
+      - "clients/mobile/**"
+      - "clients/packages/**"
+      - ".github/workflows/android.yml"
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      # 10.0.2.2 is the Android emulator's alias for the host, so an emulator +
+      # ./start.sh works out of the box. Override via the "Run workflow" inputs
+      # (use your machine's LAN IP for a physical phone).
+      EXPO_PUBLIC_API_URL: ${{ github.event.inputs.api_url || 'http://10.0.2.2:8080' }}
+      EXPO_PUBLIC_WS_URL: ${{ github.event.inputs.ws_url || 'ws://10.0.2.2:8081/v1/ws' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: clients/pnpm-lock.yaml
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Install workspace
+        working-directory: clients
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Generate native Android project (Expo prebuild)
+        working-directory: clients/mobile
+        env:
+          APP_VERSION: 0.1.0-dev
+          ANDROID_VERSION_CODE: ${{ github.run_number }}
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build release APK (JS bundled, debug-signed → installable)
+        working-directory: clients/mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+
+      - name: Stage APK with a run-stamped name
+        run: |
+          mkdir -p dist
+          cp clients/mobile/android/app/build/outputs/apk/release/app-release.apk \
+             "dist/whatsapp-v2-${{ github.run_number }}.apk"
+          ls -la dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: whatsapp-v2-android-apk
+          path: dist/*.apk
+          if-no-files-found: error
+
+      - name: How to install
+        run: |
+          {
+            echo "### 📱 WhatsApp V2 — installable APK ready"
+            echo ""
+            echo "Backend baked in: \`$EXPO_PUBLIC_API_URL\` / \`$EXPO_PUBLIC_WS_URL\`"
+            echo ""
+            echo "1. Download the **whatsapp-v2-android-apk** artifact from this run (below)."
+            echo "2. Unzip → \`whatsapp-v2-${{ github.run_number }}.apk\`."
+            echo "3. Install:"
+            echo "   - \`adb install -r whatsapp-v2-${{ github.run_number }}.apk\`, or"
+            echo "   - copy to the phone and tap it (allow *Install unknown apps*)."
+            echo ""
+            echo "Start the backend with \`./start.sh\`. For an **emulator** the defaults"
+            echo "(10.0.2.2) just work; for a **physical phone**, re-run this workflow with"
+            echo "your machine's LAN IP (e.g. \`http://192.168.1.x:8080\`). See .github/ANDROID.md."
+          } >> "$GITHUB_STEP_SUMMARY"

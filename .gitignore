@@ -16,6 +16,11 @@ build/
 .expo/
 *.tsbuildinfo
 
+# --- Local dev runtime (start.sh) + Expo prebuild output (CI-generated) ---
+/.run/
+clients/mobile/android/
+clients/mobile/ios/
+
 # --- Env & secrets (SOPS-encrypted files ARE committed; raw secrets never) ---
 .env
 .env.*

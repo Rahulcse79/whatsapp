@@ -29,11 +29,16 @@ export interface AppConfig {
   wsUrl: string;
 }
 
-// Defaults point at a locally self-hosted stack (the project runs fully
-// offline — HLD §17.5). Override for a remote deployment.
+// Backend endpoints. Baked in at build time from EXPO_PUBLIC_* (Expo inlines
+// these into the bundle), falling back to a locally self-hosted stack matching
+// ./start.sh — core-api on :8080, ws-gateway on :8081. For an APK that runs on
+// a device/emulator, build with the reachable host, e.g.
+//   EXPO_PUBLIC_API_URL=http://10.0.2.2:8080  (Android emulator → host)
+//   EXPO_PUBLIC_WS_URL=ws://10.0.2.2:8081/v1/ws
+// The Android APK workflow (.github/workflows/android.yml) sets these.
 export const defaultConfig: AppConfig = {
-  apiBaseUrl: "http://localhost:8080",
-  wsUrl: "ws://localhost:8080/v1/ws",
+  apiBaseUrl: process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8080",
+  wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? "ws://localhost:8081/v1/ws",
 };
 
 export class AppServices {

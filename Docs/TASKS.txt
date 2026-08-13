@@ -835,8 +835,31 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            :587 default). Verified: gofmt + go build ./... + go vet + go test
            [config, auth] GREEN; compose + values-offline YAML parse; offline
            profile = {ntfy, smtp, step-ca}. config + code.)
-[ ] T4.11  Go-live checklist + staged launch
-    PROMPT> implement task T4.11 go-live: final checklist doc, version tag flow, staged rollout plan. docs only.
+[x] T4.11  Go-live checklist + staged launch
+           (The launch capstone — docs only, no runtime code. NEW DOC
+           Docs/12-planning/go-live-checklist.md pulls the whole build into one
+           go/no-go instrument: (§1) the five binding phase gates P0–P4 as live
+           checkboxes, each naming its proof artifact (P0 chaos-kill zero-loss;
+           P1 fanout.js 1024-group + 25MB; P2 callsurge.js p95≤3s + locked-phone
+           ring; P3 ptt.js p95≤200ms + link/revoke; P4 sustained.js green 2wks w/
+           chaos + auditor.js msgs_lost==0) with honest "slice green in CI, full
+           run needs staging/Docker" notes; (§2) a demonstrated-live readiness
+           table across security(T4.06)/DR(T4.07)/durability/chaos/observability/
+           on-call/UAT(T4.09)/offline(T4.10)/data/abuse/legal/docs, each with an
+           evidence pointer; (§3) the VERSION-file SemVer tag flow — bump on main
+           via PR, `git tag vX.Y.Z && git push` fires release.yml
+           (whatsapp-v2-<component>-<version>-<os>-<arch> artifacts, versionName=
+           tag/versionCode=run#), per-deployable tags available; (§4) the GitOps
+           staged rollout — merge→ArgoCD auto-sync dev→GitOps-PR staging→GitOps-PR
+           prod Argo-Rollouts canary 10→50→100 metric-gated (err rate/p95/WS
+           connect) auto-abort+rollback, migration pre-sync hook + expand-contract
+           so rollback never fights schema (NFR-14); (§5) the ORTHOGONAL audience
+           ramp on the flag/kill-switch console — dogfood→invite beta→% GA 5→25→100
+           →GA, kill-switch pauses registration with no deploy; (§6) launch-day
+           runbook — T-1 freeze/page-test, go/no-go = gates green + budget healthy +
+           no P0/P1, rollback = GitOps revert to prior tag + postmortem; (§7)
+           post-launch = hold the 2-week SLO window, budget burn pauses the ramp.
+           Docs-only; markdown lint clean. doc only.)
 
 --- GATE P4 / LAUNCH: SLOs green 2 consecutive weeks under synthetic load with chaos enabled ---
 

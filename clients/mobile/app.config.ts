@@ -33,7 +33,15 @@ export default ({ config }: ConfigContext): ExpoConfig => {
       package: "com.whatsappv2.app",
       versionCode: androidVersionCode,
     },
-    plugins: ["expo-router", "expo-secure-store"],
+    plugins: [
+      "expo-router",
+      "expo-secure-store",
+      // Pin the Android Kotlin toolchain: the Compose Compiler (1.5.15) pulled
+      // in by the native modules requires Kotlin 1.9.25, but Expo SDK 52
+      // defaults to 1.9.24. expo-build-properties writes this into the native
+      // project at prebuild so the release build compiles.
+      ["expo-build-properties", { android: { kotlinVersion: "1.9.25" } }],
+    ],
     experiments: { typedRoutes: false },
   };
 };

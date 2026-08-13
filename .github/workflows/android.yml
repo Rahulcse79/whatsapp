@@ -47,8 +47,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: pnpm
-          cache-dependency-path: clients/pnpm-lock.yaml
+          # No pnpm cache: clients/pnpm-lock.yaml isn't committed (workspace
+          # installs with --no-frozen-lockfile), so there's no path to key on.
 
       - uses: actions/setup-java@v4
         with:

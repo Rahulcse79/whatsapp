@@ -2,18 +2,21 @@
 #
 # start.sh — bring up the whole WhatsApp V2 stack on one box for local dev.
 #
-#   ./start.sh            # up:   infra (compose) → migrations → 4 Go services → web
-#   ./start.sh up         # same as above
-#   ./start.sh down       # stop the Go services + web, then the compose infra
-#   ./start.sh restart    # down then up
-#   ./start.sh status     # show what's running + the URLs
-#   ./start.sh logs [svc] # tail a service log (core-api|ws-gateway|media-svc|notification-svc|web)
+#   ./start.sh            # up: infra → migrations → 4 Go services → web
+#   ./start.sh up [native|docker]
+#   ./start.sh down       # stop the Go services + web + infra
+#   ./start.sh restart
+#   ./start.sh status
+#   ./start.sh logs [svc] # core-api|ws-gateway|media-svc|notification-svc|web|minio
 #
-# Infra runs in Docker (deploy/compose); the Go services + web run on the host
-# against it (the dev config defaults already point at localhost). Everything is
-# best-effort and idempotent — re-running `up` is safe.
+# Runtime is auto-detected: if Docker is running it uses deploy/compose; if not,
+# it falls back to NATIVE services via Homebrew (no Docker needed). Force either
+# with `./start.sh up native` / `./start.sh up docker` or WA_RUNTIME=native.
 #
-# Prereqs: docker (+ compose v2), go 1.25. Optional: pnpm/node (for the web app).
+# Prereqs: Go (1.25 toolchain auto-fetched if yours is older).
+#   • docker mode: Docker Desktop / a running daemon.
+#   • native mode (macOS): Homebrew — it installs postgresql@17, nats-server,
+#     minio, golang-migrate as needed, and reuses valkey or redis if present.
 set -euo pipefail
 
 # ── paths ──────────────────────────────────────────────────────────────────
@@ -24,10 +27,13 @@ RUN_DIR="$REPO_ROOT/.run"
 LOG_DIR="$RUN_DIR/logs"
 PID_DIR="$RUN_DIR/pids"
 BIN_DIR="$RUN_DIR/bin"
+MINIO_DATA="$RUN_DIR/minio-data"
 SEED_FILE="$RUN_DIR/jwt-seed"
 
 SERVICES=(core-api ws-gateway media-svc notification-svc)
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
+RUNTIME=""
+MINIO_OK=1   # media-svc is started only when MinIO is available
 
 # ── pretty output ───────────────────────────────────────────────────────────
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; D=$'\033[2m'; X=$'\033[0m'; else B= G= Y= R= D= X=; fi
@@ -35,14 +41,20 @@ say()  { printf '%s▸ %s%s\n' "$B" "$*" "$X"; }
 ok()   { printf '  %s✓%s %s\n' "$G" "$X" "$*"; }
 warn() { printf '  %s!%s %s\n' "$Y" "$X" "$*"; }
 die()  { printf '%s✗ %s%s\n' "$R" "$*" "$X" >&2; exit 1; }
-
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
+
+# ── runtime selection ───────────────────────────────────────────────────────
+detect_runtime() {
+  if [ -n "$RUNTIME" ]; then return; fi
+  if [ -n "${WA_RUNTIME:-}" ]; then RUNTIME="$WA_RUNTIME"; return; fi
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then RUNTIME=docker; else RUNTIME=native; fi
+}
 
 # ── shared environment for every Go service ─────────────────────────────────
 # One JWT seed is generated once and reused, so tokens minted by core-api verify
 # in ws-gateway (and survive restarts). Dev config defaults cover PG/Valkey/NATS.
 load_env() {
-  mkdir -p "$RUN_DIR"
+  mkdir -p "$RUN_DIR" "$LOG_DIR" "$PID_DIR" "$BIN_DIR"
   if [ ! -f "$SEED_FILE" ]; then
     if command -v openssl >/dev/null 2>&1; then openssl rand -base64 32 > "$SEED_FILE"
     else head -c 32 /dev/urandom | base64 > "$SEED_FILE"; fi
@@ -68,70 +80,171 @@ svc_env() {
   esac
 }
 
-# ── infra (compose) ─────────────────────────────────────────────────────────
-infra_up() {
-  say "Starting infra (PostgreSQL, Valkey, NATS, MinIO)…"
-  [ -f "$COMPOSE_ENV" ] || { cp "$REPO_ROOT/deploy/compose/.env.example" "$COMPOSE_ENV"; ok "created deploy/compose/.env from the example"; }
+# ── infra: docker ───────────────────────────────────────────────────────────
+infra_up_docker() {
+  say "Starting infra via Docker (PostgreSQL, Valkey, NATS, MinIO)…"
+  [ -f "$COMPOSE_ENV" ] || { cp "$REPO_ROOT/deploy/compose/.env.example" "$COMPOSE_ENV"; ok "created deploy/compose/.env"; }
   "${COMPOSE[@]}" up -d
   printf '  waiting for PostgreSQL'
   for _ in $(seq 1 60); do
-    if "${COMPOSE[@]}" exec -T postgres pg_isready -U whatsapp -d whatsapp >/dev/null 2>&1; then
-      printf '\n'; ok "infra is up"; return 0
-    fi
+    if "${COMPOSE[@]}" exec -T postgres pg_isready -U whatsapp -d whatsapp >/dev/null 2>&1; then printf '\n'; ok "infra up"; return 0; fi
     printf '.'; sleep 1
   done
-  printf '\n'; die "PostgreSQL did not become ready — check: ./start.sh logs, or docker compose -f $COMPOSE_FILE ps"
+  printf '\n'; die "PostgreSQL did not become ready"
 }
 
-# ── migrations (golang-migrate in a container, same image CI uses) ──────────
-migrate() {
-  say "Applying database migrations…"
-  # A one-off container reaches the host-published Postgres via host.docker.internal
-  # (mapped explicitly so it also works on native-Linux Docker).
-  docker run --rm \
-    --add-host=host.docker.internal:host-gateway \
+migrate_docker() {
+  say "Applying migrations (golang-migrate container)…"
+  docker run --rm --add-host=host.docker.internal:host-gateway \
     -v "$REPO_ROOT/server/migrations:/migrations" \
     migrate/migrate:v4.18.1 \
     -path=/migrations \
-    -database "postgres://whatsapp:devpassword@host.docker.internal:5432/whatsapp?sslmode=disable" \
-    up
+    -database "postgres://whatsapp:devpassword@host.docker.internal:5432/whatsapp?sslmode=disable" up
+  ok "migrations applied"
+}
+
+# ── infra: native (Homebrew, no Docker) ─────────────────────────────────────
+brew_have() { brew list --formula "$1" >/dev/null 2>&1; }
+brew_ensure() { brew_have "$1" || { say "Installing $1 (brew)…"; brew install "$1"; }; }
+
+# pg_client echoes a usable psql path (PATH, EDB installer, Postgres.app, brew).
+pg_client() {
+  command -v psql 2>/dev/null && return 0
+  local p
+  for p in /Library/PostgreSQL/*/bin/psql /Applications/Postgres.app/Contents/Versions/*/bin/psql \
+           "$(brew --prefix postgresql@17 2>/dev/null)/bin/psql" /usr/local/opt/postgresql*/bin/psql; do
+    [ -x "$p" ] && { echo "$p"; return 0; }
+  done
+  return 1
+}
+
+# ensure_pg_role_db creates the whatsapp role + db to match the dev DSN. Runs as
+# the local superuser (trust auth on localhost); idempotent.
+ensure_pg_role_db() {
+  local psql="$1"
+  "$psql" -h localhost -d postgres -v ON_ERROR_STOP=1 >/dev/null 2>&1 <<'SQL' || warn "role setup skipped (may already exist)"
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname='whatsapp') THEN
+    CREATE ROLE whatsapp LOGIN PASSWORD 'devpassword' SUPERUSER;
+  END IF;
+END $$;
+SQL
+  "$psql" -h localhost -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='whatsapp'" 2>/dev/null | grep -q 1 \
+    || "$psql" -h localhost -d postgres -c "CREATE DATABASE whatsapp OWNER whatsapp" >/dev/null 2>&1 || true
+}
+
+# pg_up_native reuses an existing Postgres on :5432 (Postgres.app, EDB, …) if one
+# is there — the migrations need no PG15+ features — else installs postgresql@17.
+pg_up_native() {
+  if lsof -nP -iTCP:5432 -sTCP:LISTEN >/dev/null 2>&1; then
+    local psql; psql="$(pg_client)" || die "Postgres is on :5432 but no psql client was found to configure it."
+    ensure_pg_role_db "$psql"
+    ok "Reusing the Postgres already on :5432 (db: whatsapp)"
+  else
+    brew_ensure postgresql@17
+    export PATH="$(brew --prefix postgresql@17)/bin:$PATH"
+    brew services start postgresql@17 >/dev/null 2>&1 || true
+    printf '  waiting for PostgreSQL'
+    for _ in $(seq 1 60); do pg_isready -h localhost -q >/dev/null 2>&1 && break; printf '.'; sleep 1; done; printf '\n'
+    ensure_pg_role_db "$(pg_client)"
+    ok "PostgreSQL 17 on :5432 (db: whatsapp)"
+  fi
+}
+
+infra_up_native() {
+  say "Starting infra natively (no Docker)…"
+  command -v brew >/dev/null 2>&1 || warn "Homebrew not found — can only reuse already-running services (https://brew.sh to install more)."
+
+  pg_up_native
+
+  # Valkey — reuse redis if that's what's installed (wire-compatible)
+  if brew_have valkey; then brew services start valkey >/dev/null 2>&1 || true; ok "Valkey on :6379"
+  elif brew_have redis; then brew services start redis >/dev/null 2>&1 || true; ok "Redis on :6379 (Valkey-compatible)"
+  else brew_ensure valkey; brew services start valkey >/dev/null 2>&1 || true; ok "Valkey on :6379"; fi
+
+  # NATS
+  brew_ensure nats-server
+  brew services start nats-server >/dev/null 2>&1 || true
+  ok "NATS on :4222"
+
+  # MinIO — object storage for media/backups. Best-effort: if it can't be
+  # installed/started (e.g. low disk), we skip it and media-svc, and the rest of
+  # the stack still runs.
+  minio_up_native || MINIO_OK=0
+}
+
+minio_up_native() {
+  if ! command -v minio >/dev/null 2>&1; then
+    command -v brew >/dev/null 2>&1 && { say "Installing minio (brew)…"; brew install minio >/dev/null 2>&1 || true; }
+  fi
+  command -v minio >/dev/null 2>&1 || { warn "minio unavailable — skipping media-svc (media/avatars/backups off)"; return 1; }
+  if ! curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1; then
+    mkdir -p "$MINIO_DATA"
+    MINIO_ROOT_USER=minioadmin MINIO_ROOT_PASSWORD=minioadmin \
+      minio server "$MINIO_DATA" --address :9000 --console-address :9001 >"$LOG_DIR/minio.log" 2>&1 &
+    echo $! > "$PID_DIR/minio.pid"
+    printf '  waiting for MinIO'
+    for _ in $(seq 1 30); do curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 && break; printf '.'; sleep 1; done; printf '\n'
+  fi
+  curl -fsS http://localhost:9000/minio/health/live >/dev/null 2>&1 || { warn "MinIO did not become ready — skipping media-svc"; return 1; }
+  # Buckets the services expect (media-svc, backups). Best-effort via mc.
+  command -v mc >/dev/null 2>&1 || brew install minio-mc >/dev/null 2>&1 || true
+  if command -v mc >/dev/null 2>&1; then
+    mc alias set wa-local http://localhost:9000 minioadmin minioadmin >/dev/null 2>&1 || true
+    for b in media backups wal-archive; do mc mb -p "wa-local/$b" >/dev/null 2>&1 || true; done
+  fi
+  ok "MinIO on :9000 (console :9001, minioadmin/minioadmin)"
+}
+
+migrate_native() {
+  say "Applying migrations…"
+  if command -v migrate >/dev/null 2>&1; then
+    migrate -path "$REPO_ROOT/server/migrations" -database "$WA_PG_DSN" up
+  else
+    # No golang-migrate installed — apply *.up.sql in order via psql (fresh dev
+    # DB; migrations use no PG15+ features, so this is safe). Re-running is fine:
+    # 000001 uses IF NOT EXISTS, later files fail only if already applied, which
+    # we surface. For a clean re-run use ./start.sh down then a fresh DB.
+    local psql; psql="$(pg_client)" || die "no psql client found to apply migrations"
+    local f
+    for f in $(ls "$REPO_ROOT"/server/migrations/*.up.sql | sort); do
+      PGPASSWORD=devpassword "$psql" -h localhost -U whatsapp -d whatsapp -v ON_ERROR_STOP=1 -q -f "$f" >/dev/null \
+        || die "migration failed at $(basename "$f") — see the error above"
+    done
+  fi
   ok "migrations applied"
 }
 
 # ── Go services ─────────────────────────────────────────────────────────────
 build_services() {
   say "Building Go services…"
-  mkdir -p "$BIN_DIR" "$LOG_DIR" "$PID_DIR"
-  ( cd "$REPO_ROOT/server" && for s in "${SERVICES[@]}"; do
-      go build -o "$BIN_DIR/$s" "./cmd/$s"
-    done )
+  ( cd "$REPO_ROOT/server" && for s in "${SERVICES[@]}"; do go build -o "$BIN_DIR/$s" "./cmd/$s"; done )
   ok "built: ${SERVICES[*]}"
 }
 
 start_service() {
-  local s="$1"; local pidf="$PID_DIR/$s.pid"
-  if running "$s"; then warn "$s already running (pid $(cat "$pidf"))"; return 0; fi
+  local s="$1"
+  if running "$s"; then warn "$s already running (pid $(cat "$PID_DIR/$s.pid"))"; return 0; fi
   # shellcheck disable=SC2046
   env $(svc_env "$s") "$BIN_DIR/$s" >"$LOG_DIR/$s.log" 2>&1 &
-  echo $! > "$pidf"
+  echo $! > "$PID_DIR/$s.pid"
   ok "$s started (pid $!) → $LOG_DIR/$s.log"
 }
 
 wait_core_api() {
   printf '  waiting for core-api'
-  for _ in $(seq 1 30); do
-    if curl -fsS http://localhost:8080/readyz >/dev/null 2>&1; then printf '\n'; ok "core-api ready"; return 0; fi
-    printf '.'; sleep 1
-  done
-  printf '\n'; warn "core-api /readyz not green yet — dependents may retry (see logs)"
+  for _ in $(seq 1 30); do curl -fsS http://localhost:8080/readyz >/dev/null 2>&1 && { printf '\n'; ok "core-api ready"; return 0; }; printf '.'; sleep 1; done
+  printf '\n'; warn "core-api /readyz not green yet — check ./start.sh logs core-api"
 }
 
 services_up() {
   build_services
   say "Starting services…"
   start_service core-api
-  wait_core_api                       # ws-gateway + media-svc dial core-api's gRPC
-  for s in ws-gateway media-svc notification-svc; do start_service "$s"; done
+  wait_core_api
+  start_service ws-gateway
+  if [ "$MINIO_OK" = 1 ]; then start_service media-svc; else warn "media-svc not started (MinIO unavailable)"; fi
+  start_service notification-svc
 }
 
 # ── web (optional) ──────────────────────────────────────────────────────────
@@ -139,7 +252,7 @@ web_up() {
   command -v pnpm >/dev/null 2>&1 || { warn "pnpm not found — skipping the web app (backend is still up)"; return 0; }
   say "Starting web app (Vite)…"
   local webenv="$REPO_ROOT/clients/web/.env.local"
-  [ -f "$webenv" ] || printf 'VITE_API_URL=http://localhost:8080\nVITE_WS_URL=ws://localhost:8081\n' > "$webenv"
+  [ -f "$webenv" ] || printf 'VITE_API_URL=http://localhost:8080\nVITE_WS_URL=ws://localhost:8081/v1/ws\n' > "$webenv"
   ( cd "$REPO_ROOT/clients" && pnpm install --no-frozen-lockfile >/dev/null 2>&1 || true )
   ( cd "$REPO_ROOT/clients/web" && exec pnpm dev ) >"$LOG_DIR/web.log" 2>&1 &
   echo $! > "$PID_DIR/web.pid"
@@ -151,18 +264,26 @@ running() { local p="$PID_DIR/$1.pid"; [ -f "$p" ] && kill -0 "$(cat "$p")" 2>/d
 
 stop_procs() {
   say "Stopping host processes…"
+  [ -d "$PID_DIR" ] || return 0
   for p in "$PID_DIR"/*.pid; do
     [ -e "$p" ] || continue
-    local name; name="$(basename "$p" .pid)"; local pid; pid="$(cat "$p")"
+    local name pid; name="$(basename "$p" .pid)"; pid="$(cat "$p")"
     if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; ok "stopped $name (pid $pid)"; fi
     rm -f "$p"
+  done
+}
+
+infra_down_native() {
+  say "Stopping native infra (brew services)…"
+  for svc in postgresql@17 valkey redis nats-server; do
+    brew_have "$svc" && brew services stop "$svc" >/dev/null 2>&1 && ok "stopped $svc" || true
   done
 }
 
 urls() {
   cat <<EOF
 
-${B}Stack is up.${X}
+${B}Stack is up (${RUNTIME}).${X}
   ${D}core-api     ${X}http://localhost:8080   (readyz: /readyz, metrics: /metrics)
   ${D}ws-gateway   ${X}ws://localhost:8081/v1/ws
   ${D}media-svc    ${X}http://localhost:8082
@@ -178,41 +299,50 @@ EOF
 
 # ── commands ────────────────────────────────────────────────────────────────
 cmd_up() {
-  need docker; need go
-  docker info >/dev/null 2>&1 || die "Docker is not running — start Docker Desktop / the daemon first."
+  need go
+  detect_runtime
   load_env
-  infra_up
-  migrate
+  if [ "$RUNTIME" = docker ]; then infra_up_docker; migrate_docker
+  else infra_up_native; migrate_native; fi
   services_up
   web_up
   urls
 }
 
 cmd_down() {
+  detect_runtime
   stop_procs
-  say "Stopping infra…"
-  "${COMPOSE[@]}" down && ok "infra stopped (data volumes kept — 'docker compose -f $COMPOSE_FILE down -v' to wipe)"
+  if [ "$RUNTIME" = docker ] && command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    say "Stopping Docker infra…"; "${COMPOSE[@]}" down && ok "infra stopped (data kept)"
+  else
+    infra_down_native
+  fi
 }
 
 cmd_status() {
+  detect_runtime
+  say "Runtime: $RUNTIME"
   say "Host processes:"
-  for s in "${SERVICES[@]}" web; do
+  for s in "${SERVICES[@]}" minio web; do
     if running "$s"; then ok "$s (pid $(cat "$PID_DIR/$s.pid"))"; else printf '  %s·%s %s stopped\n' "$D" "$X" "$s"; fi
   done
-  say "Infra:"; "${COMPOSE[@]}" ps
+  if [ "$RUNTIME" = docker ] && docker info >/dev/null 2>&1; then say "Infra (docker):"; "${COMPOSE[@]}" ps
+  else say "Infra (brew services):"; brew services list 2>/dev/null | grep -E "postgresql@17|valkey|redis|nats-server" || true; fi
 }
 
 cmd_logs() {
   local s="${1:-core-api}"; local f="$LOG_DIR/$s.log"
-  [ -f "$f" ] || die "no log for '$s' (choose: ${SERVICES[*]} web)"
+  [ -f "$f" ] || die "no log for '$s' (choose: ${SERVICES[*]} web minio)"
   tail -f "$f"
 }
 
 case "${1:-up}" in
-  up)      cmd_up ;;
+  up)      RUNTIME="${2:-}"; cmd_up ;;
+  native)  RUNTIME=native; cmd_up ;;
+  docker)  RUNTIME=docker; cmd_up ;;
   down)    cmd_down ;;
   restart) cmd_down; cmd_up ;;
   status)  cmd_status ;;
   logs)    cmd_logs "${2:-}" ;;
-  *)       die "usage: ./start.sh [up|down|restart|status|logs <service>]" ;;
+  *)       die "usage: ./start.sh [up [native|docker]|down|restart|status|logs <service>]" ;;
 esac

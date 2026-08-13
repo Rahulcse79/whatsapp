@@ -1,0 +1,86 @@
+# Always-on "lite" chaos (load-and-chaos-testing.md §2) — Chaos Mesh Schedules
+# that run continuously in staging so resilience is proven every day, not just on
+# game days. The PASS criterion for all of these is the zero-loss durability audit
+# (ops/loadtest/auditor.js, NFR-12) staying green while they fire: resume + outbox
+# mask a pod kill, and a brief partition surfaces only as TRANSIENT_* + client
+# retry, never a lost or duplicated message.
+#
+# Applied by ArgoCD into the staging namespace. Destructive, stateful chaos
+# (PG failover, Valkey flush, NATS wipe, clock skew) is game-day only — see
+# game-day.yaml.
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: gateway-kill
+  namespace: wa-staging
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    wa.chaos/tier: lite
+spec:
+  schedule: "*/10 * * * *" # SIGKILL a random ws-gateway pod every 10 minutes
+  concurrencyPolicy: Forbid
+  historyLimit: 5
+  type: PodChaos
+  podChaos:
+    action: pod-kill # SIGKILL — no graceful drain, the harshest case
+    mode: one # one random matching pod (3-pod blast radius by design, T13)
+    selector:
+      namespaces: [wa-staging]
+      labelSelectors:
+        app.kubernetes.io/name: ws-gateway
+    # Expectation: invisible — resume tokens + the client outbox mask it.
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: core-api-kill
+  namespace: wa-staging
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    wa.chaos/tier: lite
+spec:
+  schedule: "3-59/10 * * * *" # offset from the gateway kill so they don't coincide
+  concurrencyPolicy: Forbid
+  historyLimit: 5
+  type: PodChaos
+  podChaos:
+    action: pod-kill
+    mode: one
+    selector:
+      namespaces: [wa-staging]
+      labelSelectors:
+        app.kubernetes.io/name: core-api
+    # Expectation: in-flight requests error TRANSIENT_*, clients retry, the PG
+    # inbox is truth so nothing is lost.
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: Schedule
+metadata:
+  name: gateway-core-partition
+  namespace: wa-staging
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    wa.chaos/tier: lite
+spec:
+  schedule: "7-59/15 * * * *" # a short partition every 15 minutes
+  concurrencyPolicy: Forbid
+  historyLimit: 5
+  type: NetworkChaos
+  networkChaos:
+    action: partition # cut gateway ↔ core-api
+    mode: all
+    duration: "45s"
+    direction: both
+    selector:
+      namespaces: [wa-staging]
+      labelSelectors:
+        app.kubernetes.io/name: ws-gateway
+    target:
+      mode: all
+      selector:
+        namespaces: [wa-staging]
+        labelSelectors:
+          app.kubernetes.io/name: core-api
+    # Expectation: sends fail-closed with TRANSIENT_*, dedupe absorbs retries,
+    # no duplicate delivery.

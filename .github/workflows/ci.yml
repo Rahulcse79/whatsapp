@@ -270,7 +270,7 @@ jobs:
               list(yaml.safe_load_all(open(f))); print("argocd ok", f)
           for f in glob.glob("ops/dashboards/*.json"):
               json.load(open(f)); print("dashboard json ok", f)
-          for f in glob.glob("ops/alerts/*.yaml") + glob.glob("ops/synthetic/*.yaml") + glob.glob("ops/dashboards/*.yaml"):
+          for f in glob.glob("ops/alerts/*.yaml") + glob.glob("ops/synthetic/*.yaml") + glob.glob("ops/dashboards/*.yaml") + glob.glob("ops/chaos/*.yaml"):
               list(yaml.safe_load_all(open(f))); print("ops yaml ok", f)
           PY
 

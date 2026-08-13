@@ -760,8 +760,26 @@ LEGEND:  [x] done   [>] next up   [ ] pending
            all 8 profiles + the auditor + GATE P4. Verified: node --check all 9
            scripts. Authored-blind config (no k6/infra locally); the wsv1 protobuf
            codec is the documented seam. tests only.)
-[ ] T4.05  Chaos suite (always-on staging scenarios)
-    PROMPT> implement task T4.05 chaos scenarios per load-and-chaos-testing §2. config + tests only.
+[x] T4.05  Chaos suite (always-on staging scenarios)
+           (Chaos Mesh manifests for load-and-chaos-testing §2, NEW ops/chaos/,
+           split by tier. always-on-lite.yaml = 3 Chaos Mesh Schedules ArgoCD-synced
+           into wa-staging: gateway-kill [PodChaos pod-kill a random ws-gateway every
+           10min → invisible via resume+outbox], core-api-kill [offset cron → in-
+           flight TRANSIENT_*+retry], gateway-core-partition [NetworkChaos partition
+           45s/15min → fail-closed+dedupe, no dupes]. game-day.yaml = 4 destructive
+           one-shot CRs applied manually under load: pg-primary-failover [PodChaos →
+           ≤1min write errors+auto-promote+zero loss], valkey-failover-flush [→ fail-
+           closed then recover, no durable loss], nats-node-loss [→ delivery lag only,
+           inbox replay heals], clock-skew-core-api [TimeChaos +5m → JWT/OTP skew
+           behaviour+alert]. Disk-full + cert-expiry have no clean Chaos Mesh
+           primitive → documented as manual game-day procedures. README = the §2
+           scenario→manifest→expectation matrix; the PASS criterion for ALL is the
+           zero-loss durability audit (ops/loadtest/auditor.js, NFR-12) staying green
+           while chaos fires under the sustained profile. CI deploy job's ops-yaml
+           validation extended to ops/chaos/*.yaml. Verified: all 7 chaos docs
+           parse + well-formed (chaos-mesh.org/v1alpha1 + kind + spec) + ci.yml
+           parses [CRDs are cluster-side → kubeconform-skipped like other CRD
+           manifests]. config + tests.)
 [ ] T4.06  External pentest remediation window
     NOTE:   human task — book the pentest (Docs/10-testing §3); Claude fixes findings: paste each finding as a prompt.
 [ ] T4.07  DR game day (RTO/RPO proof)

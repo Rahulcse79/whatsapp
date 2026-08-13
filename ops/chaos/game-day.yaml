@@ -1,0 +1,83 @@
+# Game-day chaos (load-and-chaos-testing.md §2, "game days full") — destructive,
+# stateful scenarios applied MANUALLY during a scheduled game day under full load,
+# not scheduled always-on. Each is paused (spec.pause: true is toggled off to
+# arm it, or `kubectl apply` the single doc). Every one asserts the zero-loss
+# durability audit stays green and the mapped alert/runbook fires.
+#
+# Disk-full-on-PG and certificate-expiry are NOT Chaos Mesh primitives — they are
+# manual game-day procedures documented in README.md (fill the PG PVC to trip the
+# disk alert + runbook; run a staging fast-clock so a short-TTL cert expires).
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: pg-primary-failover
+  namespace: wa-staging
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    wa.chaos/tier: game-day
+spec:
+  action: pod-kill # kill the PG primary → the operator auto-promotes a replica
+  mode: one
+  selector:
+    namespaces: [wa-staging]
+    labelSelectors:
+      app.kubernetes.io/name: postgres
+      role: primary
+  # Expectation: ≤ 1 min of write errors (fail-closed), zero loss, auto-promote.
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: valkey-failover-flush
+  namespace: wa-staging
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    wa.chaos/tier: game-day
+spec:
+  action: pod-kill # kill the Valkey primary → Sentinel promotes a replica
+  mode: one
+  selector:
+    namespaces: [wa-staging]
+    labelSelectors:
+      app.kubernetes.io/name: valkey
+      role: primary
+  # Expectation: sends fail-closed briefly then recover; PTT floors re-acquire;
+  # routes rebuild from heartbeats — NO durable loss (keyspace invariant).
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: PodChaos
+metadata:
+  name: nats-node-loss
+  namespace: wa-staging
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    wa.chaos/tier: game-day
+spec:
+  action: pod-kill # lose a NATS node / durable-stream replica
+  mode: one
+  selector:
+    namespaces: [wa-staging]
+    labelSelectors:
+      app.kubernetes.io/name: nats
+  # Expectation: delivery LAG only — the PG inbox is the safety net, resume replay
+  # heals; NATS is transit, not truth.
+---
+apiVersion: chaos-mesh.org/v1alpha1
+kind: TimeChaos
+metadata:
+  name: clock-skew-core-api
+  namespace: wa-staging
+  labels:
+    app.kubernetes.io/part-of: whatsapp-v2
+    wa.chaos/tier: game-day
+spec:
+  mode: one
+  selector:
+    namespaces: [wa-staging]
+    labelSelectors:
+      app.kubernetes.io/name: core-api
+  timeOffset: "+5m" # push one pod's clock 5 minutes ahead
+  duration: "120s"
+  # Expectation: JWT/OTP validation behaviour verified (nbf/exp skew tolerance),
+  # the clock-skew alert fires.

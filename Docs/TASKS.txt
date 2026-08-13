@@ -784,8 +784,21 @@ LEGEND:  [x] done   [>] next up   [ ] pending
     NOTE:   human task — book the pentest (Docs/10-testing §3); Claude fixes findings: paste each finding as a prompt.
 [ ] T4.07  DR game day (RTO/RPO proof)
     NOTE:   human task — run Docs/08-devops/disaster-recovery.md §4 drills; Claude writes any missing runbooks on request.
-[ ] T4.08  Runbooks + on-call setup
-    PROMPT> implement task T4.08 runbooks: one per paging alert in slos-alerts §2, into ops/runbooks/. docs only.
+[x] T4.08  Runbooks + on-call setup
+           (One runbook per alert in slos-alerts §2/§3, resolving every `runbook:`
+           annotation in ops/alerts/ (was dangling). 7 PAGE runbooks: inbox-stuck,
+           nats-dlq, synthetic-probe, pg-replication-lag, cert-expiry, api-
+           availability [SLO fast/slow burn], message-latency [E2E p95 burn] +
+           3 referenced TICKET runbooks: valkey-memory [noeviction fail-closed],
+           push-breaker [one=ticket/both=page], otp-anomaly [fraud/spend]. Each
+           follows a consistent template — What it means / Impact / Diagnose [real
+           metric names + kubectl/psql/redis-cli/nats commands] / Mitigate [ordered
+           steps referencing the actual architecture: relay-model inbox-is-truth,
+           argocd rollback, kill-switches, breaker half-open] / Verify / Escalate /
+           Related. ops/runbooks/README.md = on-call index: alert→runbook map,
+           severity defs, escalation policy, the zero-loss (NFR-12) invariant,
+           rollback + kill-switch mitigations, postmortem trigger. Verified: all 10
+           distinct alert runbook refs resolve. docs only.)
 [ ] T4.09  UAT matrix (FR x AC) + accessibility audit fixes
     PROMPT> implement task T4.09 UAT: generate the FR-to-AC checklist from Docs/01-requirements + fix axe findings. mixed.
 [ ] T4.10  Offline-profile validation

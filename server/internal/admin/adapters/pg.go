@@ -23,9 +23,10 @@ type Store struct{ pool *pgxpool.Pool }
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 var (
-	_ admin.Reports = (*Store)(nil)
-	_ admin.Users   = (*Store)(nil)
-	_ admin.Audit   = (*Store)(nil)
+	_ admin.Reports   = (*Store)(nil)
+	_ admin.Users     = (*Store)(nil)
+	_ admin.Audit     = (*Store)(nil)
+	_ admin.FlagStore = (*Store)(nil)
 )
 
 // ── reports ──────────────────────────────────────────────────────────────
@@ -162,6 +163,53 @@ func (s *Store) SetStatus(ctx context.Context, userID string, status int16, audi
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	tag, err := tx.Exec(ctx, `UPDATE users SET status = $2 WHERE id = $1 AND status <> 2`, userID, status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return admin.ErrNotFound
+	}
+	if err := appendAudit(ctx, tx, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// ── feature flags (management; core-api-lld §5) ──────────────────────────
+
+// UpsertFlag writes a flag's rule and appends the audit row in one tx. updated_by
+// is the admin's OIDC subject (text, migration 000016). The rule is bound as
+// text and cast to jsonb.
+func (s *Store) UpsertFlag(ctx context.Context, flag string, rules []byte, audit admin.AuditEntry) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO feature_flags (flag, rules, updated_by, updated_at)
+		 VALUES ($1, $2::jsonb, $3, now())
+		 ON CONFLICT (flag) DO UPDATE SET rules = EXCLUDED.rules, updated_by = EXCLUDED.updated_by, updated_at = now()`,
+		flag, string(rules), audit.Actor); err != nil {
+		return err
+	}
+	if err := appendAudit(ctx, tx, audit); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// DeleteFlag removes a flag and appends the audit row in one tx. A missing flag
+// surfaces as not-found rather than a silent success.
+func (s *Store) DeleteFlag(ctx context.Context, flag string, audit admin.AuditEntry) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	tag, err := tx.Exec(ctx, `DELETE FROM feature_flags WHERE flag = $1`, flag)
 	if err != nil {
 		return err
 	}

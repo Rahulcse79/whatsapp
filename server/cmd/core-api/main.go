@@ -35,6 +35,7 @@ import (
 	"github.com/whatsapp-v2/server/internal/keys"
 	keyadapters "github.com/whatsapp-v2/server/internal/keys/adapters"
 	"github.com/whatsapp-v2/server/internal/platform/config"
+	"github.com/whatsapp-v2/server/internal/platform/flags"
 	"github.com/whatsapp-v2/server/internal/platform/logging"
 	"github.com/whatsapp-v2/server/internal/platform/natsx"
 	"github.com/whatsapp-v2/server/internal/platform/observability"
@@ -256,6 +257,15 @@ func main() {
 		}
 	}()
 
+	// ── feature flags + kill-switches (core-api-lld §5) ──────────────────
+	// Rules in feature_flags, evaluated through a 30 s Valkey cache. Kill-
+	// switches are operational circuit breakers enforced at the routing edge
+	// (below), so pausing registrations / group creation / calls during an
+	// incident needs no code deploy.
+	flagStore := flags.NewPGStore(pool)
+	flagCache := flags.NewValkeyCache(vk)
+	flagsSvc := flags.NewService(flagStore, flagCache)
+
 	// ── admin plane (trust & safety + operations) ───────────────────────
 	// OIDC SSO gates the admin SPA (HLD §15.6): the external IdP owns admin
 	// membership and RBAC roles (viewer → agent → operator → owner). Configured
@@ -264,6 +274,7 @@ func main() {
 	// mounted (offline/dev bring-up without an IdP). The HLD's edge controls —
 	// separate hostname, IP allowlist, hardware-key 2FA — are enforced at Envoy.
 	var adminSvc *admin.Service
+	var adminFlags *admin.FlagConsole
 	if iss, jwksJSON := os.Getenv("WA_ADMIN_OIDC_ISSUER"), os.Getenv("WA_ADMIN_OIDC_JWKS"); iss != "" && jwksJSON != "" {
 		keySet, err := admin.NewKeySet([]byte(jwksJSON))
 		if err != nil {
@@ -273,6 +284,8 @@ func main() {
 		verifier := admin.NewOIDCVerifier(iss, os.Getenv("WA_ADMIN_OIDC_AUDIENCE"), os.Getenv("WA_ADMIN_OIDC_ROLE_CLAIM"), keySet)
 		adminStore := adminadapters.NewStore(pool)
 		adminSvc = admin.NewService(verifier, adminStore, adminStore, adminStore)
+		// Feature-flag management rides the admin plane (RBAC + audit + OIDC).
+		adminFlags = admin.NewFlagConsole(flagStore, adminStore, flagCache)
 		log.Info("admin plane enabled", "issuer", iss)
 	} else {
 		log.Warn("admin plane disabled — WA_ADMIN_OIDC_ISSUER/JWKS unset (no IdP configured)")
@@ -312,6 +325,7 @@ func main() {
 	stories.Routes(mux, storiesSvc, issuer)
 	if adminSvc != nil {
 		admin.Routes(mux, adminSvc)
+		admin.FlagRoutes(mux, adminSvc, adminFlags)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
@@ -324,7 +338,7 @@ func main() {
 
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           observability.WrapHTTPHandler(httpMetrics.Middleware(mux), "http.server"),
+		Handler:           observability.WrapHTTPHandler(httpMetrics.Middleware(flagsSvc.KillSwitchMiddleware(flags.CoreAPIGuards())(mux)), "http.server"),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {

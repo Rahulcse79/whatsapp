@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/whatsapp-v2/server/internal/admin/domain"
+	"github.com/whatsapp-v2/server/internal/platform/flags"
 	"github.com/whatsapp-v2/server/internal/platform/httpx"
 )
 
@@ -132,6 +133,57 @@ func Routes(mux *http.ServeMux, s *Service) {
 			return
 		}
 		httpx.JSON(w, http.StatusOK, map[string]any{"audit": out})
+	})
+}
+
+// FlagRoutes mounts the feature-flag management surface under /admin/v1/flags,
+// gated by the same OIDC bearer auth as the rest of the admin plane. Mounted
+// only when both the admin plane and the flags service are configured.
+func FlagRoutes(mux *http.ServeMux, s *Service, c *FlagConsole) {
+	mux.HandleFunc("GET /admin/v1/flags", func(w http.ResponseWriter, r *http.Request) {
+		admin, ok := authenticate(w, r, s)
+		if !ok {
+			return
+		}
+		out, err := c.List(r.Context(), admin)
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, map[string]any{"flags": out})
+	})
+
+	mux.HandleFunc("PUT /admin/v1/flags/{flag}", func(w http.ResponseWriter, r *http.Request) {
+		admin, ok := authenticate(w, r, s)
+		if !ok {
+			return
+		}
+		var body struct {
+			Rule   flags.Rule `json:"rule"`
+			Reason string     `json:"reason"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := c.Set(r.Context(), admin, r.PathValue("flag"), body.Rule, body.Reason); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("DELETE /admin/v1/flags/{flag}", func(w http.ResponseWriter, r *http.Request) {
+		admin, ok := authenticate(w, r, s)
+		if !ok {
+			return
+		}
+		// A reason is required for the audit trail; carried as a query param
+		// since DELETE bodies are not universally forwarded.
+		if err := c.Delete(r.Context(), admin, r.PathValue("flag"), r.URL.Query().Get("reason")); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 }
 

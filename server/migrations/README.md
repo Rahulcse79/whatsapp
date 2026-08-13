@@ -41,6 +41,10 @@ format (`NNNNNN_name.up.sql` / `.down.sql`). Schema contract:
   as uuid yet (admin was a scaffold), so the widening is expand-safe. The
   append-only property (PUBLIC UPDATE/DELETE/TRUNCATE revoked in 000008) is
   unchanged; `target` stays uuid (report/user ids).
+- **`feature_flags.updated_by` widened uuid → text (000016)** — same reasoning
+  as 000015: feature flags (T4.02) are written from the admin plane, whose
+  actor is an OIDC subject, not a user uuid. No Go writer read it as uuid, so
+  expand-safe.
 
 ## Local usage (optional — CI is the authority)
 

@@ -156,6 +156,49 @@ func TestIntegration_Admin_SearchAndSetStatus(t *testing.T) {
 	}
 }
 
+// TestIntegration_Admin_FlagWriteIsAudited proves flag upsert/delete write their
+// audit_log row in the same tx and that updated_by holds an OIDC subject (text,
+// migration 000016).
+func TestIntegration_Admin_FlagWriteIsAudited(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+	store := NewStore(pool)
+
+	flag := "admtest_" + id.New()
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM feature_flags WHERE flag = $1`, flag) })
+
+	rule := []byte(`{"enabled":true,"rollout":50}`)
+	if err := store.UpsertFlag(ctx, flag, rule, admin.AuditEntry{Actor: "oidc|op-7", Action: "flag.set:" + flag, Reason: "rollout"}); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	// Rule + updated_by round-trip (updated_by must accept the OIDC subject).
+	var rawOut []byte
+	var updatedBy string
+	if err := pool.QueryRow(ctx, `SELECT rules, updated_by FROM feature_flags WHERE flag = $1`, flag).Scan(&rawOut, &updatedBy); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if updatedBy != "oidc|op-7" {
+		t.Fatalf("updated_by = %q, want oidc|op-7", updatedBy)
+	}
+
+	recs, _ := store.List(ctx, 50)
+	if !containsAudit(recs, "oidc|op-7", "flag.set:"+flag, "") {
+		t.Fatal("upsert did not leave its audit row")
+	}
+
+	// Idempotent upsert (ON CONFLICT) + delete + missing-delete → not-found.
+	if err := store.UpsertFlag(ctx, flag, []byte(`{"enabled":false}`), admin.AuditEntry{Actor: "oidc|op-7", Action: "flag.set:" + flag, Reason: "disable"}); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	if err := store.DeleteFlag(ctx, flag, admin.AuditEntry{Actor: "oidc|op-7", Action: "flag.delete:" + flag, Reason: "cleanup"}); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if err := store.DeleteFlag(ctx, "ghost_"+id.New(), admin.AuditEntry{Actor: "oidc|op-7", Action: "flag.delete"}); !errors.Is(err, admin.ErrNotFound) {
+		t.Fatalf("deleting a missing flag = %v, want ErrNotFound", err)
+	}
+}
+
 func containsReport(rs []admin.Report, id string) bool {
 	for _, r := range rs {
 		if r.ID == id {

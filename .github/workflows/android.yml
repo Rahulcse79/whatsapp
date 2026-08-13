@@ -75,7 +75,10 @@ jobs:
 
       - name: Build release APK (JS bundled, debug-signed → installable)
         working-directory: clients/mobile/android
-        run: ./gradlew assembleRelease --no-daemon
+        # Expo SDK 52 defaults Kotlin to 1.9.24, but the Compose Compiler
+        # (1.5.15) pulled in by the native modules requires 1.9.25. Expo's
+        # build.gradle reads android.kotlinVersion, so bump it here.
+        run: ./gradlew assembleRelease --no-daemon -Pandroid.kotlinVersion=1.9.25
 
       - name: Stage APK with a run-stamped name
         run: |

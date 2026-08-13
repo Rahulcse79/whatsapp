@@ -35,6 +35,12 @@ format (`NNNNNN_name.up.sql` / `.down.sql`). Schema contract:
   contract migration may drop it).
 - **`contact_invites` table (000013)** holds personal invite-a-friend
   capability tokens (T1.09), distinct from the group-scoped `invite_links`.
+- **`audit_log.actor` widened uuid → text (000015)** — the admin plane (T4.01)
+  is gated by external OIDC SSO, so an admin actor is an IdP subject (an
+  arbitrary string), not a platform user uuid. Nothing deployed read the column
+  as uuid yet (admin was a scaffold), so the widening is expand-safe. The
+  append-only property (PUBLIC UPDATE/DELETE/TRUNCATE revoked in 000008) is
+  unchanged; `target` stays uuid (report/user ids).
 
 ## Local usage (optional — CI is the authority)
 

@@ -17,6 +17,8 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/whatsapp-v2/server/internal/admin"
+	adminadapters "github.com/whatsapp-v2/server/internal/admin/adapters"
 	"github.com/whatsapp-v2/server/internal/auth"
 	authadapters "github.com/whatsapp-v2/server/internal/auth/adapters"
 	"github.com/whatsapp-v2/server/internal/auth/domain"
@@ -254,6 +256,28 @@ func main() {
 		}
 	}()
 
+	// ── admin plane (trust & safety + operations) ───────────────────────
+	// OIDC SSO gates the admin SPA (HLD §15.6): the external IdP owns admin
+	// membership and RBAC roles (viewer → agent → operator → owner). Configured
+	// via WA_ADMIN_OIDC_ISSUER / _AUDIENCE / _ROLE_CLAIM plus the provider's
+	// JWKS document (WA_ADMIN_OIDC_JWKS). Unset → the admin surface is not
+	// mounted (offline/dev bring-up without an IdP). The HLD's edge controls —
+	// separate hostname, IP allowlist, hardware-key 2FA — are enforced at Envoy.
+	var adminSvc *admin.Service
+	if iss, jwksJSON := os.Getenv("WA_ADMIN_OIDC_ISSUER"), os.Getenv("WA_ADMIN_OIDC_JWKS"); iss != "" && jwksJSON != "" {
+		keySet, err := admin.NewKeySet([]byte(jwksJSON))
+		if err != nil {
+			log.Error("admin: invalid WA_ADMIN_OIDC_JWKS", "err", err)
+			os.Exit(1)
+		}
+		verifier := admin.NewOIDCVerifier(iss, os.Getenv("WA_ADMIN_OIDC_AUDIENCE"), os.Getenv("WA_ADMIN_OIDC_ROLE_CLAIM"), keySet)
+		adminStore := adminadapters.NewStore(pool)
+		adminSvc = admin.NewService(verifier, adminStore, adminStore, adminStore)
+		log.Info("admin plane enabled", "issuer", iss)
+	} else {
+		log.Warn("admin plane disabled — WA_ADMIN_OIDC_ISSUER/JWKS unset (no IdP configured)")
+	}
+
 	// ── chat context (gateway-facing gRPC surface) ────────────────────────
 	chatStore := chatadapters.NewStore(pool)
 	chatPub := chatadapters.NewNATSPublisher(nc)
@@ -286,6 +310,9 @@ func main() {
 	calls.Routes(mux, callsSvc, issuer, callsWebhook)
 	ptt.Routes(mux, pttSvc, pttMinter, issuer)
 	stories.Routes(mux, storiesSvc, issuer)
+	if adminSvc != nil {
+		admin.Routes(mux, adminSvc)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
 		if err := pool.Ping(r.Context()); err != nil {

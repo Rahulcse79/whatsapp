@@ -17,9 +17,12 @@ Each feature is tracked across three layers:
 - **✅** done · **🔶** partial / behind a code seam · **⬜** not started · **📋** V3 backlog
 
 **The headline:** Design and Server are ✅ across the board (Phase 0–4 is code-complete).
-**The remaining work to "build the whole app" is almost entirely the Client-UI column** —
-today the app ships the core loop (sign in → chats → conversation → search); the
-rest is backend-ready and needs its screens wired.
+**The remaining work to "build the whole app" is almost entirely the Client-UI column.**
+Today the app can: sign in ✅, and (web) add a contact by number → open the real
+shared 1:1 conversation ✅. **Live message *delivery* is the current blocker** —
+the client's WebSocket doesn't connect yet, so sent messages don't arrive (see
+`Docs/BUILD-TASKS.md` **T5.00**). Fixing that turns the wired conversation into a
+working chat; the rest is backend-ready and needs its screens wired.
 
 ---
 
@@ -57,7 +60,7 @@ rest is backend-ready and needs its screens wired.
 
 | ID | Feature | D | S | C |
 |---|---|:-:|:-:|:-:|
-| FR-MSG-01 | Send/receive E2EE text; sending→sent→delivered→read | ✅ | ✅ | ✅ |
+| FR-MSG-01 | Send/receive E2EE text; sending→sent→delivered→read | ✅ | ✅ | 🔶 |
 | FR-MSG-02 | Delivery/read receipts (batched, privacy-gated) | ✅ | ✅ | 🔶 |
 | FR-MSG-03 | Typing indicator; online/last-seen | ✅ | ✅ | 🔶 |
 | FR-MSG-04 | Reply (quote), forward, copy | ✅ | ✅ | 🔶 |

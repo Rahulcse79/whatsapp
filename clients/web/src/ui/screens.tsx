@@ -14,7 +14,7 @@ import {
   type MediaEnvelope,
   type QuotedRef,
 } from "@wa/media-pipeline";
-import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
 import { useCall } from "../call/CallContext";
@@ -379,6 +379,8 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
   const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
   const [replyingTo, setReplyingTo] = useState<QuotedRef | null>(null);
   const [editing, setEditing] = useState<string | null>(null); // msgUuid being edited
+  const [sendingMedia, setSendingMedia] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   const lastReadRef = useRef(0);
   const subscribedRef = useRef(false);
@@ -457,6 +459,21 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
     }
     const next = await services.thread(conversationId);
     setMessages(next);
+  }
+
+  async function onPickFile(e: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    setSendingMedia(true);
+    try {
+      await services.sendMedia(conversationId, file);
+      setMessages(await services.thread(conversationId));
+    } catch (err) {
+      window.alert(`Couldn't send the file: ${err instanceof Error ? err.message : "upload failed"}`);
+    } finally {
+      setSendingMedia(false);
+    }
   }
 
   // Message-action handlers passed down to each bubble.
@@ -540,11 +557,22 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
         </div>
       ) : null}
       <form className="composer" onSubmit={send}>
+        <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-hidden />
+        <button
+          className="btn small ghost"
+          type="button"
+          aria-label="Attach file"
+          title="Attach a photo, video, or document"
+          disabled={sendingMedia || !!editing}
+          onClick={() => fileRef.current?.click()}
+        >
+          {sendingMedia ? "…" : "📎"}
+        </button>
         <input
           className="input"
           value={draft}
           onChange={(e) => onDraftChange(e.target.value)}
-          placeholder={editing ? "Edit message" : "Message"}
+          placeholder={editing ? "Edit message" : sendingMedia ? "Uploading…" : "Message"}
           aria-label="Type a message"
         />
         <button className="btn" type="submit">

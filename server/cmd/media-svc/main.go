@@ -115,11 +115,20 @@ func main() {
 	store := mediaadapters.NewStore(pool)
 	sessions := mediaadapters.NewValkeySessions(vk)
 	events := mediaadapters.NewNATSEvents(nc, log)
+
+	// core-api's QuotaService (the single-writer storage counter) isn't wired in
+	// dev/offline, so fall back to a no-op quota there; prod uses the real gRPC.
+	var quota media.Quota = mediaadapters.NewQuotaClient(coreConn)
+	if cfg.Env == "dev" || cfg.Env == "offline" {
+		quota = mediaadapters.NewNoopQuota()
+		log.Warn("using no-op media quota (dev/offline) — no storage ceiling")
+	}
+
 	svc := media.NewService(
 		store,
 		objects,
 		sessions,
-		mediaadapters.NewQuotaClient(coreConn),
+		quota,
 		mediaadapters.NewRate(ratelimit.NewValkeyLimiter(vk)),
 		events,
 	)
@@ -178,9 +187,17 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	var handler http.Handler = observability.WrapHTTPHandler(httpMetrics.Middleware(mux), "http.server")
+	if cfg.Env != "prod" {
+		// The web PWA dev server + browser uploads hit media-svc cross-origin
+		// (it's a separate deployable from core-api), so a browser needs CORS.
+		// In prod the web app is same-origin behind the ingress, so this is off.
+		handler = devCORS(handler)
+	}
+
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           observability.WrapHTTPHandler(httpMetrics.Middleware(mux), "http.server"),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -228,4 +245,24 @@ func buildVerifier(cfg *config.Config, log *slog.Logger) (auth.TokenVerifier, er
 	}
 	log.Warn("no WA_JWT_ED25519_SEED — using an ephemeral key (dev only)")
 	return auth.NewEphemeralIssuer(cfg.Auth.AccessTTL)
+}
+
+// devCORS reflects the caller's Origin and answers preflight so a browser on a
+// different origin (the web PWA dev server + direct browser uploads) can call
+// media-svc. Only mounted outside prod; prod serves the web app same-origin.
+func devCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "600")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

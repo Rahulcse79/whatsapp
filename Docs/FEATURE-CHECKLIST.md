@@ -92,7 +92,7 @@ of the screens (media send, groups, calls, stories, settings) are the open work.
 | FR-MED-03 | Client AES-256-GCM before upload (server sees ciphertext) | ✅ | ✅ | ✅ |
 | FR-MED-04 | Resumable chunked uploads; progress; retry | ✅ | ✅ | ✅ |
 | FR-MED-05 | GIFs & sticker packs (IP-hiding GIF proxy) | ✅ | ✅ | 🔶 |
-| FR-MED-06 | In-chat playback/preview; download manager | ✅ | ✅ | 🔶 |
+| FR-MED-06 | In-chat playback/preview; download manager | ✅ | ✅ | ✅ |
 
 ## CALL — Voice & Video
 

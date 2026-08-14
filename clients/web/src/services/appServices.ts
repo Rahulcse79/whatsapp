@@ -15,10 +15,11 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { encodeTextMessage, generateLinkPreview, type QuotedRef } from "@wa/media-pipeline";
+import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeTextMessage, generateLinkPreview, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
+import { webUploadTransport } from "../platform/mediaUpload";
 import { webScheduler } from "../platform/scheduler";
 import { indexedDbSecureStore } from "../platform/secureStore";
 import { createWsTransportFactory } from "../platform/wsTransport";
@@ -149,6 +150,30 @@ export class AppServices {
     await this.db.enqueueText({ conversationId, text: body, listText: text, clientRef: newId(), now: Date.now() });
     this.notifyChange(); // optimistic: show my message immediately
     await this.ws?.flush();
+  }
+
+  /** sendMedia compresses (no-op today), encrypts, and resumably uploads a file to
+   *  media-svc, then sends a media message whose sealed body carries the E2EE
+   *  envelope (the file key never leaves the client). Render already exists. */
+  async sendMedia(conversationId: string, file: File, caption?: string): Promise<void> {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    const envelope = await this.mediaPipeline().prepare({ bytes, mime: file.type || "application/octet-stream" });
+    const body = encodeMediaMessage([envelope], caption);
+    await this.db.enqueueText({ conversationId, text: body, listText: `📎 ${file.name}`, clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  private media: MediaPipeline | null = null;
+  private mediaPipeline(): MediaPipeline {
+    if (!this.media) {
+      const token = (): string => this.sessions.current()?.accessJwt ?? "";
+      const refresh = (): Promise<void> => this.refreshToken();
+      // No compressor/thumbnailer yet — upload the source bytes as-is (the ports
+      // are optional; codec + blurhash are a later refinement).
+      this.media = new MediaPipeline(new ResumableUploader(webUploadTransport(config.mediaBaseUrl, token, refresh)));
+    }
+    return this.media;
   }
 
   /** editMessage sends an OVERLAY_EDIT (server enforces the 15-min window); the

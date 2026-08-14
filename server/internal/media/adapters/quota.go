@@ -29,3 +29,16 @@ func (q *QuotaClient) CheckAndReserve(ctx context.Context, userID string, bytes 
 }
 
 var _ media.Quota = (*QuotaClient)(nil)
+
+// NoopQuota always allows and never counts — for the dev/offline profiles where
+// core-api's QuotaService (the single-writer storage counter) isn't wired yet.
+// Never use in prod: it removes the storage-abuse ceiling.
+type NoopQuota struct{}
+
+func NewNoopQuota() NoopQuota { return NoopQuota{} }
+
+func (NoopQuota) CheckAndReserve(_ context.Context, _ string, _ int64) (bool, int64, error) {
+	return true, 1 << 40, nil
+}
+
+var _ media.Quota = NoopQuota{}

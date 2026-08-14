@@ -15,7 +15,7 @@ export function MediaProvider({ children }: { children: ReactNode }) {
 
   const service = useMemo(() => {
     const token = (): string => services.sessions.current()?.accessJwt ?? "";
-    return new WebMediaService(webDownloadTransport(config.apiBaseUrl, token));
+    return new WebMediaService(webDownloadTransport(config.mediaBaseUrl, token));
   }, [services]);
 
   useEffect(() => () => service.dispose(), [service]);

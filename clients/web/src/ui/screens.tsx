@@ -241,9 +241,11 @@ export function ChatList({
         .catch(() => {});
     };
     tick();
-    const handle = setInterval(tick, 1500);
+    const unsub = services.onChange(tick); // instant refresh on inbound/ack/send
+    const handle = setInterval(tick, 5000); // safety net for missed signals
     return () => {
       alive = false;
+      unsub();
       clearInterval(handle);
     };
   }, [services]);
@@ -386,9 +388,11 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
         .catch(() => {});
     };
     tick();
-    const handle = setInterval(tick, 1000);
+    const unsub = services.onChange(tick); // instant refresh on inbound/ack/send
+    const handle = setInterval(tick, 5000); // safety net for missed signals
     return () => {
       alive = false;
+      unsub();
       clearInterval(handle);
     };
   }, [services, conversationId]);

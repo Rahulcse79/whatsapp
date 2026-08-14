@@ -32,6 +32,18 @@ export class AppServices {
   private readonly http = createHttpClient(config.apiBaseUrl);
   private ws: WsClient | null = null;
   private cursorMirror: ConversationCursor[] = [];
+  private readonly changeListeners = new Set<() => void>();
+
+  /** onChange fires whenever the local store changes (inbound messages, send
+   *  acks, or a fresh send). Screens re-fetch on it so the open thread and the
+   *  chat list update live, with no navigation. Returns an unsubscribe fn. */
+  onChange(cb: () => void): () => void {
+    this.changeListeners.add(cb);
+    return () => this.changeListeners.delete(cb);
+  }
+  private notifyChange(): void {
+    for (const cb of this.changeListeners) cb();
+  }
 
   private constructor() {
     this.otp = new OtpClient(createHttpClient(config.apiBaseUrl));
@@ -78,10 +90,11 @@ export class AppServices {
         onInboxBatch: async (b) => {
           const watermark = await this.db.persistInboxBatch(b);
           this.mergeCursors(watermark);
+          this.notifyChange(); // new inbound message(s) → refresh open screens
           return watermark;
         },
         onMsgAck: (a) => {
-          void this.db.markSent({ clientRef: a.clientRef, seq: a.seq });
+          void this.db.markSent({ clientRef: a.clientRef, seq: a.seq }).then(() => this.notifyChange());
         },
         pendingSends: () => this.db.pendingSends(),
         onAuthExpired: () => {
@@ -102,6 +115,7 @@ export class AppServices {
     const preview = await generateLinkPreview(text, webHtmlFetcher).catch(() => null);
     const body = encodeTextMessage(text, preview ?? undefined);
     await this.db.enqueueText({ conversationId, text: body, listText: text, clientRef: newId(), now: Date.now() });
+    this.notifyChange(); // optimistic: show my message immediately
     await this.ws?.flush();
   }
 

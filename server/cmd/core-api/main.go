@@ -381,6 +381,7 @@ func main() {
 	calls.Routes(mux, callsSvc, issuer, callsWebhook)
 	ptt.Routes(mux, pttSvc, pttMinter, issuer)
 	stories.Routes(mux, storiesSvc, issuer)
+	chat.Routes(mux, chatStore, issuer) // POST /v1/conversations/direct (start a 1:1)
 	if adminSvc != nil {
 		admin.Routes(mux, adminSvc)
 		admin.FlagRoutes(mux, adminSvc, adminFlags)

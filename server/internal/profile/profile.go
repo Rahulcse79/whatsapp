@@ -114,7 +114,7 @@ func validUsername(u string) bool {
 		return false
 	}
 	for _, r := range u {
-		if !(r >= 'a' && r <= 'z') && !(r >= '0' && r <= '9') && r != '_' && r != '.' {
+		if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '_' && r != '.' {
 			return false
 		}
 	}

@@ -24,7 +24,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.25.13" # pinned patch: clears stdlib CVEs GO-2026-6090/6091/6218 (govulncheck). Bump as new patches land.
           cache-dependency-path: server/go.sum
 
       # Generated code (internal/proto/gen) is never committed: every Go
@@ -114,6 +114,17 @@ jobs:
       - name: Install
         run: pnpm install --no-frozen-lockfile # switch to --frozen-lockfile once pnpm-lock.yaml is committed
 
+      # @wa/proto-types re-exports generated protobuf-es code (src/gen), which is
+      # never committed (same policy as the Go gen). Generate it before typecheck
+      # or proto-types fails with "Cannot find module './gen/.../frames_pb.js'".
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      - name: Generate protobuf code (TS)
+        working-directory: server/proto
+        run: buf generate
+
       - name: Typecheck
         run: pnpm -r typecheck
 
@@ -182,7 +193,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.25.13" # pinned patch: clears stdlib CVEs GO-2026-6090/6091/6218 (govulncheck). Bump as new patches land.
           cache-dependency-path: server/go.sum
 
       # Adapters import generated protobuf types; regenerate before compiling
@@ -287,7 +298,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.25.13" # pinned patch: clears stdlib CVEs GO-2026-6090/6091/6218 (govulncheck). Bump as new patches land.
           cache-dependency-path: server/go.sum
 
       # govulncheck runs in source mode, so the tree must compile → generate

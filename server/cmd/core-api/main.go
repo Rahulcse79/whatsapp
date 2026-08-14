@@ -399,7 +399,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	var handler http.Handler = observability.WrapHTTPHandler(
+	handler := observability.WrapHTTPHandler(
 		httpMetrics.Middleware(flagsSvc.KillSwitchMiddleware(flags.CoreAPIGuards())(mux)), "http.server")
 	if cfg.Env != "prod" {
 		// The web PWA dev server runs on a different origin (e.g. :5173) than the

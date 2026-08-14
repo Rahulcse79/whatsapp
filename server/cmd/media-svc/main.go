@@ -187,7 +187,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	var handler http.Handler = observability.WrapHTTPHandler(httpMetrics.Middleware(mux), "http.server")
+	handler := observability.WrapHTTPHandler(httpMetrics.Middleware(mux), "http.server")
 	if cfg.Env != "prod" {
 		// The web PWA dev server + browser uploads hit media-svc cross-origin
 		// (it's a separate deployable from core-api), so a browser needs CORS.

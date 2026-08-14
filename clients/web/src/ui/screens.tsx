@@ -14,7 +14,7 @@ import {
   type MediaEnvelope,
   type QuotedRef,
 } from "@wa/media-pipeline";
-import { useEffect, useRef, useState, type ChangeEvent, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
 import { useCall } from "../call/CallContext";
@@ -91,6 +91,194 @@ export function NewChat({
         {busy ? "Starting…" : "Start chat"}
       </button>
     </form>
+  );
+}
+
+const PRIVACY_FIELDS: { key: string; label: string }[] = [
+  { key: "last_seen", label: "Last seen & online" },
+  { key: "avatar", label: "Profile photo" },
+  { key: "about", label: "About" },
+  { key: "read_receipts", label: "Read receipts" },
+];
+const PRIVACY_OPTIONS = ["everyone", "contacts", "nobody"];
+const fieldLabel: CSSProperties = { display: "block", fontSize: "0.8rem" };
+const fieldWrap: CSSProperties = { display: "block", marginBottom: "0.6rem" };
+
+export function Profile({ onBack }: { onBack: () => void }) {
+  const { services } = useServices();
+  const [displayName, setDisplayName] = useState("");
+  const [username, setUsername] = useState("");
+  const [about, setAbout] = useState("");
+  const [privacy, setPrivacy] = useState<Record<string, string>>({});
+  const [blocked, setBlocked] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    services
+      .getMyProfile()
+      .then((p) => {
+        if (!alive) return;
+        setDisplayName(p.displayName);
+        setUsername(p.username);
+        setAbout(p.about);
+        setPrivacy(p.privacy);
+      })
+      .catch(() => {});
+    services
+      .getBlocked()
+      .then((ids) => {
+        if (!alive) return;
+        setBlocked(ids);
+        for (const id of ids) void services.loadUserProfile(id); // resolve names
+      })
+      .catch(() => {});
+    const unsub = services.onChange(() => {
+      if (alive) setBlocked((b) => [...b]); // re-render as peer names arrive
+    });
+    return () => {
+      alive = false;
+      unsub();
+    };
+  }, [services]);
+
+  async function save(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await services.updateMyProfile({
+        displayName: displayName.trim(),
+        username: username.trim(),
+        about: about.trim(),
+      });
+      setSaved(true);
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function changePrivacy(key: string, value: string): Promise<void> {
+    const next = { ...privacy, [key]: value };
+    setPrivacy(next); // optimistic
+    try {
+      await services.saveMyPrivacy(next);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function unblock(userId: string): Promise<void> {
+    await services.unblockUser(userId);
+    setBlocked((b) => b.filter((x) => x !== userId));
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>Your profile</h1>
+      <form onSubmit={save}>
+        <label style={fieldWrap}>
+          <span className="muted" style={fieldLabel}>
+            Display name
+          </span>
+          <input
+            className="input"
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="Your name"
+            aria-label="Display name"
+            maxLength={100}
+            disabled={busy}
+          />
+        </label>
+        <label style={fieldWrap}>
+          <span className="muted" style={fieldLabel}>
+            Username (a–z, 0–9, _ .)
+          </span>
+          <input
+            className="input"
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="username"
+            aria-label="Username"
+            maxLength={30}
+            disabled={busy}
+          />
+        </label>
+        <label style={fieldWrap}>
+          <span className="muted" style={fieldLabel}>
+            About
+          </span>
+          <input
+            className="input"
+            value={about}
+            onChange={(e) => setAbout(e.target.value)}
+            placeholder="Hey there! I use WhatsApp V2"
+            aria-label="About"
+            maxLength={200}
+            disabled={busy}
+          />
+        </label>
+        {error && (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        )}
+        {saved && (
+          <p className="muted" role="status">
+            Saved ✓
+          </p>
+        )}
+        <button className="btn" type="submit" disabled={busy}>
+          {busy ? "Saving…" : "Save"}
+        </button>
+      </form>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Privacy</h2>
+      {PRIVACY_FIELDS.map((f) => (
+        <label key={f.key} style={fieldWrap}>
+          <span className="muted" style={fieldLabel}>
+            {f.label}
+          </span>
+          <select
+            className="input"
+            value={privacy[f.key] ?? "everyone"}
+            aria-label={f.label}
+            onChange={(e) => void changePrivacy(f.key, e.target.value)}
+          >
+            {PRIVACY_OPTIONS.map((o) => (
+              <option key={o} value={o}>
+                {o.charAt(0).toUpperCase() + o.slice(1)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ))}
+
+      <h2 style={{ marginTop: "1.5rem" }}>Blocked ({blocked.length})</h2>
+      {blocked.length === 0 ? (
+        <p className="muted">You haven't blocked anyone.</p>
+      ) : (
+        <ul className="list">
+          {blocked.map((id) => (
+            <li key={id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span>{services.nameForUser(id)}</span>
+              <button className="btn small ghost" onClick={() => void unblock(id)}>
+                Unblock
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
@@ -223,10 +411,12 @@ export function ChatList({
   onOpen,
   onNew,
   onSearch,
+  onProfile,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
   onSearch: () => void;
+  onProfile: () => void;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
@@ -237,7 +427,12 @@ export function ChatList({
       services
         .conversations()
         .then((c) => {
-          if (alive) setItems(c);
+          if (!alive) return;
+          setItems(c);
+          for (const conv of c) {
+            const peer = services.peerOf(conv.conversationId);
+            if (peer) void services.loadUserProfile(peer); // resolve names for rows
+          }
         })
         .catch(() => {});
     };
@@ -256,6 +451,9 @@ export function ChatList({
       <div className="pane-head">
         <span>Chats</span>
         <span className="head-actions">
+          <button className="btn small ghost" onClick={onProfile} aria-label="Your profile">
+            👤 You
+          </button>
           <button className="btn small ghost" onClick={onSearch} aria-label="Search messages">
             🔍 Search
           </button>
@@ -277,7 +475,7 @@ export function ChatList({
               onClick={() => onOpen(c.conversationId)}
               onKeyDown={onActivate(() => onOpen(c.conversationId))}
             >
-              <div className="row-title">{c.title}</div>
+              <div className="row-title">{services.peerNameOf(c.conversationId) || c.title}</div>
               <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
             </li>
           ))}
@@ -406,6 +604,7 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
           if (peerId && !subscribedRef.current) {
             subscribedRef.current = true;
             services.subscribePresence(peerId);
+            void services.loadUserProfile(peerId); // resolve a display name for the header
           }
         })
         .catch(() => {});
@@ -509,7 +708,9 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
           ‹ Back
         </button>
         <div className="thread-title">
-          <span className="mono">{conversationId.slice(0, 12)}</span>
+          <span className={services.peerNameOf(conversationId) ? "" : "mono"}>
+            {services.peerNameOf(conversationId) || conversationId.slice(0, 12)}
+          </span>
           {statusLine ? (
             <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
               {statusLine}

@@ -43,9 +43,9 @@ of the screens (media send, groups, calls, stories, settings) are the open work.
 
 | ID | Feature | D | S | C |
 |---|---|:-:|:-:|:-:|
-| FR-USER-01 | Profile: username, display name, avatar, about | ✅ | ✅ | ⬜ |
-| FR-USER-02 | Per-field privacy (last-seen/avatar/about/receipts) | ✅ | ✅ | ⬜ |
-| FR-USER-03 | Block / unblock | ✅ | ✅ | ⬜ |
+| FR-USER-01 | Profile: username, display name, about (avatar image deferred) | ✅ | ✅ | ✅ |
+| FR-USER-02 | Per-field privacy (last-seen/avatar/about/receipts) | ✅ | ✅ | ✅ |
+| FR-USER-03 | Block / unblock | ✅ | ✅ | ✅ |
 | FR-USER-04 | Per-user QR to add a contact | ✅ | ✅ | ⬜ |
 
 ## CONT — Contacts

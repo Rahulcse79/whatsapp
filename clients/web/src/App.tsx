@@ -2,7 +2,7 @@ import { useState } from "react";
 import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { ChatList, Login, NewChat, Search, Thread, Verify } from "./ui/screens";
+import { ChatList, Login, NewChat, Profile, Search, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
 type Nav =
@@ -11,6 +11,7 @@ type Nav =
   | { name: "chats" }
   | { name: "newChat" }
   | { name: "search" }
+  | { name: "profile" }
   | { name: "thread"; conversationId: string };
 
 function Router() {
@@ -29,8 +30,12 @@ function Router() {
         onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
         onNew={() => setNav({ name: "newChat" })}
         onSearch={() => setNav({ name: "search" })}
+        onProfile={() => setNav({ name: "profile" })}
       />
     );
+  }
+  if (nav.name === "profile") {
+    return <Profile onBack={() => setNav({ name: "chats" })} />;
   }
   if (nav.name === "newChat") {
     return (

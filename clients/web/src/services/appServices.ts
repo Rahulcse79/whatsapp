@@ -25,6 +25,17 @@ import { indexedDbSecureStore } from "../platform/secureStore";
 import { createWsTransportFactory } from "../platform/wsTransport";
 import { createDbClient, type DbApi } from "../worker/rpc";
 
+export interface PublicProfile {
+  username: string;
+  displayName: string;
+  about: string;
+}
+
+/** MyProfile is the self view — the public fields plus per-field privacy. */
+export interface MyProfile extends PublicProfile {
+  privacy: Record<string, string>;
+}
+
 export class AppServices {
   readonly otp: OtpClient;
   readonly sessions: SessionManager;
@@ -35,6 +46,7 @@ export class AppServices {
   private cursorMirror: ConversationCursor[] = [];
   private readonly changeListeners = new Set<() => void>();
   private readonly peerByConv = new Map<string, string>(); // conversationId → peer userId
+  private readonly profileCache = new Map<string, PublicProfile>(); // userId → public profile
   private readonly typingByConv = new Map<string, number>(); // conversationId → typing-expiry ts
   private readonly presenceByUser = new Map<string, { online: boolean; lastSeenMs: number }>();
 
@@ -229,6 +241,110 @@ export class AppServices {
   /** peerOf returns the 1:1 conversation's other participant user id, if known. */
   peerOf(conversationId: string): string | undefined {
     return this.peerByConv.get(conversationId);
+  }
+
+  // ── profile & privacy (T5.07) ──────────────────────────────────────────────
+
+  private async authedRequest(method: string, path: string, body?: unknown): Promise<Response> {
+    const headers = (): Record<string, string> => ({
+      authorization: `Bearer ${this.sessions.current()?.accessJwt ?? ""}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    });
+    const go = (): Promise<Response> =>
+      fetch(`${config.apiBaseUrl}${path}`, {
+        method,
+        headers: headers(),
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    let res = await go();
+    if (res.status === 401) {
+      await this.refreshToken();
+      res = await go();
+    }
+    return res;
+  }
+
+  /** getMyProfile loads my editable profile (username/display name/about) plus
+   *  the per-field privacy settings. */
+  async getMyProfile(): Promise<MyProfile> {
+    const res = await this.authedRequest("GET", "/v1/me");
+    if (!res.ok) throw new Error("Couldn't load your profile.");
+    const p = (await res.json()) as {
+      username?: string;
+      display_name?: string;
+      about?: string;
+      privacy?: Record<string, string>;
+    };
+    return {
+      username: p.username ?? "",
+      displayName: p.display_name ?? "",
+      about: p.about ?? "",
+      privacy: p.privacy ?? {},
+    };
+  }
+
+  /** saveMyPrivacy persists the per-field visibility map (last_seen/avatar/
+   *  about/read_receipts → everyone|contacts|nobody). */
+  async saveMyPrivacy(privacy: Record<string, string>): Promise<void> {
+    const res = await this.authedRequest("PUT", "/v1/me/privacy", { privacy });
+    if (!res.ok) throw new Error("Couldn't save your privacy settings.");
+  }
+
+  /** updateMyProfile saves display name / username / about. Throws a friendly
+   *  message when the username is taken. */
+  async updateMyProfile(fields: PublicProfile): Promise<void> {
+    const res = await this.authedRequest("PUT", "/v1/me", {
+      display_name: fields.displayName,
+      username: fields.username,
+      about: fields.about,
+    });
+    if (res.status === 409) throw new Error("That username is already taken.");
+    if (!res.ok) throw new Error("Couldn't save your profile — check the fields and try again.");
+  }
+
+  /** loadUserProfile fetches (and caches) a user's public profile; re-renders
+   *  screens once it lands so peer names replace ids. */
+  async loadUserProfile(userId: string): Promise<void> {
+    if (this.profileCache.has(userId)) return;
+    try {
+      const res = await this.authedRequest("GET", `/v1/users/${userId}`);
+      if (!res.ok) return;
+      const p = (await res.json()) as { username?: string; display_name?: string; about?: string };
+      this.profileCache.set(userId, { username: p.username ?? "", displayName: p.display_name ?? "", about: p.about ?? "" });
+      this.notifyChange();
+    } catch {
+      /* leave uncached; name falls back to the id */
+    }
+  }
+
+  /** peerNameOf returns a cached, human name for a conversation's peer (display
+   *  name, else @username), or "" if not yet loaded. */
+  peerNameOf(conversationId: string): string {
+    const peer = this.peerByConv.get(conversationId);
+    const p = peer ? this.profileCache.get(peer) : undefined;
+    if (!p) return "";
+    return p.displayName || (p.username ? `@${p.username}` : "");
+  }
+
+  async blockUser(userId: string): Promise<void> {
+    const res = await this.authedRequest("POST", "/v1/blocks", { user_id: userId });
+    if (!res.ok) throw new Error("Couldn't block that user.");
+  }
+  async unblockUser(userId: string): Promise<void> {
+    await this.authedRequest("DELETE", `/v1/blocks/${userId}`);
+  }
+  async getBlocked(): Promise<string[]> {
+    const res = await this.authedRequest("GET", "/v1/blocks");
+    if (!res.ok) return [];
+    const b = (await res.json()) as { blocked?: string[] };
+    return b.blocked ?? [];
+  }
+  /** nameForUser returns a cached human name for any user id, falling back to a
+   *  short id when the profile hasn't been loaded yet. */
+  nameForUser(userId: string): string {
+    const p = this.profileCache.get(userId);
+    if (p) return p.displayName || (p.username ? `@${p.username}` : userId.slice(0, 8));
+    return userId.slice(0, 8);
   }
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */
   isPeerTyping(conversationId: string): boolean {

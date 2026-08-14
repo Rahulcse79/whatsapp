@@ -44,6 +44,8 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/pg"
 	"github.com/whatsapp-v2/server/internal/platform/ratelimit"
 	"github.com/whatsapp-v2/server/internal/platform/valkey"
+	"github.com/whatsapp-v2/server/internal/profile"
+	profileadapters "github.com/whatsapp-v2/server/internal/profile/adapters"
 	rpcv1 "github.com/whatsapp-v2/server/internal/proto/gen/whatsapp/rpc/v1"
 	"github.com/whatsapp-v2/server/internal/ptt"
 	pttadapters "github.com/whatsapp-v2/server/internal/ptt/adapters"
@@ -251,6 +253,7 @@ func main() {
 	// with client-distributed per-story keys — the server holds ciphertext refs
 	// + metadata only.
 	storiesSvc := stories.NewService(storiesadapters.NewStore(pool), storiesadapters.NewAudience(pool))
+	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// 24 h hard-expiry purge (MinIO ILM is the media backstop). Hourly, a plain
 	// DELETE, so overlap across pods is harmless.
 	go func() {
@@ -381,7 +384,8 @@ func main() {
 	calls.Routes(mux, callsSvc, issuer, callsWebhook)
 	ptt.Routes(mux, pttSvc, pttMinter, issuer)
 	stories.Routes(mux, storiesSvc, issuer)
-	chat.Routes(mux, chatStore, issuer) // POST /v1/conversations/direct (start a 1:1)
+	chat.Routes(mux, chatStore, issuer)     // POST /v1/conversations/direct (start a 1:1)
+	profile.Routes(mux, profileSvc, issuer) // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {
 		admin.Routes(mux, adminSvc)
 		admin.FlagRoutes(mux, adminSvc, adminFlags)

@@ -18,6 +18,7 @@ import {
   type InboxBatch,
   type MsgAck,
   type MsgSend,
+  type Receipt,
   type ServerError,
   type ServerFrame,
   type ServerHint,
@@ -43,6 +44,8 @@ export interface WsClientHandlers {
   onMsgAck(ack: MsgAck): void;
   /** Pending outbox sends to (re)transmit on every live transition. */
   pendingSends(): Promise<MsgSend[]>;
+  /** A peer's delivered/read watermark relayed by the server (drives ✓✓ / read). */
+  onReceipt?(r: Receipt): void;
   /** 4401 / AUTH_TOKEN_EXPIRED — refresh via REST; the client reconnects. */
   onAuthExpired(): void;
   /** 4403 — device revoked / account suspended: wipe session, stop for good. */
@@ -170,6 +173,9 @@ export class WsClient {
         break;
       case "inbox_batch":
         await this.onInboxBatch(f);
+        break;
+      case "receipt":
+        this.o.handlers.onReceipt?.(f);
         break;
       case "server_hint":
         this.onServerHint(f);

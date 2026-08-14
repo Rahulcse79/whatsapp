@@ -91,10 +91,23 @@ export class AppServices {
           const watermark = await this.db.persistInboxBatch(b);
           this.mergeCursors(watermark);
           this.notifyChange(); // new inbound message(s) → refresh open screens
+          // Tell each sender their message reached this device (drives ✓✓).
+          const maxByConv = new Map<string, number>();
+          for (const it of b.items) {
+            maxByConv.set(it.conversationId, Math.max(maxByConv.get(it.conversationId) ?? 0, it.seq));
+          }
+          for (const [conversationId, upToSeq] of maxByConv) {
+            this.ws?.send({ t: "receipt", conversationId, kind: "DELIVERED", upToSeq });
+          }
           return watermark;
         },
         onMsgAck: (a) => {
           void this.db.markSent({ clientRef: a.clientRef, seq: a.seq }).then(() => this.notifyChange());
+        },
+        onReceipt: (r) => {
+          void this.db
+            .markReceipt({ conversationId: r.conversationId, kind: r.kind, upToSeq: r.upToSeq })
+            .then(() => this.notifyChange());
         },
         pendingSends: () => this.db.pendingSends(),
         onAuthExpired: () => {
@@ -146,6 +159,12 @@ export class AppServices {
     }
     if (res.status >= 400) throw new Error("Request failed — please try again.");
     return res.json();
+  }
+
+  /** markRead tells the sender their messages in this conversation were read
+   *  (✓✓ blue) up to upToSeq. Call when the thread is on screen. */
+  markRead(conversationId: string, upToSeq: number): void {
+    if (upToSeq > 0) this.ws?.send({ t: "receipt", conversationId, kind: "READ", upToSeq });
   }
 
   conversations(): Promise<ChatSummary[]> {

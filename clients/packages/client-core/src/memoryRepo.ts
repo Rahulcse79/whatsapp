@@ -5,7 +5,7 @@
 // behaviour is identical to the SQLite path.
 
 import { Cursors } from "@wa/sync-engine";
-import { MsgKind, type ConversationCursor, type InboxBatch, type MsgSend } from "./frames";
+import { MsgKind, type ConversationCursor, type InboxBatch, type MsgSend, type ReceiptKind } from "./frames";
 import {
   planInboxBatch,
   type ChatSummary,
@@ -42,6 +42,13 @@ interface OutboxRow {
   conversationId: string;
   payload: Uint8Array;
   createdAt: number;
+}
+
+// Monotonic message-state ordering so a bubble's ticks only ever advance
+// (sending → sent → delivered → read). Inbound "received" is 0 (never a tick).
+const STATE_RANK: Record<string, number> = { sending: 0, received: 0, sent: 1, delivered: 2, read: 3 };
+function stateRank(s: string): number {
+  return STATE_RANK[s] ?? 0;
 }
 
 export class MemoryMessageRepo implements MessageRepo {
@@ -114,8 +121,21 @@ export class MemoryMessageRepo implements MessageRepo {
     if (i >= 0) this.outbox.splice(i, 1);
     const m = this.messages.get(clientRef);
     if (m) {
-      m.state = "sent";
+      if (stateRank(m.state) < stateRank("sent")) m.state = "sent"; // don't undo a receipt
       m.seq = seq;
+    }
+    return Promise.resolve();
+  }
+
+  /** markReceipt upgrades my sent messages in a conversation (seq ≤ upToSeq) to
+   *  "delivered" or "read" — monotonic, never downgrades. Drives ✓✓ / read
+   *  ticks from a peer's relayed watermark. */
+  markReceipt(conversationId: string, kind: ReceiptKind, upToSeq: number): Promise<void> {
+    const target = kind === "READ" ? "read" : "delivered";
+    for (const m of this.messages.values()) {
+      if (!m.mine || m.conversationId !== conversationId) continue;
+      if (m.seq <= 0 || m.seq > upToSeq) continue;
+      if (stateRank(m.state) < stateRank(target)) m.state = target;
     }
     return Promise.resolve();
   }

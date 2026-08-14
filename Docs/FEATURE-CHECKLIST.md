@@ -61,7 +61,7 @@ working chat; the rest is backend-ready and needs its screens wired.
 | ID | Feature | D | S | C |
 |---|---|:-:|:-:|:-:|
 | FR-MSG-01 | Send/receive E2EE text; sending→sent→delivered→read | ✅ | ✅ | ✅ |
-| FR-MSG-02 | Delivery/read receipts (batched, privacy-gated) | ✅ | ✅ | 🔶 |
+| FR-MSG-02 | Delivery/read receipts (batched, privacy-gated) | ✅ | ✅ | ✅ |
 | FR-MSG-03 | Typing indicator; online/last-seen | ✅ | ✅ | 🔶 |
 | FR-MSG-04 | Reply (quote), forward, copy | ✅ | ✅ | 🔶 |
 | FR-MSG-05 | Delete-for-me / delete-for-everyone (48 h) | ✅ | ✅ | 🔶 |

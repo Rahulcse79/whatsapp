@@ -60,6 +60,7 @@ export interface Receipt {
   conversationId: string;
   kind: ReceiptKind;
   upToSeq: number;
+  fromUserId?: string; // set on the server→client direction (who acked/read)
 }
 export interface SyncPull {
   t: "sync_pull";
@@ -111,7 +112,9 @@ export interface InboxBatch {
   items: InboxItemFrame[];
 }
 
-export type ServerFrame = HelloAck | Ping | Pong | ServerHint | ServerError | MsgAck | InboxBatch;
+// Receipt is bidirectional: a client sends its delivered/read watermark, and the
+// server relays the peer's watermark back (so the sender can show ✓✓ / read).
+export type ServerFrame = HelloAck | Ping | Pong | ServerHint | ServerError | MsgAck | InboxBatch | Receipt;
 
 /** WSS close codes and their client contract (websocket-protocol.md §6). */
 export const CloseCode = {

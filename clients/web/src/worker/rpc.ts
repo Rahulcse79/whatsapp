@@ -2,7 +2,15 @@
 // proxy; the worker implements the same method names over postMessage. Uint8Array
 // payloads survive structured clone, so MsgSend frames cross intact.
 
-import type { ChatSummary, ConversationCursor, InboxBatch, MsgSend, SearchHit, ThreadMessage } from "@wa/client-core";
+import type {
+  ChatSummary,
+  ConversationCursor,
+  InboxBatch,
+  MsgSend,
+  ReceiptKind,
+  SearchHit,
+  ThreadMessage,
+} from "@wa/client-core";
 
 export interface EnqueueTextInput {
   conversationId: string;
@@ -19,6 +27,12 @@ export interface MarkSentInput {
   seq: number;
 }
 
+export interface MarkReceiptInput {
+  conversationId: string;
+  kind: ReceiptKind;
+  upToSeq: number;
+}
+
 export interface SearchInput {
   query: string;
   conversationId?: string;
@@ -31,6 +45,7 @@ export interface DbApi {
   persistInboxBatch(batch: InboxBatch): Promise<ConversationCursor[]>;
   enqueueText(input: EnqueueTextInput): Promise<void>;
   markSent(input: MarkSentInput): Promise<void>;
+  markReceipt(input: MarkReceiptInput): Promise<void>;
   pendingSends(): Promise<MsgSend[]>;
   conversations(): Promise<ChatSummary[]>;
   thread(conversationId: string): Promise<ThreadMessage[]>;
@@ -77,6 +92,7 @@ export function createDbClient(worker: Worker): DbApi {
     persistInboxBatch: (batch) => call<ConversationCursor[]>("persistInboxBatch", batch),
     enqueueText: (input) => call<void>("enqueueText", input),
     markSent: (input) => call<void>("markSent", input),
+    markReceipt: (input) => call<void>("markReceipt", input),
     pendingSends: () => call<MsgSend[]>("pendingSends"),
     conversations: () => call<ChatSummary[]>("conversations"),
     thread: (conversationId) => call<ThreadMessage[]>("thread", conversationId),

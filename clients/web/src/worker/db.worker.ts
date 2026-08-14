@@ -5,7 +5,7 @@
 // speaks the RPC protocol in ./rpc.
 
 import { MemoryMessageRepo, type InboxBatch } from "@wa/client-core";
-import type { EnqueueTextInput, MarkSentInput, RpcRequest, SearchInput } from "./rpc";
+import type { EnqueueTextInput, MarkReceiptInput, MarkSentInput, RpcRequest, SearchInput } from "./rpc";
 
 const repo = new MemoryMessageRepo();
 const encoder = new TextEncoder();
@@ -83,6 +83,10 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
   markSent: async (arg) => {
     const input = arg as MarkSentInput;
     await repo.markSent(input.clientRef, input.seq);
+  },
+  markReceipt: async (arg) => {
+    const input = arg as MarkReceiptInput;
+    await repo.markReceipt(input.conversationId, input.kind, input.upToSeq);
   },
   pendingSends: () => repo.pendingSends(),
   conversations: () => repo.conversations(),

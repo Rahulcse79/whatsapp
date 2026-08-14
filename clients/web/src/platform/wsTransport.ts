@@ -134,6 +134,14 @@ function decodeServerFrame(data: Uint8Array): ServerFrame | null {
       return { t: "server_hint", kind: "DRAIN", reconnectAfterMs: Number(b.value.reconnectAfterMs) };
     case "error":
       return { t: "error", code: b.value.code, message: b.value.message };
+    case "receipt":
+      return {
+        t: "receipt",
+        conversationId: b.value.conversationId,
+        kind: b.value.kind === PbReceiptKind.READ ? "READ" : "DELIVERED",
+        upToSeq: Number(b.value.upToSeq),
+        fromUserId: b.value.fromUserId || undefined,
+      };
     case "msgAck":
       return {
         t: "msg_ack",

@@ -13,7 +13,7 @@ import {
   type LinkPreview,
   type MediaEnvelope,
 } from "@wa/media-pipeline";
-import { useEffect, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
 import { useCall } from "../call/CallContext";
@@ -377,13 +377,22 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
   const [draft, setDraft] = useState("");
   const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
 
+  const lastReadRef = useRef(0);
   useEffect(() => {
     let alive = true;
+    lastReadRef.current = 0; // reset the read watermark per conversation
     const tick = (): void => {
       services
         .thread(conversationId)
         .then((m) => {
-          if (alive) setMessages(m);
+          if (!alive) return;
+          setMessages(m);
+          // Thread is on screen → tell the sender their messages were read (✓✓ blue).
+          const maxRecv = m.reduce((mx, x) => (!x.mine && x.seq > mx ? x.seq : mx), 0);
+          if (maxRecv > lastReadRef.current) {
+            lastReadRef.current = maxRecv;
+            services.markRead(conversationId, maxRecv);
+          }
         })
         .catch(() => {});
     };
@@ -483,9 +492,23 @@ function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (e
           {text?.linkPreview ? <LinkPreviewCard preview={text.linkPreview} /> : null}
         </>
       )}
-      {message.mine ? <span className="state">{message.state}</span> : null}
+      {message.mine ? <StatusTicks state={message.state} /> : null}
     </div>
   );
+}
+
+/** StatusTicks renders WhatsApp-style delivery state on my own bubbles:
+ *  🕓 sending · ✓ sent · ✓✓ delivered · ✓✓ (blue) read. */
+function StatusTicks({ state }: { state: string }) {
+  if (state === "sending") return <span className="state" title="Sending" aria-label="Sending">🕓</span>;
+  if (state === "delivered") return <span className="state" title="Delivered" aria-label="Delivered">✓✓</span>;
+  if (state === "read")
+    return (
+      <span className="state" title="Read" aria-label="Read" style={{ color: "#34b7f1" }}>
+        ✓✓
+      </span>
+    );
+  return <span className="state" title="Sent" aria-label="Sent">✓</span>; // sent (default)
 }
 
 /** LinkPreviewCard renders a sender-generated preview (FR-MSG-08). The image is

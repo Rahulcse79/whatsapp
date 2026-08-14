@@ -36,6 +36,25 @@ export interface MyProfile extends PublicProfile {
   privacy: Record<string, string>;
 }
 
+/** UserRef is a metadata-only user reference (search hit / favorite). */
+export interface UserRef {
+  userId: string;
+  username: string;
+}
+
+/** MatchedContact is a phone-sync hit, echoing the caller's handle. */
+export interface MatchedContact extends UserRef {
+  handle: string;
+}
+
+/** Invite is a personal invite-a-friend link. */
+export interface Invite {
+  token: string;
+  url: string;
+  expiresAtMs: number;
+  maxUses: number;
+}
+
 export class AppServices {
   readonly otp: OtpClient;
   readonly sessions: SessionManager;
@@ -230,11 +249,17 @@ export class AppServices {
     };
     const peer = sync.matched?.[0]?.user_id;
     if (!peer) throw new Error("No account is registered with that number yet.");
-    const conv = (await this.authedJson("/v1/conversations/direct", { peer_user_id: peer })) as {
+    return this.openDirectWithUser(peer);
+  }
+
+  /** openDirectWithUser gets (or creates) the shared 1:1 conversation with a known
+   *  user id and returns its id — used from search/favorites where the id is known. */
+  async openDirectWithUser(userId: string): Promise<string> {
+    const conv = (await this.authedJson("/v1/conversations/direct", { peer_user_id: userId })) as {
       conversation_id?: string;
     };
     if (!conv.conversation_id) throw new Error("Couldn't start the conversation.");
-    this.peerByConv.set(conv.conversation_id, peer); // for presence/typing subscription
+    this.peerByConv.set(conv.conversation_id, userId); // for presence/typing subscription
     return conv.conversation_id;
   }
 
@@ -345,6 +370,57 @@ export class AppServices {
     const p = this.profileCache.get(userId);
     if (p) return p.displayName || (p.username ? `@${p.username}` : userId.slice(0, 8));
     return userId.slice(0, 8);
+  }
+
+  // ── contacts (T5.08) ────────────────────────────────────────────────────────
+
+  /** searchContacts finds registered users by username (server-side, rate-limited,
+   *  ≥2 chars, caller excluded). Returns [] for short/blank queries. */
+  async searchContacts(query: string): Promise<UserRef[]> {
+    const q = query.trim();
+    if (q.length < 2) return [];
+    const res = await this.authedRequest("GET", `/v1/contacts/search?u=${encodeURIComponent(q)}`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { results?: Array<{ user_id: string; username: string }> };
+    return (b.results ?? []).map((r) => ({ userId: r.user_id, username: r.username }));
+  }
+
+  /** listFavorites returns the caller's starred contacts. */
+  async listFavorites(): Promise<UserRef[]> {
+    const res = await this.authedRequest("GET", "/v1/contacts/favorites");
+    if (!res.ok) return [];
+    const b = (await res.json()) as { favorites?: Array<{ user_id: string; username: string }> };
+    return (b.favorites ?? []).map((r) => ({ userId: r.user_id, username: r.username }));
+  }
+
+  async addFavorite(userId: string): Promise<void> {
+    const res = await this.authedRequest("PUT", `/v1/contacts/favorites/${userId}`);
+    if (!res.ok) throw new Error("Couldn't add that favorite.");
+  }
+  async removeFavorite(userId: string): Promise<void> {
+    await this.authedRequest("DELETE", `/v1/contacts/favorites/${userId}`);
+  }
+
+  /** syncPhones checks which of the given phone numbers are registered, returning
+   *  the matched contacts (server peppers+hashes; only hashes are persisted). */
+  async syncPhones(handles: string[]): Promise<MatchedContact[]> {
+    const clean = handles.map((h) => h.trim()).filter(Boolean);
+    if (clean.length === 0) return [];
+    const res = await this.authedRequest("POST", "/v1/contacts/sync", { handles: clean });
+    if (res.status === 429) throw new Error("Contact sync is limited to 4×/day — try again tomorrow.");
+    if (!res.ok) throw new Error("Couldn't sync those numbers.");
+    const b = (await res.json()) as {
+      matched?: Array<{ handle: string; user_id: string; username: string }>;
+    };
+    return (b.matched ?? []).map((m) => ({ handle: m.handle, userId: m.user_id, username: m.username }));
+  }
+
+  /** createInvite mints a personal invite-a-friend link (expiry + max-uses). */
+  async createInvite(): Promise<Invite> {
+    const res = await this.authedRequest("POST", "/v1/contacts/invite", {});
+    if (!res.ok) throw new Error("Couldn't create an invite link.");
+    const b = (await res.json()) as { token: string; url: string; expires_at_ms: number; max_uses: number };
+    return { token: b.token, url: b.url, expiresAtMs: b.expires_at_ms, maxUses: b.max_uses };
   }
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */
   isPeerTyping(conversationId: string): boolean {

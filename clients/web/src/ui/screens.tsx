@@ -22,6 +22,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
+import type { Invite, MatchedContact, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -412,11 +413,13 @@ export function ChatList({
   onNew,
   onSearch,
   onProfile,
+  onContacts,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
   onSearch: () => void;
   onProfile: () => void;
+  onContacts: () => void;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
@@ -453,6 +456,9 @@ export function ChatList({
         <span className="head-actions">
           <button className="btn small ghost" onClick={onProfile} aria-label="Your profile">
             👤 You
+          </button>
+          <button className="btn small ghost" onClick={onContacts} aria-label="Contacts">
+            👥 Contacts
           </button>
           <button className="btn small ghost" onClick={onSearch} aria-label="Search messages">
             🔍 Search
@@ -545,6 +551,210 @@ export function Search({ onOpen, onBack }: { onOpen: (id: string) => void; onBac
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+/** Contacts screen (T5.08): find registered users by username, star favorites,
+ *  discover contacts by phone number, and share a personal invite link. */
+export function Contacts({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () => void }) {
+  const { services } = useServices();
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<UserRef[]>([]);
+  const [favorites, setFavorites] = useState<UserRef[]>([]);
+  const [favIds, setFavIds] = useState<Set<string>>(new Set());
+  const [phones, setPhones] = useState("");
+  const [matched, setMatched] = useState<MatchedContact[] | null>(null);
+  const [invite, setInvite] = useState<Invite | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    services
+      .listFavorites()
+      .then((f) => {
+        if (!alive) return;
+        setFavorites(f);
+        setFavIds(new Set(f.map((x) => x.userId)));
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [services]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      return;
+    }
+    let alive = true;
+    const h = setTimeout(() => {
+      services
+        .searchContacts(q)
+        .then((r) => {
+          if (alive) setResults(r);
+        })
+        .catch(() => {});
+    }, 200); // debounce keystrokes (search is server rate-limited)
+    return () => {
+      alive = false;
+      clearTimeout(h);
+    };
+  }, [query, services]);
+
+  async function toggleFav(u: UserRef): Promise<void> {
+    try {
+      if (favIds.has(u.userId)) {
+        await services.removeFavorite(u.userId);
+        setFavIds((s) => {
+          const n = new Set(s);
+          n.delete(u.userId);
+          return n;
+        });
+        setFavorites((f) => f.filter((x) => x.userId !== u.userId));
+      } else {
+        await services.addFavorite(u.userId);
+        setFavIds((s) => new Set(s).add(u.userId));
+        setFavorites((f) => (f.some((x) => x.userId === u.userId) ? f : [...f, u]));
+      }
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function message(userId: string): Promise<void> {
+    try {
+      onOpen(await services.openDirectWithUser(userId));
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function checkPhones(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      setMatched(await services.syncPhones(phones.split(/[\n,]+/)));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function makeInvite(): Promise<void> {
+    setError(null);
+    try {
+      setInvite(await services.createInvite());
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function copyInvite(): Promise<void> {
+    if (!invite) return;
+    try {
+      await navigator.clipboard.writeText(invite.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      /* clipboard blocked; the URL stays visible for manual copy */
+    }
+  }
+
+  const userRow = (u: UserRef): ReactNode => (
+    <li key={u.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+      <span>@{u.username}</span>
+      <span style={{ display: "flex", gap: "0.4rem" }}>
+        <button
+          className="btn small ghost"
+          onClick={() => void toggleFav(u)}
+          aria-label={favIds.has(u.userId) ? "Remove favorite" : "Add favorite"}
+          title={favIds.has(u.userId) ? "Unfavorite" : "Favorite"}
+        >
+          {favIds.has(u.userId) ? "★" : "☆"}
+        </button>
+        <button className="btn small" onClick={() => void message(u.userId)}>
+          Message
+        </button>
+      </span>
+    </li>
+  );
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>Contacts</h1>
+
+      <h2>Find people</h2>
+      <input
+        className="input"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search by username…"
+        aria-label="Search by username"
+      />
+      {query.trim().length >= 2 &&
+        (results.length === 0 ? (
+          <p className="muted">No users found.</p>
+        ) : (
+          <ul className="list">{results.map(userRow)}</ul>
+        ))}
+
+      <h2 style={{ marginTop: "1.5rem" }}>Favorites ({favorites.length})</h2>
+      {favorites.length === 0 ? (
+        <p className="muted">Star someone to keep them handy here.</p>
+      ) : (
+        <ul className="list">{favorites.map(userRow)}</ul>
+      )}
+
+      <h2 style={{ marginTop: "1.5rem" }}>Find by phone</h2>
+      <p className="muted" style={{ fontSize: "0.8rem" }}>
+        Paste numbers in international format (one per line). Only the peppered hash is stored.
+      </p>
+      <textarea
+        className="input"
+        rows={3}
+        value={phones}
+        onChange={(e) => setPhones(e.target.value)}
+        placeholder={"+14155550123\n+919876543210"}
+        aria-label="Phone numbers"
+      />
+      <button className="btn small" onClick={() => void checkPhones()} disabled={busy || phones.trim() === ""}>
+        {busy ? "Checking…" : "Check numbers"}
+      </button>
+      {matched !== null &&
+        (matched.length === 0 ? (
+          <p className="muted">None of those numbers are on WhatsApp V2 yet.</p>
+        ) : (
+          <ul className="list">{matched.map((m) => userRow({ userId: m.userId, username: m.username }))}</ul>
+        ))}
+
+      <h2 style={{ marginTop: "1.5rem" }}>Invite a friend</h2>
+      {invite ? (
+        <div>
+          <input className="input mono" readOnly value={invite.url} aria-label="Invite link" onFocus={(e) => e.currentTarget.select()} />
+          <button className="btn small" onClick={() => void copyInvite()}>
+            {copied ? "Copied ✓" : "Copy link"}
+          </button>
+        </div>
+      ) : (
+        <button className="btn small" onClick={() => void makeInvite()}>
+          Create invite link
+        </button>
+      )}
+
+      {error && (
+        <p className="error" role="alert" style={{ marginTop: "1rem" }}>
+          {error}
+        </p>
+      )}
     </div>
   );
 }

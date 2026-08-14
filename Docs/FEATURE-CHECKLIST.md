@@ -54,7 +54,7 @@ of the screens (media send, groups, calls, stories, settings) are the open work.
 |---|---|:-:|:-:|:-:|
 | FR-CONT-01 | Address-book sync via hashed numbers (no plaintext stored) | ✅ | ✅ | 🔶 |
 | FR-CONT-02 | Search users by username | ✅ | ✅ | ✅ |
-| FR-CONT-03 | Favorites; invite-a-friend link | ✅ | ✅ | 🔶 |
+| FR-CONT-03 | Favorites; invite-a-friend link | ✅ | ✅ | ✅ |
 
 ## MSG — 1:1 Messaging
 

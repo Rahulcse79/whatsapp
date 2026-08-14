@@ -18,11 +18,11 @@ Each feature is tracked across three layers:
 
 **The headline:** Design and Server are ✅ across the board (Phase 0–4 is code-complete).
 **The remaining work to "build the whole app" is almost entirely the Client-UI column.**
-Today the app can: sign in ✅, and (web) add a contact by number → open the real
-shared 1:1 conversation ✅. **Live message *delivery* is the current blocker** —
-the client's WebSocket doesn't connect yet, so sent messages don't arrive (see
-`Docs/BUILD-TASKS.md` **T5.00**). Fixing that turns the wired conversation into a
-working chat; the rest is backend-ready and needs its screens wired.
+The **web** client is a working messenger today: sign in, add-by-number, real
+1:1 send/receive, live updates, ✓/✓✓/✓✓-blue receipts, typing + online/last-seen
+presence, and message actions (reply/copy/edit/delete/star/pin) — all verified
+live (see `Docs/BUILD-TASKS.md` Phase 5, T5.00–T5.05). Mobile parity + the rest
+of the screens (media send, groups, calls, stories, settings) are the open work.
 
 ---
 
@@ -64,8 +64,8 @@ working chat; the rest is backend-ready and needs its screens wired.
 | FR-MSG-02 | Delivery/read receipts (batched, privacy-gated) | ✅ | ✅ | ✅ |
 | FR-MSG-03 | Typing indicator; online/last-seen | ✅ | ✅ | ✅ |
 | FR-MSG-04 | Reply (quote), forward, copy | ✅ | ✅ | 🔶 |
-| FR-MSG-05 | Delete-for-me / delete-for-everyone (48 h) | ✅ | ✅ | 🔶 |
-| FR-MSG-06 | Edit within 15 min | ✅ | ✅ | 🔶 |
+| FR-MSG-05 | Delete-for-me / delete-for-everyone (48 h) | ✅ | ✅ | ✅ |
+| FR-MSG-06 | Edit within 15 min | ✅ | ✅ | ✅ |
 | FR-MSG-07 | Pin, star, emoji reactions | ✅ | ✅ | 🔶 |
 | FR-MSG-08 | Sender-side link previews | ✅ | ✅ | 🔶 |
 | FR-MSG-09 | Offline hold ≤30d, zero-loss delivery on reconnect | ✅ | ✅ | ✅ |

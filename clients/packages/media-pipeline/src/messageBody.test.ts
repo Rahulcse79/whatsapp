@@ -46,6 +46,15 @@ describe("encode/parseTextMessage (link previews, FR-MSG-08)", () => {
     expect(parseTextMessage(body)).toEqual({ text: "look https://example.com", linkPreview: preview });
   });
 
+  it("round-trips a quoted reply (FR-MSG-04)", () => {
+    const reply = { msgUuid: "abc", snippet: "the original", mine: false };
+    const body = encodeTextMessage("my reply", undefined, reply);
+    expect(body.charAt(0)).toBe("{"); // reply forces the tagged form
+    const parsed = parseTextMessage(body);
+    expect(parsed.text).toBe("my reply");
+    expect(parsed.reply).toEqual(reply);
+  });
+
   it("reads plain and malformed bodies as raw text (never throws)", () => {
     expect(parseTextMessage("")).toEqual({ text: "" });
     expect(parseTextMessage("{not json")).toEqual({ text: "{not json" });

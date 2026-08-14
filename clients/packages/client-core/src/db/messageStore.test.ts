@@ -46,7 +46,7 @@ describe("planInboxBatch", () => {
       cursors,
     );
     expect(plan.inserts.map((i) => i.msgUuid)).toEqual(["m1"]);
-    expect(plan.overlays).toEqual([{ conversationId: "c1", targetMsgUuid: "m1", kind: MsgKind.OVERLAY_DELETE }]);
+    expect(plan.overlays).toEqual([{ conversationId: "c1", targetMsgUuid: "m1", msgUuid: "o2", kind: MsgKind.OVERLAY_DELETE }]);
     expect(plan.watermark).toEqual([{ conversationId: "c1", lastSeq: 2 }]);
   });
 

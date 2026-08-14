@@ -41,6 +41,45 @@ describe("MemoryMessageRepo", () => {
     expect(target?.body).toBe("");
   });
 
+  it("sends an outgoing OVERLAY_DELETE: tombstones the target locally + queues the overlay (no new bubble)", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.enqueueOutgoing({ clientRef: "m1", conversationId: "c1", plaintext: "hi", payload: new Uint8Array([1]), now: 1 });
+    await repo.enqueueOutgoing({ clientRef: "d1", conversationId: "c1", plaintext: "", payload: new Uint8Array([2]), now: 2, kind: MsgKind.OVERLAY_DELETE, overlayTarget: "m1" });
+    const thread = await repo.thread("c1");
+    expect(thread.map((m) => m.msgUuid)).toEqual(["m1"]); // overlay is not its own bubble
+    expect(thread[0]!.deleted).toBe(true);
+    const del = (await repo.pendingSends()).find((s) => s.clientRef === "d1");
+    expect(del?.kind).toBe(MsgKind.OVERLAY_DELETE);
+    expect(del?.overlayTarget).toBe("m1");
+  });
+
+  it("sends an outgoing OVERLAY_EDIT: rewrites the target body + marks it edited", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.enqueueOutgoing({ clientRef: "m1", conversationId: "c1", plaintext: "typo", payload: new Uint8Array([1]), now: 1 });
+    await repo.enqueueOutgoing({ clientRef: "e1", conversationId: "c1", plaintext: "fixed", payload: new Uint8Array([2]), now: 2, kind: MsgKind.OVERLAY_EDIT, overlayTarget: "m1" });
+    const thread = await repo.thread("c1");
+    expect(thread).toHaveLength(1);
+    expect(thread[0]!.body).toBe("fixed");
+    expect(thread[0]!.edited).toBe(true);
+  });
+
+  it("applies an inbound OVERLAY_EDIT using the decrypted overlay body", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.persistInboxBatch(batch([inbound(1)]), new Map([["m1", "original"]]));
+    await repo.persistInboxBatch(batch([inbound(2, { kind: MsgKind.OVERLAY_EDIT, overlayTarget: "m1", msgUuid: "o2" })]), new Map([["o2", "corrected"]]));
+    const target = (await repo.thread("c1")).find((m) => m.msgUuid === "m1");
+    expect(target?.body).toBe("corrected");
+    expect(target?.edited).toBe(true);
+  });
+
+  it("deleteForMe hides a message locally without queuing an overlay", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.persistInboxBatch(batch([inbound(1)]), new Map([["m1", "secret"]]));
+    await repo.deleteForMe("m1");
+    expect((await repo.thread("c1"))[0]!.deleted).toBe(true);
+    expect(await repo.pendingSends()).toEqual([]);
+  });
+
   it("queues an outgoing message, exposes it as a MsgSend, and clears it on markSent", async () => {
     const repo = new MemoryMessageRepo();
     await repo.enqueueOutgoing({

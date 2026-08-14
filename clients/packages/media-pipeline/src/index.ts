@@ -57,6 +57,7 @@ export {
 export {
   encodeMediaMessage,
   encodeTextMessage,
+  type QuotedRef,
   parseMediaMessage,
   parseTextMessage,
   type MediaMessageBody,

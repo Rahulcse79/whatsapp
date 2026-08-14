@@ -27,6 +27,17 @@ export interface MarkSentInput {
   seq: number;
 }
 
+/** An overlay send (edit or delete) targeting an existing message. For an edit,
+ *  `text` is the new encoded body to seal; for a delete it is ignored. */
+export interface EnqueueOverlayInput {
+  conversationId: string;
+  targetMsgUuid: string;
+  kind: "edit" | "delete";
+  text: string;
+  clientRef: string;
+  now: number;
+}
+
 export interface MarkReceiptInput {
   conversationId: string;
   kind: ReceiptKind;
@@ -44,11 +55,15 @@ export interface DbApi {
   init(): Promise<ConversationCursor[]>;
   persistInboxBatch(batch: InboxBatch): Promise<ConversationCursor[]>;
   enqueueText(input: EnqueueTextInput): Promise<void>;
+  enqueueOverlay(input: EnqueueOverlayInput): Promise<void>;
   markSent(input: MarkSentInput): Promise<void>;
   markReceipt(input: MarkReceiptInput): Promise<void>;
   pendingSends(): Promise<MsgSend[]>;
   conversations(): Promise<ChatSummary[]>;
   thread(conversationId: string): Promise<ThreadMessage[]>;
+  setPinned(input: { msgUuid: string; pinned: boolean }): Promise<void>;
+  setStarred(input: { msgUuid: string; starred: boolean }): Promise<void>;
+  deleteForMe(input: { msgUuid: string }): Promise<void>;
   search(input: SearchInput): Promise<SearchHit[]>;
 }
 
@@ -91,11 +106,15 @@ export function createDbClient(worker: Worker): DbApi {
     init: () => call<ConversationCursor[]>("init"),
     persistInboxBatch: (batch) => call<ConversationCursor[]>("persistInboxBatch", batch),
     enqueueText: (input) => call<void>("enqueueText", input),
+    enqueueOverlay: (input) => call<void>("enqueueOverlay", input),
     markSent: (input) => call<void>("markSent", input),
     markReceipt: (input) => call<void>("markReceipt", input),
     pendingSends: () => call<MsgSend[]>("pendingSends"),
     conversations: () => call<ChatSummary[]>("conversations"),
     thread: (conversationId) => call<ThreadMessage[]>("thread", conversationId),
+    setPinned: (input) => call<void>("setPinned", input),
+    setStarred: (input) => call<void>("setStarred", input),
+    deleteForMe: (input) => call<void>("deleteForMe", input),
     search: (input) => call<SearchHit[]>("search", input),
   };
 }

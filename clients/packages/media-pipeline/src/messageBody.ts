@@ -11,11 +11,21 @@ export interface MediaMessageBody {
   caption?: string;
 }
 
+/** A quoted reply reference carried in the sealed body (FR-MSG-04): the id of the
+ *  message being replied to plus a short snippet, so the reply renders its quote
+ *  even if the original isn't loaded. */
+export interface QuotedRef {
+  msgUuid: string;
+  snippet: string;
+  mine: boolean;
+}
+
 /** The decrypted view of a text message: the text plus an optional sender-side
- *  link preview (FR-MSG-08) carried in the same sealed body. */
+ *  link preview (FR-MSG-08) and an optional quoted reply, all in the sealed body. */
 export interface TextMessageBody {
   text: string;
   linkPreview?: LinkPreview;
+  reply?: QuotedRef;
 }
 
 /** encodeMediaMessage produces the plaintext body string to seal + send. */
@@ -46,11 +56,15 @@ export function parseMediaMessage(body: string): MediaMessageBody | null {
 }
 
 /** encodeTextMessage produces the plaintext body to seal for a text message. No
- *  preview → a bare string (back-compat, the common case). With a preview → a
- *  small tagged JSON object carrying the text and the self-contained preview. */
-export function encodeTextMessage(text: string, preview?: LinkPreview): string {
-  if (!preview) return text;
-  return JSON.stringify({ t: "text", v: 1, text, lp: preview });
+ *  preview and no reply → a bare string (back-compat, the common case).
+ *  Otherwise → a small tagged JSON object carrying the text, the self-contained
+ *  preview, and/or the quoted reply. */
+export function encodeTextMessage(text: string, preview?: LinkPreview, reply?: QuotedRef): string {
+  if (!preview && !reply) return text;
+  const body: { t: "text"; v: 1; text: string; lp?: LinkPreview; re?: QuotedRef } = { t: "text", v: 1, text };
+  if (preview) body.lp = preview;
+  if (reply) body.re = reply;
+  return JSON.stringify(body);
 }
 
 /** parseTextMessage reads a decrypted text body: a plain string, or a tagged
@@ -68,13 +82,23 @@ export function parseTextMessage(body: string): TextMessageBody {
   const obj = parsed as Record<string, unknown>;
   if (obj.t !== "text" || typeof obj.text !== "string") return { text: body };
   const lp = isLinkPreview(obj.lp) ? obj.lp : undefined;
-  return lp ? { text: obj.text, linkPreview: lp } : { text: obj.text };
+  const re = isQuotedRef(obj.re) ? obj.re : undefined;
+  const out: TextMessageBody = { text: obj.text };
+  if (lp) out.linkPreview = lp;
+  if (re) out.reply = re;
+  return out;
 }
 
 function isLinkPreview(v: unknown): v is LinkPreview {
   if (typeof v !== "object" || v === null) return false;
   const p = v as Record<string, unknown>;
   return typeof p.url === "string" && typeof p.title === "string";
+}
+
+function isQuotedRef(v: unknown): v is QuotedRef {
+  if (typeof v !== "object" || v === null) return false;
+  const q = v as Record<string, unknown>;
+  return typeof q.msgUuid === "string" && typeof q.snippet === "string" && typeof q.mine === "boolean";
 }
 
 function isEnvelope(v: unknown): v is MediaEnvelope {

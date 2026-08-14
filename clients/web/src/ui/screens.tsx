@@ -12,6 +12,7 @@ import {
   parseTextMessage,
   type LinkPreview,
   type MediaEnvelope,
+  type QuotedRef,
 } from "@wa/media-pipeline";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
@@ -376,6 +377,8 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
+  const [replyingTo, setReplyingTo] = useState<QuotedRef | null>(null);
+  const [editing, setEditing] = useState<string | null>(null); // msgUuid being edited
 
   const lastReadRef = useRef(0);
   const subscribedRef = useRef(false);
@@ -443,10 +446,36 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
     setDraft("");
     lastTypingRef.current = 0;
     services.sendTyping(conversationId, false); // stop the typing indicator on send
-    await services.sendText(conversationId, text);
+    if (editing) {
+      const target = editing;
+      setEditing(null);
+      await services.editMessage(conversationId, target, text);
+    } else {
+      const reply = replyingTo ?? undefined;
+      setReplyingTo(null);
+      await services.sendText(conversationId, text, reply);
+    }
     const next = await services.thread(conversationId);
     setMessages(next);
   }
+
+  // Message-action handlers passed down to each bubble.
+  const actions: MessageActions = {
+    reply: (m) => {
+      setEditing(null);
+      setReplyingTo({ msgUuid: m.msgUuid, snippet: snippetOf(m), mine: m.mine });
+    },
+    edit: (m) => {
+      setReplyingTo(null);
+      setEditing(m.msgUuid);
+      setDraft(parseTextMessage(m.body).text);
+    },
+    copy: (m) => void navigator.clipboard?.writeText(parseTextMessage(m.body).text).catch(() => {}),
+    deleteForEveryone: (m) => void services.deleteForEveryone(conversationId, m.msgUuid),
+    deleteForMe: (m) => void services.deleteForMe(m.msgUuid),
+    togglePin: (m) => void services.togglePin(m.msgUuid, !m.pinned),
+    toggleStar: (m) => void services.toggleStar(m.msgUuid, !m.starred),
+  };
 
   // Every image/video in the thread, so the lightbox can page across them.
   const visuals: MediaEnvelope[] = [];
@@ -482,20 +511,44 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
       <div className="messages">
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
         {messages.map((m) => (
-          <MessageBubble key={m.msgUuid} message={m} onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })} />
+          <MessageBubble
+            key={m.msgUuid}
+            message={m}
+            actions={actions}
+            onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })}
+          />
         ))}
       </div>
       <DownloadsPanel />
+      {replyingTo || editing ? (
+        <div className="reply-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border, #e2e2e2)", fontSize: "0.82rem" }}>
+          <span style={{ flex: 1, opacity: 0.8 }}>
+            {editing ? "✎ Editing message" : `↩ Replying: ${replyingTo?.snippet}`}
+          </span>
+          <button
+            className="btn small ghost"
+            type="button"
+            aria-label="Cancel"
+            onClick={() => {
+              setReplyingTo(null);
+              setEditing(null);
+              setDraft("");
+            }}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
       <form className="composer" onSubmit={send}>
         <input
           className="input"
           value={draft}
           onChange={(e) => onDraftChange(e.target.value)}
-          placeholder="Message"
+          placeholder={editing ? "Edit message" : "Message"}
           aria-label="Type a message"
         />
         <button className="btn" type="submit">
-          Send
+          {editing ? "Save" : "Send"}
         </button>
       </form>
       {gallery ? <Gallery items={gallery.items} startKey={gallery.startKey} onClose={() => setGallery(null)} /> : null}
@@ -517,14 +570,82 @@ function formatLastSeen(ms: number): string {
   return new Date(ms).toLocaleDateString();
 }
 
-/** MessageBubble renders a text message, or — when the decrypted body carries a
- *  media envelope — the attachment(s) plus any caption. */
-function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (env: MediaEnvelope) => void }) {
+/** Callbacks a bubble's action menu invokes (FR-MSG-04..07). */
+interface MessageActions {
+  reply(m: ThreadMessage): void;
+  edit(m: ThreadMessage): void;
+  copy(m: ThreadMessage): void;
+  deleteForEveryone(m: ThreadMessage): void;
+  deleteForMe(m: ThreadMessage): void;
+  togglePin(m: ThreadMessage): void;
+  toggleStar(m: ThreadMessage): void;
+}
+
+const EDIT_WINDOW_MS = 15 * 60 * 1000; // FR-MSG-06
+const DELETE_WINDOW_MS = 48 * 60 * 60 * 1000; // FR-MSG-05
+
+/** snippetOf gives a short preview of a message for a reply quote. */
+function snippetOf(m: ThreadMessage): string {
+  if (m.deleted) return "deleted message";
+  if (parseMediaMessage(m.body)) return "📎 Media";
+  return parseTextMessage(m.body).text.slice(0, 80);
+}
+
+/** MessageBubble renders a text/media message with its quoted reply, edited/
+ *  star/pin state, and a hover action menu (reply/copy/edit/delete/star/pin). */
+function MessageBubble({
+  message,
+  actions,
+  onOpen,
+}: {
+  message: ThreadMessage;
+  actions: MessageActions;
+  onOpen: (env: MediaEnvelope) => void;
+}) {
+  const [menu, setMenu] = useState(false);
   const media = message.deleted ? null : parseMediaMessage(message.body);
   const text = media || message.deleted ? null : parseTextMessage(message.body);
+  const age = Date.now() - message.createdAt;
+  const canEdit = message.mine && !message.deleted && !media && age < EDIT_WINDOW_MS;
+  const canDeleteAll = message.mine && !message.deleted && age < DELETE_WINDOW_MS;
+
+  const run = (fn: (m: ThreadMessage) => void) => () => {
+    setMenu(false);
+    fn(message);
+  };
 
   return (
-    <div className={message.mine ? "bubble mine" : "bubble theirs"}>
+    <div className={message.mine ? "bubble mine" : "bubble theirs"} style={{ position: "relative" }}>
+      {message.starred ? <span title="Starred" style={{ position: "absolute", top: -8, left: -6 }}>⭐</span> : null}
+      {message.pinned ? <span title="Pinned" style={{ position: "absolute", top: -8, right: 14 }}>📌</span> : null}
+      {!message.deleted ? (
+        <button
+          className="btn small ghost"
+          aria-label="Message actions"
+          onClick={() => setMenu((v) => !v)}
+          style={{ position: "absolute", top: 2, right: 2, padding: "0 4px", lineHeight: 1, opacity: 0.6 }}
+        >
+          ⋯
+        </button>
+      ) : null}
+      {menu ? (
+        <div className="msg-menu" style={{ position: "absolute", top: 20, right: 2, zIndex: 5, background: "var(--panel, #fff)", border: "1px solid var(--border, #ccc)", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column", minWidth: 150 }}>
+          <button className="menu-item" onClick={run(actions.reply)}>↩ Reply</button>
+          {text ? <button className="menu-item" onClick={run(actions.copy)}>⧉ Copy</button> : null}
+          <button className="menu-item" onClick={run(actions.toggleStar)}>{message.starred ? "☆ Unstar" : "⭐ Star"}</button>
+          <button className="menu-item" onClick={run(actions.togglePin)}>{message.pinned ? "📌 Unpin" : "📌 Pin"}</button>
+          {canEdit ? <button className="menu-item" onClick={run(actions.edit)}>✎ Edit</button> : null}
+          {canDeleteAll ? <button className="menu-item danger" onClick={run(actions.deleteForEveryone)}>🗑 Delete for everyone</button> : null}
+          <button className="menu-item danger" onClick={run(actions.deleteForMe)}>🗑 Delete for me</button>
+        </div>
+      ) : null}
+
+      {text?.reply ? (
+        <div className="reply-quote" style={{ borderLeft: "3px solid #128C7E", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,0.06)", borderRadius: 4, fontSize: "0.8rem", opacity: 0.85 }}>
+          {text.reply.snippet}
+        </div>
+      ) : null}
+
       {media ? (
         <>
           <div className="bubble-media">
@@ -536,7 +657,8 @@ function MessageBubble({ message, onOpen }: { message: ThreadMessage; onOpen: (e
         </>
       ) : (
         <>
-          <span>{message.deleted ? "This message was deleted" : text?.text}</span>
+          <span>{message.deleted ? <em style={{ opacity: 0.7 }}>This message was deleted</em> : text?.text}</span>
+          {message.edited && !message.deleted ? <span style={{ fontSize: "0.68rem", opacity: 0.6, marginLeft: 4 }}>(edited)</span> : null}
           {text?.linkPreview ? <LinkPreviewCard preview={text.linkPreview} /> : null}
         </>
       )}

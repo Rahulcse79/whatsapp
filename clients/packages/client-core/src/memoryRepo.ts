@@ -21,6 +21,7 @@ interface MsgRow {
   seq: number;
   body: string;
   deleted: boolean;
+  edited?: boolean;
   mine: boolean;
   state: string;
   pinned?: boolean;
@@ -42,6 +43,8 @@ interface OutboxRow {
   conversationId: string;
   payload: Uint8Array;
   createdAt: number;
+  kind: MsgKind;
+  overlayTarget?: string;
 }
 
 // Monotonic message-state ordering so a bubble's ticks only ever advance
@@ -88,11 +91,16 @@ export class MemoryMessageRepo implements MessageRepo {
       this.touch(ins.conversationId, ins.seq, body === "[encrypted]" ? "New message" : body, ins.acceptedAtMs);
     }
     for (const ov of plan.overlays) {
+      const m = this.messages.get(ov.targetMsgUuid);
+      if (!m) continue;
       if (ov.kind === MsgKind.OVERLAY_DELETE) {
-        const m = this.messages.get(ov.targetMsgUuid);
-        if (m) {
-          m.deleted = true;
-          m.body = "";
+        m.deleted = true;
+        m.body = "";
+      } else if (ov.kind === MsgKind.OVERLAY_EDIT) {
+        const newBody = bodies?.get(ov.msgUuid);
+        if (newBody !== undefined && !m.deleted) {
+          m.body = newBody;
+          m.edited = true;
         }
       }
     }
@@ -100,6 +108,32 @@ export class MemoryMessageRepo implements MessageRepo {
   }
 
   enqueueOutgoing(d: OutgoingDraft): Promise<void> {
+    const kind = d.kind ?? MsgKind.TEXT;
+
+    // Overlay sends (edit/delete) target an existing message — apply optimistically
+    // to the local bubble, and queue the overlay; never create a new bubble.
+    if (kind === MsgKind.OVERLAY_EDIT || kind === MsgKind.OVERLAY_DELETE) {
+      const target = this.messages.get(d.overlayTarget ?? "");
+      if (target && !target.deleted) {
+        if (kind === MsgKind.OVERLAY_DELETE) {
+          target.deleted = true;
+          target.body = "";
+        } else {
+          target.body = d.plaintext;
+          target.edited = true;
+        }
+      }
+      this.outbox.push({
+        clientRef: d.clientRef,
+        conversationId: d.conversationId,
+        payload: d.payload,
+        createdAt: d.now,
+        kind,
+        overlayTarget: d.overlayTarget,
+      });
+      return Promise.resolve();
+    }
+
     this.messages.set(d.clientRef, {
       msgUuid: d.clientRef,
       conversationId: d.conversationId,
@@ -111,8 +145,17 @@ export class MemoryMessageRepo implements MessageRepo {
       acceptedAt: 0,
       createdAt: d.now,
     });
-    this.outbox.push({ clientRef: d.clientRef, conversationId: d.conversationId, payload: d.payload, createdAt: d.now });
+    this.outbox.push({ clientRef: d.clientRef, conversationId: d.conversationId, payload: d.payload, createdAt: d.now, kind });
     this.touch(d.conversationId, 0, d.listText ?? d.plaintext, d.now);
+    return Promise.resolve();
+  }
+
+  deleteForMe(msgUuid: string): Promise<void> {
+    const m = this.messages.get(msgUuid);
+    if (m) {
+      m.deleted = true;
+      m.body = "";
+    }
     return Promise.resolve();
   }
 
@@ -144,14 +187,18 @@ export class MemoryMessageRepo implements MessageRepo {
     const sorted = [...this.outbox].sort((a, b) => a.createdAt - b.createdAt || a.clientRef.localeCompare(b.clientRef));
     // Explicit MsgSend[] so the "msg_send" discriminant stays a literal through
     // Promise.resolve (which would otherwise widen it to string).
-    const sends: MsgSend[] = sorted.map((o) => ({
-      t: "msg_send",
-      clientRef: o.clientRef,
-      msgUuid: o.clientRef,
-      conversationId: o.conversationId,
-      kind: MsgKind.TEXT,
-      sealedEnvelope: o.payload,
-    }));
+    const sends: MsgSend[] = sorted.map((o) => {
+      const s: MsgSend = {
+        t: "msg_send",
+        clientRef: o.clientRef,
+        msgUuid: o.clientRef,
+        conversationId: o.conversationId,
+        kind: o.kind,
+        sealedEnvelope: o.payload,
+      };
+      if (o.overlayTarget) s.overlayTarget = o.overlayTarget;
+      return s;
+    });
     return Promise.resolve(sends);
   }
 
@@ -179,6 +226,7 @@ export class MemoryMessageRepo implements MessageRepo {
         mine: m.mine,
         state: m.state,
         deleted: m.deleted,
+        edited: m.edited ?? false,
         pinned: m.pinned ?? false,
         starred: m.starred ?? false,
         createdAt: m.createdAt,

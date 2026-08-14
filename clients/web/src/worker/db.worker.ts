@@ -4,8 +4,8 @@
 // T0.20 DevSessionCipher (INSECURE dev double; real libsignal is the seam). It
 // speaks the RPC protocol in ./rpc.
 
-import { MemoryMessageRepo, type InboxBatch } from "@wa/client-core";
-import type { EnqueueTextInput, MarkReceiptInput, MarkSentInput, RpcRequest, SearchInput } from "./rpc";
+import { MemoryMessageRepo, MsgKind, type InboxBatch } from "@wa/client-core";
+import type { EnqueueOverlayInput, EnqueueTextInput, MarkReceiptInput, MarkSentInput, RpcRequest, SearchInput } from "./rpc";
 
 const repo = new MemoryMessageRepo();
 const encoder = new TextEncoder();
@@ -79,6 +79,34 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
       now: input.now,
       listText: input.listText,
     });
+  },
+  enqueueOverlay: async (arg) => {
+    const input = arg as EnqueueOverlayInput;
+    // Delete needs no content; edit seals the new body so the recipient decrypts
+    // it. The overlay's clientRef becomes its own msgUuid on the wire; the
+    // recipient keys the decrypted edit text by it (planInboxBatch → OverlayApply).
+    const payload = await seal(input.conversationId, input.kind === "delete" ? "" : input.text);
+    await repo.enqueueOutgoing({
+      clientRef: input.clientRef,
+      conversationId: input.conversationId,
+      plaintext: input.text,
+      payload,
+      now: input.now,
+      kind: input.kind === "delete" ? MsgKind.OVERLAY_DELETE : MsgKind.OVERLAY_EDIT,
+      overlayTarget: input.targetMsgUuid,
+    });
+  },
+  setPinned: async (arg) => {
+    const i = arg as { msgUuid: string; pinned: boolean };
+    await repo.setPinned(i.msgUuid, i.pinned);
+  },
+  setStarred: async (arg) => {
+    const i = arg as { msgUuid: string; starred: boolean };
+    await repo.setStarred(i.msgUuid, i.starred);
+  },
+  deleteForMe: async (arg) => {
+    const i = arg as { msgUuid: string };
+    await repo.deleteForMe(i.msgUuid);
   },
   markSent: async (arg) => {
     const input = arg as MarkSentInput;

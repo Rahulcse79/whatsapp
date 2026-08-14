@@ -15,7 +15,7 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { encodeTextMessage, generateLinkPreview } from "@wa/media-pipeline";
+import { encodeTextMessage, generateLinkPreview, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
@@ -140,15 +140,48 @@ export class AppServices {
     this.ws.start();
   }
 
-  async sendText(conversationId: string, text: string): Promise<void> {
+  async sendText(conversationId: string, text: string, reply?: QuotedRef): Promise<void> {
     // Generate the link preview on THIS (sender) device and carry it in the
     // sealed body (FR-MSG-08). Best-effort: a URL-free message skips the fetch,
-    // and any failure just sends plain text.
+    // and any failure just sends plain text. A reply carries a quoted ref too.
     const preview = await generateLinkPreview(text, webHtmlFetcher).catch(() => null);
-    const body = encodeTextMessage(text, preview ?? undefined);
+    const body = encodeTextMessage(text, preview ?? undefined, reply);
     await this.db.enqueueText({ conversationId, text: body, listText: text, clientRef: newId(), now: Date.now() });
     this.notifyChange(); // optimistic: show my message immediately
     await this.ws?.flush();
+  }
+
+  /** editMessage sends an OVERLAY_EDIT (server enforces the 15-min window); the
+   *  recipient's bubble rewrites to the new text. */
+  async editMessage(conversationId: string, msgUuid: string, newText: string): Promise<void> {
+    const body = encodeTextMessage(newText);
+    await this.db.enqueueOverlay({ conversationId, targetMsgUuid: msgUuid, kind: "edit", text: body, clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** deleteForEveryone sends an OVERLAY_DELETE (server enforces the 48-h window);
+   *  the recipient's bubble becomes "This message was deleted". */
+  async deleteForEveryone(conversationId: string, msgUuid: string): Promise<void> {
+    await this.db.enqueueOverlay({ conversationId, targetMsgUuid: msgUuid, kind: "delete", text: "", clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** deleteForMe hides the message locally only — no overlay leaves the device. */
+  async deleteForMe(msgUuid: string): Promise<void> {
+    await this.db.deleteForMe({ msgUuid });
+    this.notifyChange();
+  }
+
+  async togglePin(msgUuid: string, pinned: boolean): Promise<void> {
+    await this.db.setPinned({ msgUuid, pinned });
+    this.notifyChange();
+  }
+
+  async toggleStar(msgUuid: string, starred: boolean): Promise<void> {
+    await this.db.setStarred({ msgUuid, starred });
+    this.notifyChange();
   }
 
   /** startDirectChat resolves a phone number to a registered user, then gets (or

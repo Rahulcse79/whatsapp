@@ -29,7 +29,8 @@ export interface MessageInsert {
 export interface OverlayApply {
   conversationId: string;
   targetMsgUuid: string;
-  kind: MsgKind; // OVERLAY_EDIT | OVERLAY_DELETE
+  msgUuid: string; // the overlay item's own id — keys its decrypted content (edit body)
+  kind: MsgKind; // OVERLAY_EDIT | OVERLAY_DELETE | REACTION | PIN
 }
 
 export interface BatchPlan {
@@ -66,7 +67,7 @@ export function planInboxBatch(batch: InboxBatch, cursors: Cursors): BatchPlan {
       // edit/delete/reaction/pin reference an existing message — they are never
       // new bubbles. Content (edit body, reaction emoji) rides the ciphertext;
       // the repo applies it after decryption. Delete needs no content.
-      overlays.push({ conversationId: it.conversationId, targetMsgUuid: it.overlayTarget ?? "", kind: it.kind });
+      overlays.push({ conversationId: it.conversationId, targetMsgUuid: it.overlayTarget ?? "", msgUuid: it.msgUuid, kind: it.kind });
     } else if (it.seq > cursors.get(it.conversationId)) {
       inserts.push({
         msgUuid: it.msgUuid,
@@ -99,6 +100,7 @@ export interface ThreadMessage {
   mine: boolean;
   state: string;
   deleted: boolean;
+  edited: boolean;
   pinned: boolean;
   starred: boolean;
   createdAt: number;
@@ -110,6 +112,10 @@ export interface OutgoingDraft {
   plaintext: string; // kept locally for the optimistic bubble; never sent in clear
   payload: Uint8Array; // sealed envelope actually transmitted
   now: number;
+  /** Non-TEXT kinds carry an overlay (edit/delete/react/pin) that targets an
+   *  existing message rather than creating a new bubble. Defaults to TEXT. */
+  kind?: MsgKind;
+  overlayTarget?: string; // original msg_uuid, for overlay kinds
   /** Human text for the chat-list preview. Defaults to plaintext; set it when
    *  plaintext is an encoded body (e.g. a link-preview message) so the list
    *  shows the message, not its JSON. */
@@ -125,7 +131,7 @@ export interface OutgoingDraft {
 export interface MessageRepo {
   init(): Promise<ConversationCursor[]>;
   cursorSnapshot(): ConversationCursor[];
-  persistInboxBatch(batch: InboxBatch): Promise<ConversationCursor[]>;
+  persistInboxBatch(batch: InboxBatch, bodies?: Map<string, string>): Promise<ConversationCursor[]>;
   enqueueOutgoing(d: OutgoingDraft): Promise<void>;
   markSent(clientRef: string, seq: number): Promise<void>;
   pendingSends(): Promise<MsgSend[]>;
@@ -135,6 +141,8 @@ export interface MessageRepo {
   setPinned(msgUuid: string, pinned: boolean): Promise<void>;
   /** Purely local star — never leaves the device. */
   setStarred(msgUuid: string, starred: boolean): Promise<void>;
+  /** Delete-for-me: hide the message locally without sending an overlay. */
+  deleteForMe(msgUuid: string): Promise<void>;
   /** Full-text search over decrypted local message bodies (ADR-005). */
   search(query: string, opts?: SearchOptions): Promise<SearchHit[]>;
 }
@@ -159,24 +167,34 @@ export class MessageStore implements MessageRepo {
     return this.cursors.snapshot().map((c) => ({ conversationId: c.conversationId, lastSeq: c.lastSeq }));
   }
 
-  /** persistInboxBatch durably applies a batch and returns the ClientAck watermark. */
-  async persistInboxBatch(batch: InboxBatch): Promise<ConversationCursor[]> {
+  /** persistInboxBatch durably applies a batch and returns the ClientAck
+   *  watermark. When `bodies` supplies a decrypted plaintext for a msg_uuid it is
+   *  stored (and previewed); otherwise the row keeps the "[encrypted]" placeholder. */
+  async persistInboxBatch(batch: InboxBatch, bodies?: Map<string, string>): Promise<ConversationCursor[]> {
     const plan = planInboxBatch(batch, this.cursors);
 
     for (const ins of plan.inserts) {
+      const body = bodies?.get(ins.msgUuid) ?? "[encrypted]";
       await this.db.run(
         "INSERT OR IGNORE INTO messages(msg_uuid, conversation_id, seq, sender, kind, body, deleted, mine, state, accepted_at, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        [ins.msgUuid, ins.conversationId, ins.seq, ins.sender, ins.kind, "[encrypted]", 0, 0, "received", ins.acceptedAtMs, ins.acceptedAtMs],
+        [ins.msgUuid, ins.conversationId, ins.seq, ins.sender, ins.kind, body, 0, 0, "received", ins.acceptedAtMs, ins.acceptedAtMs],
       );
-      await this.touchConversation(ins.conversationId, ins.seq, "New message", ins.acceptedAtMs);
+      const preview = body === "[encrypted]" ? "New message" : listPreview(body);
+      await this.touchConversation(ins.conversationId, ins.seq, preview, ins.acceptedAtMs);
     }
 
     for (const ov of plan.overlays) {
       if (ov.kind === MsgKind.OVERLAY_DELETE) {
         // Delete is terminal (delete-wins, @wa/sync-engine conflict rules).
         await this.db.run("UPDATE messages SET deleted = 1, body = '' WHERE msg_uuid = ?", [ov.targetMsgUuid]);
+      } else if (ov.kind === MsgKind.OVERLAY_EDIT) {
+        // The edit's new plaintext rides the overlay's own ciphertext, decrypted
+        // into `bodies` under the overlay item's id; apply it to the target.
+        const newBody = bodies?.get(ov.msgUuid);
+        if (newBody !== undefined) {
+          await this.db.run("UPDATE messages SET body = ? WHERE msg_uuid = ? AND deleted = 0", [newBody, ov.targetMsgUuid]);
+        }
       }
-      // OVERLAY_EDIT rewrites the plaintext body — applied post-decryption (T0.20/T0.21).
     }
 
     for (const w of plan.watermark) {
@@ -246,6 +264,7 @@ export class MessageStore implements MessageRepo {
       seq: Number(r.seq),
       body: String(r.body),
       deleted: Number(r.deleted) === 1,
+      edited: false, // no column on the db path yet (mobile T5.05 pending); the body still updates
       mine: Number(r.mine) === 1,
       state: String(r.state),
       pinned: Number(r.pinned) === 1,
@@ -260,6 +279,10 @@ export class MessageStore implements MessageRepo {
 
   async setStarred(msgUuid: string, starred: boolean): Promise<void> {
     await this.db.run("UPDATE messages SET starred = ? WHERE msg_uuid = ?", [starred ? 1 : 0, msgUuid]);
+  }
+
+  async deleteForMe(msgUuid: string): Promise<void> {
+    await this.db.run("UPDATE messages SET deleted = 1, body = '' WHERE msg_uuid = ?", [msgUuid]);
   }
 
   /**
@@ -311,4 +334,20 @@ export class MessageStore implements MessageRepo {
       [conversationId, "", preview, seq, ts],
     );
   }
+}
+
+// listPreview derives a chat-list snippet from a decrypted message body without
+// importing the media-pipeline codec: a bare-string body is plain text; an
+// encoded body ({t,text,lp,...}) yields its text field. Kept local + defensive.
+function listPreview(body: string): string {
+  if (body.startsWith("{")) {
+    try {
+      const parsed = JSON.parse(body) as { text?: unknown };
+      if (typeof parsed.text === "string") return parsed.text.slice(0, 120);
+    } catch {
+      /* not JSON → fall through */
+    }
+    return "New message";
+  }
+  return body.slice(0, 120);
 }

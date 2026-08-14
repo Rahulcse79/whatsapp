@@ -55,6 +55,36 @@ export interface Invite {
   maxUses: number;
 }
 
+/** GroupSettings mirrors domain.Settings (who-can-post / edit-info / announcements). */
+export interface GroupSettings {
+  who_can_post: string;
+  who_can_edit_info: string;
+  announcements: boolean;
+}
+
+/** GroupInfo is the client view of a group (GET/POST /v1/groups). */
+export interface GroupInfo {
+  id: string;
+  name: string;
+  description: string;
+  settings: GroupSettings;
+  version: number;
+  myRole: string; // owner | admin | member
+}
+
+/** GroupMember is one member row (user id + role name). */
+export interface GroupMember {
+  userId: string;
+  role: string;
+}
+
+/** GroupInviteLink is a group invite (token + shareable URL; qr === url for now). */
+export interface GroupInviteLink {
+  token: string;
+  url: string;
+  qr: string;
+}
+
 export class AppServices {
   readonly otp: OtpClient;
   readonly sessions: SessionManager;
@@ -66,6 +96,8 @@ export class AppServices {
   private readonly changeListeners = new Set<() => void>();
   private readonly peerByConv = new Map<string, string>(); // conversationId → peer userId
   private readonly profileCache = new Map<string, PublicProfile>(); // userId → public profile
+  private readonly groupCache = new Map<string, GroupInfo>(); // conversationId → group info
+  private readonly notGroup = new Set<string>(); // conversationIds confirmed to be direct chats
   private readonly typingByConv = new Map<string, number>(); // conversationId → typing-expiry ts
   private readonly presenceByUser = new Map<string, { online: boolean; lastSeenMs: number }>();
 
@@ -421,6 +453,138 @@ export class AppServices {
     if (!res.ok) throw new Error("Couldn't create an invite link.");
     const b = (await res.json()) as { token: string; url: string; expires_at_ms: number; max_uses: number };
     return { token: b.token, url: b.url, expiresAtMs: b.expires_at_ms, maxUses: b.max_uses };
+  }
+
+  // ── groups (T5.09) ───────────────────────────────────────────────────────────
+
+  private toGroupInfo(g: {
+    id: string;
+    name: string;
+    description?: string;
+    settings: GroupSettings;
+    version: number;
+    my_role?: string;
+  }): GroupInfo {
+    return {
+      id: g.id,
+      name: g.name,
+      description: g.description ?? "",
+      settings: g.settings,
+      version: g.version,
+      myRole: g.my_role ?? "member",
+    };
+  }
+
+  /** createGroup makes a group (owner = me) with the given members and returns
+   *  its conversation id (== group id). Navigates the caller into the thread. */
+  async createGroup(name: string, description: string, memberIds: string[]): Promise<string> {
+    const res = await this.authedRequest("POST", "/v1/groups", {
+      name: name.trim(),
+      description: description.trim(),
+      member_ids: memberIds,
+    });
+    if (!res.ok) throw new Error("Couldn't create the group.");
+    const b = (await res.json()) as { conversation_id: string; group: Parameters<AppServices["toGroupInfo"]>[0] };
+    this.groupCache.set(b.conversation_id, this.toGroupInfo(b.group));
+    this.notifyChange();
+    return b.conversation_id;
+  }
+
+  /** loadGroup fetches (and caches) group info for a conversation. Returns null
+   *  when the conversation isn't a group (404) — so callers can tell 1:1 apart. */
+  async loadGroup(conversationId: string): Promise<GroupInfo | null> {
+    const res = await this.authedRequest("GET", `/v1/groups/${conversationId}`);
+    if (res.status === 404) {
+      this.notGroup.add(conversationId);
+      return null;
+    }
+    if (!res.ok) return this.groupCache.get(conversationId) ?? null;
+    const g = this.toGroupInfo((await res.json()) as Parameters<AppServices["toGroupInfo"]>[0]);
+    this.groupCache.set(conversationId, g);
+    return g;
+  }
+
+  /** groupOf returns cached group info for a conversation, if known. */
+  groupOf(conversationId: string): GroupInfo | undefined {
+    return this.groupCache.get(conversationId);
+  }
+
+  /** ensureConversationKind lazily classifies a conversation (group vs direct)
+   *  for the chat list, caching both outcomes so it fetches each at most once.
+   *  Note: a recipient's inbox sets peerByConv even for groups, so we can't use
+   *  that as a "direct" signal — only a confirmed 404 (notGroup) means direct. */
+  ensureConversationKind(conversationId: string): void {
+    if (this.groupCache.has(conversationId) || this.notGroup.has(conversationId)) return;
+    void this.loadGroup(conversationId).then(() => this.notifyChange());
+  }
+
+  /** groupNameOf returns a cached group's name for a conversation, or "". */
+  groupNameOf(conversationId: string): string {
+    return this.groupCache.get(conversationId)?.name ?? "";
+  }
+
+  async listGroupMembers(conversationId: string): Promise<GroupMember[]> {
+    const res = await this.authedRequest("GET", `/v1/groups/${conversationId}/members?limit=256`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { members?: Array<{ user_id: string; role: string }> };
+    const members = (b.members ?? []).map((m) => ({ userId: m.user_id, role: m.role }));
+    for (const m of members) void this.loadUserProfile(m.userId); // resolve names
+    return members;
+  }
+
+  async addGroupMembers(conversationId: string, userIds: string[]): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/groups/${conversationId}/members`, { user_ids: userIds });
+    if (!res.ok) throw new Error("Couldn't add those members.");
+  }
+  async removeGroupMember(conversationId: string, userId: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/groups/${conversationId}/members/${userId}`);
+    if (!res.ok) throw new Error("Couldn't remove that member.");
+  }
+  /** setGroupRole promotes/demotes a member. role: 0=member, 1=admin (owner is
+   *  not assignable — server rejects it). */
+  async setGroupRole(conversationId: string, userId: string, role: number): Promise<void> {
+    const res = await this.authedRequest("PUT", `/v1/groups/${conversationId}/members/${userId}/role`, { role });
+    if (!res.ok) throw new Error("Couldn't change that member's role.");
+  }
+  async updateGroupInfo(conversationId: string, name: string, description: string): Promise<void> {
+    const res = await this.authedRequest("PATCH", `/v1/groups/${conversationId}`, { name, description });
+    if (!res.ok) throw new Error("Couldn't update the group.");
+    const cached = this.groupCache.get(conversationId);
+    if (cached) this.groupCache.set(conversationId, { ...cached, name, description });
+    this.notifyChange();
+  }
+  async setGroupSettings(conversationId: string, settings: GroupSettings): Promise<void> {
+    const res = await this.authedRequest("PUT", `/v1/groups/${conversationId}/settings`, settings);
+    if (!res.ok) throw new Error("Couldn't save group settings.");
+    const cached = this.groupCache.get(conversationId);
+    if (cached) this.groupCache.set(conversationId, { ...cached, settings });
+    this.notifyChange();
+  }
+  async leaveGroup(conversationId: string): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/groups/${conversationId}/leave`);
+    if (!res.ok) throw new Error("Couldn't leave the group.");
+    this.groupCache.delete(conversationId);
+  }
+  async deleteGroup(conversationId: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/groups/${conversationId}`);
+    if (!res.ok) throw new Error("Couldn't delete the group.");
+    this.groupCache.delete(conversationId);
+  }
+  async createGroupInvite(conversationId: string): Promise<GroupInviteLink> {
+    const res = await this.authedRequest("POST", `/v1/groups/${conversationId}/invite-links`, {});
+    if (!res.ok) throw new Error("Couldn't create a group invite link.");
+    const b = (await res.json()) as { token: string; url: string; qr: string };
+    return { token: b.token, url: b.url, qr: b.qr };
+  }
+  /** joinGroup consumes an invite token and returns the joined group's id. */
+  async joinGroup(token: string): Promise<string> {
+    const res = await this.authedRequest("POST", "/v1/groups/join", { token: token.trim() });
+    if (!res.ok) throw new Error("That invite is invalid, expired, or full.");
+    const b = (await res.json()) as { group: Parameters<AppServices["toGroupInfo"]>[0] };
+    const g = this.toGroupInfo(b.group);
+    this.groupCache.set(g.id, g);
+    this.notifyChange();
+    return g.id;
   }
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */
   isPeerTyping(conversationId: string): boolean {

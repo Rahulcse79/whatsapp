@@ -41,7 +41,41 @@ func (s *Store) CreateGroup(ctx context.Context, g groups.Group, members []group
 			return err
 		}
 	}
+	// The group is also a conversation (id == group id, kind=1). The chat
+	// accept/fan-out pipeline resolves recipients from conversation_members, so
+	// group membership must be mirrored there or group messages deliver to
+	// nobody. group_id FK is ON DELETE CASCADE, so deleting the group drops the
+	// conversation row and its members.
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO conversations (id, kind, group_id) VALUES ($1, 1, $1) ON CONFLICT (id) DO NOTHING`,
+		g.ID); err != nil {
+		return err
+	}
+	if err := mirrorMembers(ctx, tx, g.ID, membersUserIDs(members)); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
+}
+
+// mirrorMembers upserts the given users into conversation_members for convID —
+// keeping the messaging fan-out membership in sync with group_members.
+func mirrorMembers(ctx context.Context, tx pgx.Tx, convID string, userIDs []string) error {
+	if len(userIDs) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx,
+		`INSERT INTO conversation_members (conversation_id, user_id)
+		 SELECT $1, u::uuid FROM unnest($2::text[]) AS u
+		 ON CONFLICT DO NOTHING`, convID, userIDs)
+	return err
+}
+
+func membersUserIDs(members []groups.Member) []string {
+	out := make([]string, len(members))
+	for i, m := range members {
+		out[i] = m.UserID
+	}
+	return out
 }
 
 func (s *Store) GetGroup(ctx context.Context, id string) (groups.Group, error) {
@@ -199,6 +233,11 @@ func (s *Store) AddMembers(ctx context.Context, gid string, userIDs []string) ([
 		return nil, 0, err
 	}
 
+	// Mirror into conversation_members so the added users receive group messages.
+	if err := mirrorMembers(ctx, tx, gid, added); err != nil {
+		return nil, 0, err
+	}
+
 	var version int64
 	if err := tx.QueryRow(ctx, `UPDATE groups SET version = version + 1 WHERE id = $1 RETURNING version`, gid).Scan(&version); err != nil {
 		return nil, 0, err
@@ -219,6 +258,10 @@ func (s *Store) RemoveMember(ctx context.Context, gid, uid string) (int64, bool,
 	}
 	if tag.RowsAffected() == 0 {
 		return 0, false, tx.Commit(ctx)
+	}
+	// Drop the mirrored conversation membership so they stop receiving messages.
+	if _, err := tx.Exec(ctx, `DELETE FROM conversation_members WHERE conversation_id = $1 AND user_id = $2`, gid, uid); err != nil {
+		return 0, false, err
 	}
 	var version int64
 	if err := tx.QueryRow(ctx, `UPDATE groups SET version = version + 1 WHERE id = $1 RETURNING version`, gid).Scan(&version); err != nil {
@@ -354,6 +397,9 @@ func (s *Store) JoinViaInvite(ctx context.Context, token, userID string, maxMemb
 	}
 
 	if _, err := tx.Exec(ctx, `INSERT INTO group_members (group_id, user_id, role) VALUES ($1, $2, 0)`, gid, userID); err != nil {
+		return groups.Group{}, 0, err
+	}
+	if err := mirrorMembers(ctx, tx, gid, []string{userID}); err != nil {
 		return groups.Group{}, 0, err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE invite_links SET uses = uses + 1 WHERE token = $1`, token); err != nil {

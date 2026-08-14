@@ -75,12 +75,12 @@ of the screens (media send, groups, calls, stories, settings) are the open work.
 
 | ID | Feature | D | S | C |
 |---|---|:-:|:-:|:-:|
-| FR-GRP-01 | Create group ≤1,024 (name, description, avatar) | ✅ | ✅ | 🔶 |
-| FR-GRP-02 | Roles owner/admin/member; promote/demote | ✅ | ✅ | ⬜ |
-| FR-GRP-03 | Add/remove members; leave; delete | ✅ | ✅ | 🔶 |
-| FR-GRP-04 | Invite links + QR join; revocation | ✅ | ✅ | ⬜ |
-| FR-GRP-05 | Post permissions; announcements mode | ✅ | ✅ | ⬜ |
-| FR-GRP-06 | @mentions; pinned; aggregate receipts | ✅ | ✅ | ⬜ |
+| FR-GRP-01 | Create group ≤1,024 (name, description; avatar image deferred) | ✅ | ✅ | ✅ |
+| FR-GRP-02 | Roles owner/admin/member; promote/demote | ✅ | ✅ | ✅ |
+| FR-GRP-03 | Add/remove members; leave; delete | ✅ | ✅ | ✅ |
+| FR-GRP-04 | Invite links + QR join; revocation | ✅ | ✅ | 🔶 |
+| FR-GRP-05 | Post permissions; announcements mode | ✅ | ✅ | ✅ |
+| FR-GRP-06 | @mentions; pinned; aggregate receipts | ✅ | ✅ | 🔶 |
 | FR-GRP-07 | Sender-Key encryption; rotation on membership change | ✅ | ✅ | 🔶 |
 
 ## MED — Media

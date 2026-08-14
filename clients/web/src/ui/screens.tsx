@@ -14,7 +14,7 @@ import {
   type MediaEnvelope,
   type QuotedRef,
 } from "@wa/media-pipeline";
-import { useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { messageOf } from "./errors";
 import { useCall } from "../call/CallContext";
@@ -22,7 +22,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { Invite, MatchedContact, UserRef } from "../services/appServices";
+import type { GroupInfo, GroupMember, Invite, MatchedContact, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -414,12 +414,14 @@ export function ChatList({
   onSearch,
   onProfile,
   onContacts,
+  onNewGroup,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
   onSearch: () => void;
   onProfile: () => void;
   onContacts: () => void;
+  onNewGroup: () => void;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
@@ -435,6 +437,7 @@ export function ChatList({
           for (const conv of c) {
             const peer = services.peerOf(conv.conversationId);
             if (peer) void services.loadUserProfile(peer); // resolve names for rows
+            services.ensureConversationKind(conv.conversationId); // group vs direct → group names
           }
         })
         .catch(() => {});
@@ -463,6 +466,9 @@ export function ChatList({
           <button className="btn small ghost" onClick={onSearch} aria-label="Search messages">
             🔍 Search
           </button>
+          <button className="btn small ghost" onClick={onNewGroup} aria-label="New group">
+            ＋👥 Group
+          </button>
           <button className="btn small" onClick={onNew}>
             ＋ New
           </button>
@@ -481,7 +487,9 @@ export function ChatList({
               onClick={() => onOpen(c.conversationId)}
               onKeyDown={onActivate(() => onOpen(c.conversationId))}
             >
-              <div className="row-title">{services.peerNameOf(c.conversationId) || c.title}</div>
+              <div className="row-title">
+                {services.groupNameOf(c.conversationId) ? `👥 ${services.groupNameOf(c.conversationId)}` : services.peerNameOf(c.conversationId) || c.title}
+              </div>
               <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
             </li>
           ))}
@@ -759,6 +767,352 @@ export function Contacts({ onOpen, onBack }: { onOpen: (id: string) => void; onB
   );
 }
 
+/** CreateGroup screen (T5.09): name the group, pick members by username, create. */
+export function CreateGroup({ onCreated, onBack }: { onCreated: (id: string) => void; onBack: () => void }) {
+  const { services } = useServices();
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<UserRef[]>([]);
+  const [picked, setPicked] = useState<UserRef[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pickedIds = new Set(picked.map((p) => p.userId));
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      return;
+    }
+    let alive = true;
+    const h = setTimeout(() => {
+      services
+        .searchContacts(q)
+        .then((r) => {
+          if (alive) setResults(r);
+        })
+        .catch(() => {});
+    }, 200);
+    return () => {
+      alive = false;
+      clearTimeout(h);
+    };
+  }, [query, services]);
+
+  async function create(): Promise<void> {
+    if (name.trim() === "") {
+      setError("Give the group a name.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      onCreated(await services.createGroup(name, description, picked.map((p) => p.userId)));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>New group</h1>
+      <label style={fieldWrap}>
+        <span className="muted" style={fieldLabel}>
+          Group name
+        </span>
+        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Weekend Trip" aria-label="Group name" maxLength={100} disabled={busy} />
+      </label>
+      <label style={fieldWrap}>
+        <span className="muted" style={fieldLabel}>
+          Description (optional)
+        </span>
+        <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's this group about?" aria-label="Group description" maxLength={500} disabled={busy} />
+      </label>
+
+      <h2 style={{ marginTop: "1rem" }}>Members ({picked.length})</h2>
+      {picked.length > 0 && (
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.6rem" }}>
+          {picked.map((p) => (
+            <button key={p.userId} className="btn small ghost" onClick={() => setPicked((s) => s.filter((x) => x.userId !== p.userId))} title="Remove">
+              @{p.username} ✕
+            </button>
+          ))}
+        </div>
+      )}
+      <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Add members by username…" aria-label="Add members" />
+      {query.trim().length >= 2 && (
+        <ul className="list">
+          {results
+            .filter((r) => !pickedIds.has(r.userId))
+            .map((r) => (
+              <li key={r.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <span>@{r.username}</span>
+                <button
+                  className="btn small"
+                  onClick={() => {
+                    setPicked((s) => [...s, r]);
+                    setQuery("");
+                  }}
+                >
+                  Add
+                </button>
+              </li>
+            ))}
+        </ul>
+      )}
+
+      {error && (
+        <p className="error" role="alert" style={{ marginTop: "0.8rem" }}>
+          {error}
+        </p>
+      )}
+      <button className="btn" onClick={() => void create()} disabled={busy} style={{ marginTop: "0.8rem" }}>
+        {busy ? "Creating…" : "Create group"}
+      </button>
+    </div>
+  );
+}
+
+const ROLE_RANK: Record<string, number> = { owner: 2, admin: 1, member: 0 };
+
+/** GroupInfoScreen (T5.09): members + roles, add/remove/leave, promote/demote,
+ *  settings (announcements / who-can-post), invite link, delete. */
+export function GroupInfoScreen({ conversationId, onBack, onLeft }: { conversationId: string; onBack: () => void; onLeft: () => void }) {
+  const { services } = useServices();
+  const [group, setGroup] = useState<GroupInfo | null>(() => services.groupOf(conversationId) ?? null);
+  const [members, setMembers] = useState<GroupMember[]>([]);
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<UserRef[]>([]);
+  const [invite, setInvite] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    void services.loadGroup(conversationId).then((g) => setGroup(g));
+    void services.listGroupMembers(conversationId).then(setMembers);
+  }, [services, conversationId]);
+
+  useEffect(() => {
+    reload();
+    const unsub = services.onChange(() => setMembers((m) => [...m])); // re-render as names resolve
+    return unsub;
+  }, [reload, services]);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      return;
+    }
+    let alive = true;
+    const h = setTimeout(() => {
+      services
+        .searchContacts(q)
+        .then((r) => {
+          if (alive) setResults(r);
+        })
+        .catch(() => {});
+    }, 200);
+    return () => {
+      alive = false;
+      clearTimeout(h);
+    };
+  }, [query, services]);
+
+  if (!group) return <p className="muted center">Loading…</p>;
+  const myRole = group.myRole;
+  const iAmOwner = myRole === "owner";
+  const iCanManage = iAmOwner || myRole === "admin";
+  const memberIds = new Set(members.map((m) => m.userId));
+
+  async function guard(fn: () => Promise<void>): Promise<void> {
+    setError(null);
+    try {
+      await fn();
+      reload();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function saveSettings(patch: Partial<GroupInfo["settings"]>): Promise<void> {
+    if (!group) return;
+    await guard(() => services.setGroupSettings(conversationId, { ...group.settings, ...patch }));
+  }
+
+  async function makeInvite(): Promise<void> {
+    setError(null);
+    try {
+      setInvite((await services.createGroupInvite(conversationId)).url);
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back to chat
+      </button>
+      <h1>{group.name}</h1>
+      {group.description && <p className="muted">{group.description}</p>}
+      <p className="muted" style={{ fontSize: "0.8rem" }}>
+        You are {myRole === "owner" ? "the owner" : `a${myRole === "admin" ? "n admin" : " member"}`}.
+      </p>
+
+      {iCanManage && (
+        <>
+          <h2 style={{ marginTop: "1rem" }}>Settings</h2>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.6rem" }}>
+            <input type="checkbox" checked={group.settings.announcements} onChange={(e) => void saveSettings({ announcements: e.target.checked })} />
+            <span>📢 Announcements only (admins post)</span>
+          </label>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>
+              Who can post
+            </span>
+            <select className="input" value={group.settings.who_can_post} onChange={(e) => void saveSettings({ who_can_post: e.target.value })}>
+              <option value="all">Everyone</option>
+              <option value="admins">Admins only</option>
+            </select>
+          </label>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>
+              Who can edit group info
+            </span>
+            <select className="input" value={group.settings.who_can_edit_info} onChange={(e) => void saveSettings({ who_can_edit_info: e.target.value })}>
+              <option value="all">Everyone</option>
+              <option value="admins">Admins only</option>
+            </select>
+          </label>
+        </>
+      )}
+
+      <h2 style={{ marginTop: "1rem" }}>Members ({members.length})</h2>
+      <ul className="list">
+        {[...members]
+          .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))
+          .map((m) => (
+            <li key={m.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+              <span>
+                {services.nameForUser(m.userId)}{" "}
+                {m.role !== "member" && <span className="muted" style={{ fontSize: "0.75rem" }}>· {m.role}</span>}
+              </span>
+              <span style={{ display: "flex", gap: "0.35rem" }}>
+                {iAmOwner && m.role === "member" && (
+                  <button className="btn small ghost" onClick={() => void guard(() => services.setGroupRole(conversationId, m.userId, 1))} title="Make admin">
+                    ↑ admin
+                  </button>
+                )}
+                {iAmOwner && m.role === "admin" && (
+                  <button className="btn small ghost" onClick={() => void guard(() => services.setGroupRole(conversationId, m.userId, 0))} title="Demote to member">
+                    ↓ member
+                  </button>
+                )}
+                {iCanManage && m.role !== "owner" && (
+                  <button className="btn small ghost" onClick={() => void guard(() => services.removeGroupMember(conversationId, m.userId))} title="Remove">
+                    Remove
+                  </button>
+                )}
+              </span>
+            </li>
+          ))}
+      </ul>
+
+      {iCanManage && (
+        <>
+          <h2 style={{ marginTop: "1rem" }}>Add members</h2>
+          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by username…" aria-label="Add members" />
+          {query.trim().length >= 2 && (
+            <ul className="list">
+              {results
+                .filter((r) => !memberIds.has(r.userId))
+                .map((r) => (
+                  <li key={r.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>@{r.username}</span>
+                    <button
+                      className="btn small"
+                      onClick={() =>
+                        void guard(async () => {
+                          await services.addGroupMembers(conversationId, [r.userId]);
+                          setQuery("");
+                        })
+                      }
+                    >
+                      Add
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          )}
+
+          <h2 style={{ marginTop: "1rem" }}>Invite link</h2>
+          {invite ? (
+            <div>
+              <input
+                className="input mono"
+                readOnly
+                value={invite}
+                aria-label="Group invite link"
+                onFocus={(e) => e.currentTarget.select()}
+              />
+              <button
+                className="btn small"
+                onClick={() => {
+                  void navigator.clipboard?.writeText(invite).then(() => {
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 1500);
+                  });
+                }}
+              >
+                {copied ? "Copied ✓" : "Copy link"}
+              </button>
+            </div>
+          ) : (
+            <button className="btn small" onClick={() => void makeInvite()}>
+              Create invite link
+            </button>
+          )}
+        </>
+      )}
+
+      {error && (
+        <p className="error" role="alert" style={{ marginTop: "1rem" }}>
+          {error}
+        </p>
+      )}
+
+      <div style={{ display: "flex", gap: "0.5rem", marginTop: "1.5rem" }}>
+        <button
+          className="btn small ghost"
+          onClick={() => {
+            if (window.confirm("Leave this group?")) void guard(async () => (await services.leaveGroup(conversationId), onLeft()));
+          }}
+        >
+          Leave group
+        </button>
+        {iAmOwner && (
+          <button
+            className="btn small ghost"
+            style={{ color: "var(--danger, #c0392b)" }}
+            onClick={() => {
+              if (window.confirm("Delete this group for everyone? This can't be undone.")) void guard(async () => (await services.deleteGroup(conversationId), onLeft()));
+            }}
+          >
+            Delete group
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** highlightSnippet turns the SNIPPET_OPEN/CLOSE-delimited excerpt into React
  *  nodes, wrapping matched terms in <mark>. */
 function highlightSnippet(snippet: string): ReactNode {
@@ -779,10 +1133,19 @@ function highlightSnippet(snippet: string): ReactNode {
   return parts;
 }
 
-export function Thread({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {
+export function Thread({
+  conversationId,
+  onBack,
+  onGroupInfo,
+}: {
+  conversationId: string;
+  onBack: () => void;
+  onGroupInfo: (id: string) => void;
+}) {
   const { services } = useServices();
   const call = useCall();
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
+  const [group, setGroup] = useState<GroupInfo | null>(() => services.groupOf(conversationId) ?? null);
   const [draft, setDraft] = useState("");
   const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
   const [replyingTo, setReplyingTo] = useState<QuotedRef | null>(null);
@@ -797,6 +1160,12 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
     let alive = true;
     lastReadRef.current = 0; // reset the read watermark per conversation
     subscribedRef.current = false;
+    setGroup(services.groupOf(conversationId) ?? null);
+    // Classify the conversation: a group (name + settings for the header/composer)
+    // or a 1:1 (peer presence). loadGroup 404s on direct chats → null.
+    void services.loadGroup(conversationId).then((g) => {
+      if (alive) setGroup(g);
+    });
     const tick = (): void => {
       services
         .thread(conversationId)
@@ -829,6 +1198,10 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
     };
   }, [services, conversationId]);
 
+  const isAdmin = group ? group.myRole === "owner" || group.myRole === "admin" : false;
+  const canPost = group
+    ? isAdmin || (!group.settings.announcements && group.settings.who_can_post !== "admins")
+    : true;
   const peerId = services.peerOf(conversationId);
   const presence = peerId ? services.presenceOf(peerId) : undefined;
   const statusLine = services.isPeerTyping(conversationId)
@@ -917,24 +1290,42 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
         <button className="btn small ghost" onClick={onBack}>
           ‹ Back
         </button>
-        <div className="thread-title">
-          <span className={services.peerNameOf(conversationId) ? "" : "mono"}>
-            {services.peerNameOf(conversationId) || conversationId.slice(0, 12)}
+        <div
+          className="thread-title"
+          role={group ? "button" : undefined}
+          tabIndex={group ? 0 : undefined}
+          style={group ? { cursor: "pointer" } : undefined}
+          onClick={group ? () => onGroupInfo(conversationId) : undefined}
+          onKeyDown={group ? onActivate(() => onGroupInfo(conversationId)) : undefined}
+          title={group ? "Group info" : undefined}
+        >
+          <span className={group || services.peerNameOf(conversationId) ? "" : "mono"}>
+            {group ? group.name : services.peerNameOf(conversationId) || conversationId.slice(0, 12)}
           </span>
-          {statusLine ? (
+          {group ? (
+            <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
+              {group.settings.announcements ? "📢 Announcements" : "Group"} · tap for info
+            </span>
+          ) : statusLine ? (
             <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
               {statusLine}
             </span>
           ) : null}
         </div>
-        <button
-          className="btn small ghost call-btn"
-          title="Voice call"
-          aria-label="Start voice call"
-          onClick={() => void call.startCall(conversationId, "voice")}
-        >
-          <span aria-hidden>📞</span>
-        </button>
+        {group ? (
+          <button className="btn small ghost" title="Group info" aria-label="Group info" onClick={() => onGroupInfo(conversationId)}>
+            <span aria-hidden>ℹ️</span>
+          </button>
+        ) : (
+          <button
+            className="btn small ghost call-btn"
+            title="Voice call"
+            aria-label="Start voice call"
+            onClick={() => void call.startCall(conversationId, "voice")}
+          >
+            <span aria-hidden>📞</span>
+          </button>
+        )}
       </div>
       <div className="messages">
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
@@ -967,29 +1358,37 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
           </button>
         </div>
       ) : null}
-      <form className="composer" onSubmit={send}>
-        <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-hidden />
-        <button
-          className="btn small ghost"
-          type="button"
-          aria-label="Attach file"
-          title="Attach a photo, video, or document"
-          disabled={sendingMedia || !!editing}
-          onClick={() => fileRef.current?.click()}
-        >
-          {sendingMedia ? "…" : "📎"}
-        </button>
-        <input
-          className="input"
-          value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
-          placeholder={editing ? "Edit message" : sendingMedia ? "Uploading…" : "Message"}
-          aria-label="Type a message"
-        />
-        <button className="btn" type="submit">
-          {editing ? "Save" : "Send"}
-        </button>
-      </form>
+      {group && !canPost ? (
+        <div className="composer" style={{ justifyContent: "center", padding: "0.9rem" }}>
+          <span className="muted" role="status">
+            📢 Only admins can post in this group.
+          </span>
+        </div>
+      ) : (
+        <form className="composer" onSubmit={send}>
+          <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-hidden />
+          <button
+            className="btn small ghost"
+            type="button"
+            aria-label="Attach file"
+            title="Attach a photo, video, or document"
+            disabled={sendingMedia || !!editing}
+            onClick={() => fileRef.current?.click()}
+          >
+            {sendingMedia ? "…" : "📎"}
+          </button>
+          <input
+            className="input"
+            value={draft}
+            onChange={(e) => onDraftChange(e.target.value)}
+            placeholder={editing ? "Edit message" : sendingMedia ? "Uploading…" : "Message"}
+            aria-label="Type a message"
+          />
+          <button className="btn" type="submit">
+            {editing ? "Save" : "Send"}
+          </button>
+        </form>
+      )}
       {gallery ? <Gallery items={gallery.items} startKey={gallery.startKey} onClose={() => setGallery(null)} /> : null}
     </div>
   );

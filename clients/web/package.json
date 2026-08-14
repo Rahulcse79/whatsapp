@@ -16,7 +16,9 @@
     "@wa/client-core": "workspace:*",
     "@wa/crypto-wrapper": "workspace:*",
     "@wa/media-pipeline": "workspace:*",
+    "@wa/proto-types": "workspace:*",
     "@wa/sync-engine": "workspace:*",
+    "@bufbuild/protobuf": "^2.2.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

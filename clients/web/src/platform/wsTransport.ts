@@ -1,15 +1,26 @@
-import type { ClientFrame, ServerFrame, TransportFactory, WsTransport } from "@wa/client-core";
+import { create, fromBinary, toBinary } from "@bufbuild/protobuf";
+import { FrameSchema, ReceiptKind as PbReceiptKind } from "@wa/proto-types";
+import {
+  MsgKind,
+  type ClientFrame,
+  type ConversationCursor,
+  type InboxItemFrame,
+  type ServerFrame,
+  type TransportFactory,
+  type WsTransport,
+} from "@wa/client-core";
 
-// DEV/OFFLINE codec: frames as JSON (Uint8Array carried as tagged number
-// arrays). The wire contract is binary protobuf (websocket-protocol.md §Wire);
-// the production transport swaps this codec for @wa/proto-types once that
-// package is generated for the clients build (task T0.20). The core state
-// machine is codec-agnostic — only this file changes.
+// Binary protobuf frame codec (websocket-protocol.md §Wire). The gateway speaks
+// wsv1.Frame envelopes as BINARY WebSocket messages; this maps the client-core
+// frame shapes ↔ the generated protobuf-es types. (Replaces the earlier JSON
+// dev codec, which the protobuf-only gateway rejected on the handshake with a
+// 4400 "expected hello frame" close — that mismatch was why messages never
+// delivered.)
 export function createWsTransportFactory(url: string): TransportFactory {
-  return () => new JsonWsTransport(url);
+  return () => new ProtoWsTransport(url);
 }
 
-class JsonWsTransport implements WsTransport {
+class ProtoWsTransport implements WsTransport {
   onOpen: (() => void) | null = null;
   onFrame: ((f: ServerFrame) => void) | null = null;
   onClose: ((code: number) => void) | null = null;
@@ -19,10 +30,12 @@ class JsonWsTransport implements WsTransport {
 
   constructor(url: string) {
     this.ws = new WebSocket(url);
+    this.ws.binaryType = "arraybuffer";
     this.ws.onopen = () => this.onOpen?.();
     this.ws.onmessage = (e: MessageEvent) => {
       try {
-        this.onFrame?.(decode(e.data));
+        const f = decodeServerFrame(new Uint8Array(e.data as ArrayBuffer));
+        if (f) this.onFrame?.(f);
       } catch (err) {
         this.onError?.(err);
       }
@@ -32,23 +45,121 @@ class JsonWsTransport implements WsTransport {
   }
 
   send(frame: ClientFrame): void {
-    this.ws.send(encode(frame));
+    this.ws.send(encodeClientFrame(frame));
   }
   close(code?: number): void {
     this.ws.close(code);
   }
 }
 
-function encode(frame: ClientFrame): string {
-  return JSON.stringify(frame, (_k, v: unknown) => (v instanceof Uint8Array ? { __u8: Array.from(v) } : v));
+// ── client → server ──────────────────────────────────────────────────────────
+
+function encodeClientFrame(frame: ClientFrame): Uint8Array {
+  // clientBody is structurally a valid oneof member but its `case` is widened to
+  // string; assert it into the generated discriminated union at this boundary.
+  return toBinary(FrameSchema, create(FrameSchema, { body: clientBody(frame) as never }));
 }
 
-function decode(data: unknown): ServerFrame {
-  const text = typeof data === "string" ? data : "";
-  return JSON.parse(text, (_k, v: unknown) => {
-    if (v && typeof v === "object" && "__u8" in v && Array.isArray((v as { __u8: unknown }).__u8)) {
-      return new Uint8Array((v as { __u8: number[] }).__u8);
-    }
-    return v;
-  }) as ServerFrame;
+// The oneof body init; typed loosely so we don't restate the generated union.
+type BodyInit = { case: string; value: Record<string, unknown> };
+
+function clientBody(frame: ClientFrame): BodyInit {
+  switch (frame.t) {
+    case "hello":
+      return {
+        case: "hello",
+        value: {
+          accessJwt: frame.accessJwt,
+          deviceId: frame.deviceId,
+          resumeToken: frame.resumeToken ?? "",
+          lastCursors: frame.cursors.map(pbCursor),
+        },
+      };
+    case "ping":
+      return { case: "ping", value: { tsMs: 0n } };
+    case "pong":
+      return { case: "pong", value: { echoTsMs: 0n } };
+    case "msg_send":
+      return {
+        case: "msgSend",
+        value: {
+          msgUuid: frame.msgUuid,
+          conversationId: frame.conversationId,
+          sealedEnvelope: frame.sealedEnvelope,
+          kind: frame.kind as number,
+          overlayTarget: frame.overlayTarget ?? "",
+        },
+      };
+    case "client_ack":
+      return { case: "clientAck", value: { upTo: frame.upTo.map(pbCursor) } };
+    case "receipt":
+      return {
+        case: "receipt",
+        value: {
+          conversationId: frame.conversationId,
+          kind: frame.kind === "READ" ? PbReceiptKind.READ : PbReceiptKind.DELIVERED,
+          upToSeq: BigInt(frame.upToSeq),
+        },
+      };
+    case "sync_pull":
+      return {
+        case: "syncPull",
+        value: { conversationId: frame.conversationId, fromSeq: BigInt(frame.fromSeq) },
+      };
+  }
+}
+
+function pbCursor(c: ConversationCursor): Record<string, unknown> {
+  return { conversationId: c.conversationId, lastSeq: BigInt(c.lastSeq) };
+}
+
+// ── server → client ──────────────────────────────────────────────────────────
+
+function decodeServerFrame(data: Uint8Array): ServerFrame | null {
+  const b = fromBinary(FrameSchema, data).body;
+  switch (b.case) {
+    case "helloAck":
+      return {
+        t: "hello_ack",
+        resumeToken: b.value.resumeToken,
+        sessionId: b.value.sessionId,
+        serverTimeMs: Number(b.value.serverTimeMs),
+        replayed: b.value.replayPending,
+      };
+    case "ping":
+      return { t: "ping" };
+    case "pong":
+      return { t: "pong" };
+    case "serverHint":
+      return { t: "server_hint", kind: "DRAIN", reconnectAfterMs: Number(b.value.reconnectAfterMs) };
+    case "error":
+      return { t: "error", code: b.value.code, message: b.value.message };
+    case "msgAck":
+      return {
+        t: "msg_ack",
+        clientRef: b.value.msgUuid, // clientRef == msgUuid in this shell
+        msgUuid: b.value.msgUuid,
+        seq: Number(b.value.seq),
+        serverTimeMs: Number(b.value.serverTimeMs),
+      };
+    case "inboxBatch":
+      return {
+        t: "inbox_batch",
+        items: b.value.items.map(
+          (it): InboxItemFrame => ({
+            conversationId: it.conversationId,
+            seq: Number(it.seq),
+            msgUuid: it.msgUuid,
+            senderUserId: it.senderUserId,
+            senderDeviceId: it.senderDeviceId,
+            kind: it.kind as unknown as MsgKind,
+            overlayTarget: it.overlayTarget || undefined,
+            ciphertext: it.sealedEnvelope,
+            acceptedAtMs: Number(it.acceptedAtMs),
+          }),
+        ),
+      };
+    default:
+      return null; // presence/typing/call/ptt frames the shell doesn't handle yet
+  }
 }

@@ -9,6 +9,10 @@ export type Platform = "ios" | "android" | "web";
 export interface DeviceInfo {
   name: string;
   platform: Platform;
+  /** Base64 public identity key. Optional: verifyOtp mints a per-device dev key
+   *  when absent, so registration always carries the identity_key the server
+   *  requires. */
+  identityKey?: string;
 }
 
 export interface OtpChallenge {
@@ -50,10 +54,17 @@ export class OtpClient {
   }
 
   async verifyOtp(challengeId: string, code: string, device: DeviceInfo): Promise<VerifiedSession> {
+    // The server reads `device` (not `device_info`) and REQUIRES a non-empty
+    // base64 `identity_key` to register the device — without it registration
+    // fails with VALIDATION_DEVICE ("couldn't sign in").
     const b = await this.call("/verify-otp", {
       challenge_id: challengeId,
       code,
-      device_info: { name: device.name, platform: device.platform },
+      device: {
+        name: device.name,
+        platform: device.platform,
+        identity_key: device.identityKey ?? newDeviceIdentityKey(),
+      },
     });
     return session(b);
   }
@@ -95,4 +106,29 @@ function str(v: unknown): string {
 
 function codeOf(b: Record<string, unknown>): string {
   return typeof b.code === "string" ? b.code : "UNKNOWN";
+}
+
+// newDeviceIdentityKey mints a 32-byte device identity key as standard base64
+// (encoding/base64.StdEncoding on the Go side). The server requires a non-empty
+// identity_key to register; real Signal identity-key management is a separate
+// concern. Math.random keeps this RN-safe (no crypto.getRandomValues polyfill),
+// and the base64 is hand-rolled so client-core needs no extra dependency.
+const B64_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+function newDeviceIdentityKey(): string {
+  const b = new Uint8Array(32);
+  for (let i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256);
+  let out = "";
+  for (let i = 0; i < b.length; i += 3) {
+    const b0 = b[i]!;
+    const has1 = i + 1 < b.length;
+    const has2 = i + 2 < b.length;
+    const b1 = has1 ? b[i + 1]! : 0;
+    const b2 = has2 ? b[i + 2]! : 0;
+    out += B64_ALPHABET.charAt(b0 >> 2);
+    out += B64_ALPHABET.charAt(((b0 & 0x03) << 4) | (b1 >> 4));
+    out += has1 ? B64_ALPHABET.charAt(((b1 & 0x0f) << 2) | (b2 >> 6)) : "=";
+    out += has2 ? B64_ALPHABET.charAt(b2 & 0x3f) : "=";
+  }
+  return out;
 }

@@ -32,11 +32,30 @@ describe("OtpClient", () => {
     const otp = new OtpClient(http);
     const s = await otp.verifyOtp("ch1", "123456", { name: "Pixel", platform: "android" });
     expect(s).toEqual({ accessJwt: "a", refreshToken: "r", deviceId: "d", requiresPin: false });
-    expect(http.calls[0]?.body).toEqual({
-      challenge_id: "ch1",
-      code: "123456",
-      device_info: { name: "Pixel", platform: "android" },
-    });
+    const body = http.calls[0]?.body as {
+      challenge_id: string;
+      code: string;
+      device: { name: string; platform: string; identity_key: string };
+    };
+    expect(body.challenge_id).toBe("ch1");
+    expect(body.code).toBe("123456");
+    // Server reads `device` (not `device_info`) and requires a non-empty
+    // base64 identity_key — minted here when the caller omits one.
+    expect(body.device.name).toBe("Pixel");
+    expect(body.device.platform).toBe("android");
+    expect(typeof body.device.identity_key).toBe("string");
+    expect(body.device.identity_key.length).toBeGreaterThan(0);
+  });
+
+  it("passes a caller-provided identity key through", async () => {
+    const http = new FakeHttp(() => ({
+      status: 200,
+      body: { access_jwt: "a", refresh_token: "r", device_id: "d", requires_pin: false },
+    }));
+    const otp = new OtpClient(http);
+    await otp.verifyOtp("ch1", "123456", { name: "Pixel", platform: "android", identityKey: "QUJD" });
+    const body = http.calls[0]?.body as { device: { identity_key: string } };
+    expect(body.device.identity_key).toBe("QUJD");
   });
 
   it("surfaces the wire error code on 4xx", async () => {

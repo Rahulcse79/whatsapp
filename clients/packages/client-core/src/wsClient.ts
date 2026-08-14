@@ -18,10 +18,12 @@ import {
   type InboxBatch,
   type MsgAck,
   type MsgSend,
+  type PresenceUpdate,
   type Receipt,
   type ServerError,
   type ServerFrame,
   type ServerHint,
+  type Typing,
 } from "./frames";
 import type { Cancel, Scheduler, TransportFactory, WsTransport } from "./ports";
 
@@ -46,6 +48,10 @@ export interface WsClientHandlers {
   pendingSends(): Promise<MsgSend[]>;
   /** A peer's delivered/read watermark relayed by the server (drives ✓✓ / read). */
   onReceipt?(r: Receipt): void;
+  /** A tracked peer's typing/recording indicator. */
+  onTyping?(t: Typing): void;
+  /** A tracked peer's online/last-seen change. */
+  onPresence?(p: PresenceUpdate): void;
   /** 4401 / AUTH_TOKEN_EXPIRED — refresh via REST; the client reconnects. */
   onAuthExpired(): void;
   /** 4403 — device revoked / account suspended: wipe session, stop for good. */
@@ -176,6 +182,12 @@ export class WsClient {
         break;
       case "receipt":
         this.o.handlers.onReceipt?.(f);
+        break;
+      case "typing":
+        this.o.handlers.onTyping?.(f);
+        break;
+      case "presence_update":
+        this.o.handlers.onPresence?.(f);
         break;
       case "server_hint":
         this.onServerHint(f);

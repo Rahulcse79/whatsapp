@@ -33,6 +33,9 @@ export class AppServices {
   private ws: WsClient | null = null;
   private cursorMirror: ConversationCursor[] = [];
   private readonly changeListeners = new Set<() => void>();
+  private readonly peerByConv = new Map<string, string>(); // conversationId → peer userId
+  private readonly typingByConv = new Map<string, number>(); // conversationId → typing-expiry ts
+  private readonly presenceByUser = new Map<string, { online: boolean; lastSeenMs: number }>();
 
   /** onChange fires whenever the local store changes (inbound messages, send
    *  acks, or a fresh send). Screens re-fetch on it so the open thread and the
@@ -88,6 +91,9 @@ export class AppServices {
       session: provider,
       handlers: {
         onInboxBatch: async (b) => {
+          // Inbound items are always from the peer (I never receive my own), so
+          // their sender is this conversation's other participant.
+          for (const it of b.items) this.peerByConv.set(it.conversationId, it.senderUserId);
           const watermark = await this.db.persistInboxBatch(b);
           this.mergeCursors(watermark);
           this.notifyChange(); // new inbound message(s) → refresh open screens
@@ -108,6 +114,19 @@ export class AppServices {
           void this.db
             .markReceipt({ conversationId: r.conversationId, kind: r.kind, upToSeq: r.upToSeq })
             .then(() => this.notifyChange());
+        },
+        onTyping: (t) => {
+          if (t.recording) {
+            this.typingByConv.set(t.conversationId, Date.now() + 6000);
+            setTimeout(() => this.notifyChange(), 6100); // hide the indicator once it lapses
+          } else {
+            this.typingByConv.delete(t.conversationId);
+          }
+          this.notifyChange();
+        },
+        onPresence: (p) => {
+          this.presenceByUser.set(p.userId, { online: p.online, lastSeenMs: p.lastSeenMs });
+          this.notifyChange();
         },
         pendingSends: () => this.db.pendingSends(),
         onAuthExpired: () => {
@@ -145,7 +164,30 @@ export class AppServices {
       conversation_id?: string;
     };
     if (!conv.conversation_id) throw new Error("Couldn't start the conversation.");
+    this.peerByConv.set(conv.conversation_id, peer); // for presence/typing subscription
     return conv.conversation_id;
+  }
+
+  /** peerOf returns the 1:1 conversation's other participant user id, if known. */
+  peerOf(conversationId: string): string | undefined {
+    return this.peerByConv.get(conversationId);
+  }
+  /** isPeerTyping — the peer sent a typing signal within the last few seconds. */
+  isPeerTyping(conversationId: string): boolean {
+    const exp = this.typingByConv.get(conversationId);
+    return exp !== undefined && exp > Date.now();
+  }
+  /** presenceOf returns a tracked user's online/last-seen, if known. */
+  presenceOf(userId: string): { online: boolean; lastSeenMs: number } | undefined {
+    return this.presenceByUser.get(userId);
+  }
+  /** subscribePresence starts tracking a peer's online-state + typing (call on thread open). */
+  subscribePresence(userId: string): void {
+    this.ws?.send({ t: "presence_sub", subscribe: [userId], unsubscribe: [] });
+  }
+  /** sendTyping relays my typing state for a conversation (throttle at the caller). */
+  sendTyping(conversationId: string, recording: boolean): void {
+    this.ws?.send({ t: "typing", conversationId, recording });
   }
 
   // authedJson POSTs with the bearer token, transparently refreshing once on a

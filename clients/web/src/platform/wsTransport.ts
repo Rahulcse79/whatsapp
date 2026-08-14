@@ -106,6 +106,13 @@ function clientBody(frame: ClientFrame): BodyInit {
         case: "syncPull",
         value: { conversationId: frame.conversationId, fromSeq: BigInt(frame.fromSeq) },
       };
+    case "typing":
+      return { case: "typing", value: { conversationId: frame.conversationId, recording: frame.recording } };
+    case "presence_sub":
+      return {
+        case: "presenceSub",
+        value: { subscribeUserIds: frame.subscribe, unsubscribeUserIds: frame.unsubscribe },
+      };
   }
 }
 
@@ -141,6 +148,20 @@ function decodeServerFrame(data: Uint8Array): ServerFrame | null {
         kind: b.value.kind === PbReceiptKind.READ ? "READ" : "DELIVERED",
         upToSeq: Number(b.value.upToSeq),
         fromUserId: b.value.fromUserId || undefined,
+      };
+    case "typing":
+      return {
+        t: "typing",
+        conversationId: b.value.conversationId,
+        recording: b.value.recording,
+        userId: b.value.userId || undefined,
+      };
+    case "presenceUpdate":
+      return {
+        t: "presence_update",
+        userId: b.value.userId,
+        online: b.value.online,
+        lastSeenMs: Number(b.value.lastSeenMs),
       };
     case "msgAck":
       return {

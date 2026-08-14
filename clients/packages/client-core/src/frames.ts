@@ -67,8 +67,22 @@ export interface SyncPull {
   conversationId: string;
   fromSeq: number;
 }
+/** Typing is bidirectional: sent while composing (conversationId + recording),
+ *  relayed back with the typer's userId. */
+export interface Typing {
+  t: "typing";
+  conversationId: string;
+  recording: boolean;
+  userId?: string; // set on the server→client direction
+}
+/** PresenceSub starts/stops tracking users' online-state + typing (client→server). */
+export interface PresenceSub {
+  t: "presence_sub";
+  subscribe: string[];
+  unsubscribe: string[];
+}
 
-export type ClientFrame = Hello | Ping | Pong | MsgSend | ClientAck | Receipt | SyncPull;
+export type ClientFrame = Hello | Ping | Pong | MsgSend | ClientAck | Receipt | SyncPull | Typing | PresenceSub;
 
 // ── server → client ────────────────────────────────────────────────────────
 
@@ -112,9 +126,27 @@ export interface InboxBatch {
   items: InboxItemFrame[];
 }
 
-// Receipt is bidirectional: a client sends its delivered/read watermark, and the
-// server relays the peer's watermark back (so the sender can show ✓✓ / read).
-export type ServerFrame = HelloAck | Ping | Pong | ServerHint | ServerError | MsgAck | InboxBatch | Receipt;
+/** PresenceUpdate relays a tracked user's online/last-seen change (server→client). */
+export interface PresenceUpdate {
+  t: "presence_update";
+  userId: string;
+  online: boolean;
+  lastSeenMs: number;
+}
+
+// Receipt and Typing are bidirectional: a client sends its watermark / typing
+// state, and the server relays the peer's back.
+export type ServerFrame =
+  | HelloAck
+  | Ping
+  | Pong
+  | ServerHint
+  | ServerError
+  | MsgAck
+  | InboxBatch
+  | Receipt
+  | Typing
+  | PresenceUpdate;
 
 /** WSS close codes and their client contract (websocket-protocol.md §6). */
 export const CloseCode = {

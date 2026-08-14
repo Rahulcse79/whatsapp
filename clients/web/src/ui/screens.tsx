@@ -378,9 +378,12 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
   const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
 
   const lastReadRef = useRef(0);
+  const subscribedRef = useRef(false);
+  const lastTypingRef = useRef(0);
   useEffect(() => {
     let alive = true;
     lastReadRef.current = 0; // reset the read watermark per conversation
+    subscribedRef.current = false;
     const tick = (): void => {
       services
         .thread(conversationId)
@@ -393,11 +396,17 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
             lastReadRef.current = maxRecv;
             services.markRead(conversationId, maxRecv);
           }
+          // Once the peer is known, subscribe to their presence + typing (once).
+          const peerId = services.peerOf(conversationId);
+          if (peerId && !subscribedRef.current) {
+            subscribedRef.current = true;
+            services.subscribePresence(peerId);
+          }
         })
         .catch(() => {});
     };
     tick();
-    const unsub = services.onChange(tick); // instant refresh on inbound/ack/send
+    const unsub = services.onChange(tick); // instant refresh on inbound/ack/send/typing/presence
     const handle = setInterval(tick, 5000); // safety net for missed signals
     return () => {
       alive = false;
@@ -406,11 +415,34 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
     };
   }, [services, conversationId]);
 
+  const peerId = services.peerOf(conversationId);
+  const presence = peerId ? services.presenceOf(peerId) : undefined;
+  const statusLine = services.isPeerTyping(conversationId)
+    ? "typing…"
+    : presence
+      ? presence.online
+        ? "online"
+        : presence.lastSeenMs
+          ? `last seen ${formatLastSeen(presence.lastSeenMs)}`
+          : ""
+      : "";
+
+  function onDraftChange(v: string): void {
+    setDraft(v);
+    const now = Date.now();
+    if (v && now - lastTypingRef.current > 3000) {
+      lastTypingRef.current = now;
+      services.sendTyping(conversationId, true); // throttled 1/3s
+    }
+  }
+
   async function send(e: FormEvent): Promise<void> {
     e.preventDefault();
     const text = draft.trim();
     if (!text) return;
     setDraft("");
+    lastTypingRef.current = 0;
+    services.sendTyping(conversationId, false); // stop the typing indicator on send
     await services.sendText(conversationId, text);
     const next = await services.thread(conversationId);
     setMessages(next);
@@ -430,7 +462,14 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
         <button className="btn small ghost" onClick={onBack}>
           ‹ Back
         </button>
-        <span className="mono">{conversationId.slice(0, 12)}</span>
+        <div className="thread-title">
+          <span className="mono">{conversationId.slice(0, 12)}</span>
+          {statusLine ? (
+            <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
+              {statusLine}
+            </span>
+          ) : null}
+        </div>
         <button
           className="btn small ghost call-btn"
           title="Voice call"
@@ -451,7 +490,7 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
         <input
           className="input"
           value={draft}
-          onChange={(e) => setDraft(e.target.value)}
+          onChange={(e) => onDraftChange(e.target.value)}
           placeholder="Message"
           aria-label="Type a message"
         />
@@ -467,6 +506,15 @@ export function Thread({ conversationId, onBack }: { conversationId: string; onB
 function isVisual(env: MediaEnvelope): boolean {
   const kind = classifyMedia(env.mime);
   return kind === "image" || kind === "video";
+}
+
+/** formatLastSeen renders a peer's last-seen timestamp as a short relative label. */
+function formatLastSeen(ms: number): string {
+  const diff = Date.now() - ms;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`;
+  return new Date(ms).toLocaleDateString();
 }
 
 /** MessageBubble renders a text message, or — when the decrypted body carries a

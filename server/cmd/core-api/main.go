@@ -394,9 +394,17 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
+	var handler http.Handler = observability.WrapHTTPHandler(
+		httpMetrics.Middleware(flagsSvc.KillSwitchMiddleware(flags.CoreAPIGuards())(mux)), "http.server")
+	if cfg.Env != "prod" {
+		// The web PWA dev server runs on a different origin (e.g. :5173) than the
+		// API (:8080), so a browser needs CORS to call it. In prod the web app is
+		// same-origin behind the ingress, so this stays off.
+		handler = devCORS(handler)
+	}
 	httpSrv := &http.Server{
 		Addr:              cfg.HTTPAddr,
-		Handler:           observability.WrapHTTPHandler(httpMetrics.Middleware(flagsSvc.KillSwitchMiddleware(flags.CoreAPIGuards())(mux)), "http.server"),
+		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
 	go func() {
@@ -463,6 +471,26 @@ func buildOTPSender(cfg *config.Config, log *slog.Logger) (auth.Sender, error) {
 	default:
 		return nil, errors.New("unknown OTP channel " + cfg.Auth.OTPChannel)
 	}
+}
+
+// devCORS reflects the caller's Origin and answers preflight requests so a
+// browser on a different origin (the web PWA dev server) can call the API. Only
+// mounted outside prod (see wiring above); prod serves the web app same-origin.
+func devCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if origin := r.Header.Get("Origin"); origin != "" {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Add("Vary", "Origin")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			w.Header().Set("Access-Control-Max-Age", "600")
+		}
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // ensure the domain package is referenced (compile guard for future wiring).

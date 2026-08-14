@@ -69,9 +69,14 @@ load_env() {
     else head -c 32 /dev/urandom | base64 > "$SEED_FILE"; fi
   fi
   export WA_ENV=dev WA_LOG_LEVEL=info
-  export WA_PG_DSN="postgres://whatsapp:devpassword@localhost:5432/whatsapp?sslmode=disable"
-  export WA_VALKEY_ADDR=localhost:6379
-  export WA_NATS_URL=nats://localhost:4222
+  # Use 127.0.0.1, not "localhost": on macOS localhost resolves to IPv6 ::1
+  # first, but the reused Postgres often listens on 127.0.0.1 only, so a Go
+  # service's pgx pool spends its whole connect deadline on ::1 and fails with
+  # "pg: ping: context deadline exceeded" (psql, which falls back faster, is
+  # fine). Pinning IPv4 makes every service's infra connection deterministic.
+  export WA_PG_DSN="postgres://whatsapp:devpassword@127.0.0.1:5432/whatsapp?sslmode=disable"
+  export WA_VALKEY_ADDR=127.0.0.1:6379
+  export WA_NATS_URL=nats://127.0.0.1:4222
   export WA_JWT_ED25519_SEED="$(cat "$SEED_FILE")"
   export WA_OTP_CHANNEL=mock                 # dev: OTP codes are logged, not sent
   # MinIO endpoint uses the LAN IP so the presigned media URLs media-svc mints are
@@ -79,7 +84,7 @@ load_env() {
   # itself). MinIO binds 0.0.0.0 (--address :9000). Falls back to localhost.
   export WA_MINIO_ENDPOINT="$(lan_ip):9000" WA_MINIO_ACCESS_KEY=minioadmin \
          WA_MINIO_SECRET_KEY=minioadmin WA_MINIO_BUCKET=media WA_MINIO_SECURE=false
-  export WA_CORE_API_GRPC_ADDR=localhost:9090
+  export WA_CORE_API_GRPC_ADDR=127.0.0.1:9090
 }
 
 # Per-service HTTP/gRPC ports (distinct so all four share one host).

@@ -58,15 +58,19 @@ export class MemoryMessageRepo implements MessageRepo {
     return this.cursors.snapshot().map((c) => ({ conversationId: c.conversationId, lastSeq: c.lastSeq }));
   }
 
-  persistInboxBatch(batch: InboxBatch): Promise<ConversationCursor[]> {
+  // bodies (optional) maps msgUuid → decrypted plaintext; the caller (the DB/
+  // crypto worker) opens each inbound ciphertext and passes the result so the
+  // received bubble shows real text instead of the "[encrypted]" placeholder.
+  persistInboxBatch(batch: InboxBatch, bodies?: Map<string, string>): Promise<ConversationCursor[]> {
     const plan = planInboxBatch(batch, this.cursors);
     for (const ins of plan.inserts) {
+      const body = bodies?.get(ins.msgUuid) ?? "[encrypted]";
       if (!this.messages.has(ins.msgUuid)) {
         this.messages.set(ins.msgUuid, {
           msgUuid: ins.msgUuid,
           conversationId: ins.conversationId,
           seq: ins.seq,
-          body: "[encrypted]",
+          body,
           deleted: false,
           mine: false,
           state: "received",
@@ -74,7 +78,7 @@ export class MemoryMessageRepo implements MessageRepo {
           createdAt: ins.acceptedAtMs,
         });
       }
-      this.touch(ins.conversationId, ins.seq, "New message", ins.acceptedAtMs);
+      this.touch(ins.conversationId, ins.seq, body === "[encrypted]" ? "New message" : body, ins.acceptedAtMs);
     }
     for (const ov of plan.overlays) {
       if (ov.kind === MsgKind.OVERLAY_DELETE) {

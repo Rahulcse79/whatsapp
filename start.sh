@@ -332,8 +332,10 @@ web_up() {
   # from a phone browser on the same WiFi; regenerated each run to track the IP.
   printf 'VITE_API_URL=http://%s:8080\nVITE_WS_URL=ws://%s:8081/v1/ws\n' "$ip" "$ip" > "$REPO_ROOT/clients/web/.env.local"
   ( cd "$REPO_ROOT/clients" && pnpm install --no-frozen-lockfile >/dev/null 2>&1 || true )
-  # --host binds Vite to 0.0.0.0 so other devices on the LAN can load the PWA.
-  ( cd "$REPO_ROOT/clients/web" && exec pnpm dev -- --host 0.0.0.0 ) >"$LOG_DIR/web.log" 2>&1 &
+  # Bind Vite to 0.0.0.0 so other devices on the LAN can load the PWA. NOTE: run
+  # vite directly — `pnpm dev -- --host` passes a stray `--` that vite treats as
+  # end-of-options, so --host is silently ignored (LAN never exposed).
+  ( cd "$REPO_ROOT/clients/web" && exec pnpm exec vite --host 0.0.0.0 --port 5173 --strictPort ) >"$LOG_DIR/web.log" 2>&1 &
   echo $! > "$PID_DIR/web.pid"
   ok "web starting → http://localhost:5173  (LAN: http://$ip:5173)"
 }

@@ -34,6 +34,65 @@ function onActivate(handler: () => void) {
   };
 }
 
+export function NewChat({
+  onStarted,
+  onBack,
+}: {
+  onStarted: (conversationId: string) => void;
+  onBack: () => void;
+}) {
+  const { services } = useServices();
+  const [phone, setPhone] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    const trimmed = phone.trim();
+    if (!isValidPhone(trimmed)) {
+      setError("Enter the number in international format, e.g. +14155550123.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      onStarted(await services.startDirectChat(trimmed));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <form className="card" onSubmit={submit}>
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>New chat</h1>
+      <p className="muted">Enter the phone number of someone who has an account.</p>
+      <input
+        className="input"
+        value={phone}
+        onChange={(e) => setPhone(e.target.value)}
+        placeholder="+14155550123"
+        aria-label="Contact phone number in international format"
+        inputMode="tel"
+        autoFocus
+        disabled={busy}
+      />
+      {error && (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      )}
+      <button className="btn" type="submit" disabled={busy}>
+        {busy ? "Starting…" : "Start chat"}
+      </button>
+    </form>
+  );
+}
+
 export function Login({ onRequested }: { onRequested: (challengeId: string, phone: string) => void }) {
   const { services } = useServices();
   const [phone, setPhone] = useState("");

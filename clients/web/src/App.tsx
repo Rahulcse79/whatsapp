@@ -1,15 +1,15 @@
-import { newId } from "@wa/client-core";
 import { useState } from "react";
 import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { ChatList, Login, Search, Thread, Verify } from "./ui/screens";
+import { ChatList, Login, NewChat, Search, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
 type Nav =
   | { name: "login" }
   | { name: "verify"; challengeId: string; phone: string }
   | { name: "chats" }
+  | { name: "newChat" }
   | { name: "search" }
   | { name: "thread"; conversationId: string };
 
@@ -27,8 +27,16 @@ function Router() {
     return (
       <ChatList
         onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
-        onNew={() => setNav({ name: "thread", conversationId: newId() })}
+        onNew={() => setNav({ name: "newChat" })}
         onSearch={() => setNav({ name: "search" })}
+      />
+    );
+  }
+  if (nav.name === "newChat") {
+    return (
+      <NewChat
+        onStarted={(conversationId) => setNav({ name: "thread", conversationId })}
+        onBack={() => setNav({ name: "chats" })}
       />
     );
   }

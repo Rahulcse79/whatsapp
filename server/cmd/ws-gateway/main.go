@@ -117,6 +117,10 @@ func main() {
 		PodID:    podID(),
 		RouteTTL: 90 * time.Second,
 		Log:      log,
+		// Non-prod: accept any Origin so the web PWA dev server (a different
+		// origin than :8081) can open the WS. Prod serves the web app
+		// same-origin behind the ingress, so this stays closed.
+		AllowedOrigins: wsAllowedOrigins(cfg.Env),
 		// TODO(T0.11): Authorizer via core-api gRPC session check (revocation).
 	})
 
@@ -176,6 +180,16 @@ func buildVerifier(cfg *config.Config, log *slog.Logger) (auth.TokenVerifier, er
 	}
 	log.Warn("no WA_JWT_ED25519_SEED — using an ephemeral key (dev only)")
 	return auth.NewEphemeralIssuer(cfg.Auth.AccessTTL)
+}
+
+// wsAllowedOrigins permits the web PWA dev server (a different origin than the
+// gateway) to open the WS in non-prod. "*" accepts any Origin. Prod pins the web
+// origin via same-origin serving behind the ingress.
+func wsAllowedOrigins(env string) []string {
+	if env == "prod" {
+		return nil
+	}
+	return []string{"*"}
 }
 
 // podID identifies this gateway instance in the routing table.

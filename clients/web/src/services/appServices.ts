@@ -29,6 +29,7 @@ export class AppServices {
   readonly sessions: SessionManager;
   readonly db: DbApi;
 
+  private readonly http = createHttpClient(config.apiBaseUrl);
   private ws: WsClient | null = null;
   private cursorMirror: ConversationCursor[] = [];
 
@@ -102,6 +103,35 @@ export class AppServices {
     const body = encodeTextMessage(text, preview ?? undefined);
     await this.db.enqueueText({ conversationId, text: body, listText: text, clientRef: newId(), now: Date.now() });
     await this.ws?.flush();
+  }
+
+  /** startDirectChat resolves a phone number to a registered user, then gets (or
+   *  creates) the shared 1:1 conversation and returns its id. Throws a friendly
+   *  message if no account exists for that number. */
+  async startDirectChat(phone: string): Promise<string> {
+    const sync = (await this.authedJson("/v1/contacts/sync", { handles: [phone.trim()] })) as {
+      matched?: Array<{ user_id?: string }>;
+    };
+    const peer = sync.matched?.[0]?.user_id;
+    if (!peer) throw new Error("No account is registered with that number yet.");
+    const conv = (await this.authedJson("/v1/conversations/direct", { peer_user_id: peer })) as {
+      conversation_id?: string;
+    };
+    if (!conv.conversation_id) throw new Error("Couldn't start the conversation.");
+    return conv.conversation_id;
+  }
+
+  // authedJson POSTs with the bearer token, transparently refreshing once on a
+  // 401 — the 10-minute access token may have lapsed since sign-in.
+  private async authedJson(path: string, body: unknown): Promise<unknown> {
+    const hdr = () => ({ authorization: `Bearer ${this.sessions.current()?.accessJwt ?? ""}` });
+    let res = await this.http.post(path, body, hdr());
+    if (res.status === 401) {
+      await this.refreshToken();
+      res = await this.http.post(path, body, hdr());
+    }
+    if (res.status >= 400) throw new Error("Request failed — please try again.");
+    return res.json();
   }
 
   conversations(): Promise<ChatSummary[]> {

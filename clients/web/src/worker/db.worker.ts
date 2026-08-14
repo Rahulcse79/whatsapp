@@ -5,27 +5,67 @@
 // speaks the RPC protocol in ./rpc.
 
 import { MemoryMessageRepo, type InboxBatch } from "@wa/client-core";
-import { DevSessionCipher, generateDevIdentity } from "@wa/crypto-wrapper";
 import type { EnqueueTextInput, MarkSentInput, RpcRequest, SearchInput } from "./rpc";
 
 const repo = new MemoryMessageRepo();
-// E2EE lives in the worker so key material never reaches the UI thread. The
-// T0.20 DevSessionCipher is an INSECURE dev double; the live per-device fan-out
-// (E2EEEngine + keys directory + real libsignal) activates once the keys API is
-// wired. Self-addressed placeholder peer until then.
-const cipher = new DevSessionCipher(generateDevIdentity({ userId: "self", deviceId: "web" }));
 const encoder = new TextEncoder();
-async function seal(conversationId: string, text: string): Promise<Uint8Array> {
-  const address = { userId: conversationId, deviceId: "peer" };
-  if (!cipher.hasSession(address)) {
-    await cipher.establish({ address, identityKey: encoder.encode(conversationId), signedPrekey: encoder.encode("spk") });
+const decoder = new TextDecoder();
+
+// Conversation-shared dev cipher (Milestone 1): both peers derive the SAME
+// AES-GCM key from the shared conversation_id, so A's ciphertext opens on B.
+// (The old self-addressed DevSessionCipher keyed on a random per-device secret,
+// so a device could only round-trip its OWN messages.) This is an INSECURE dev
+// double — anyone who learns the conversation_id can derive the key; real
+// per-device libsignal E2EE (keys directory + E2EEEngine) is the seam that
+// replaces it. WebCrypto is available (worker on a secure context).
+const keyCache = new Map<string, Promise<CryptoKey>>();
+
+function convKey(conversationId: string): Promise<CryptoKey> {
+  let k = keyCache.get(conversationId);
+  if (!k) {
+    k = crypto.subtle
+      .digest("SHA-256", encoder.encode("wa-dev-conv-v1:" + conversationId))
+      .then((raw) => crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["encrypt", "decrypt"]));
+    keyCache.set(conversationId, k);
   }
-  return cipher.encrypt(address, encoder.encode(text));
+  return k;
+}
+
+async function seal(conversationId: string, text: string): Promise<Uint8Array> {
+  const key = await convKey(conversationId);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, encoder.encode(text)));
+  const out = new Uint8Array(12 + ct.length);
+  out.set(iv, 0);
+  out.set(ct, 12);
+  return out;
+}
+
+async function openSealed(conversationId: string, envelope: Uint8Array): Promise<string> {
+  const key = await convKey(conversationId);
+  const iv = envelope.subarray(0, 12);
+  const ct = envelope.subarray(12);
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+  return decoder.decode(pt);
 }
 
 const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
   init: () => repo.init(),
-  persistInboxBatch: (arg) => repo.persistInboxBatch(arg as InboxBatch),
+  persistInboxBatch: async (arg) => {
+    const batch = arg as InboxBatch;
+    // Open each inbound ciphertext with the conversation-shared key so the
+    // recipient stores real text, not the "[encrypted]" placeholder. A failure
+    // (foreign/rotated key) just leaves that item as the placeholder.
+    const bodies = new Map<string, string>();
+    for (const it of batch.items) {
+      try {
+        bodies.set(it.msgUuid, await openSealed(it.conversationId, it.ciphertext));
+      } catch {
+        /* undefined → placeholder */
+      }
+    }
+    return repo.persistInboxBatch(batch, bodies);
+  },
   enqueueText: async (arg) => {
     const input = arg as EnqueueTextInput;
     // input.text is the already-encoded body (text, optionally + link preview);

@@ -22,7 +22,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { CallHistoryItem, GroupInfo, GroupMember, Invite, MatchedContact, UserRef } from "../services/appServices";
+import type { CallHistoryItem, GroupInfo, GroupMember, Invite, MatchedContact, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -470,6 +470,7 @@ export function ChatList({
   onContacts,
   onNewGroup,
   onCalls,
+  onStatus,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -478,6 +479,7 @@ export function ChatList({
   onContacts: () => void;
   onNewGroup: () => void;
   onCalls: () => void;
+  onStatus: () => void;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
@@ -521,6 +523,9 @@ export function ChatList({
           </button>
           <button className="btn small ghost" onClick={onCalls} aria-label="Call history">
             📞 Calls
+          </button>
+          <button className="btn small ghost" onClick={onStatus} aria-label="Status updates">
+            ⭕ Status
           </button>
           <button className="btn small ghost" onClick={onSearch} aria-label="Search messages">
             🔍 Search
@@ -1168,6 +1173,396 @@ export function GroupInfoScreen({ conversationId, onBack, onLeft }: { conversati
           </button>
         )}
       </div>
+    </div>
+  );
+}
+
+const STORY_BG = ["#128C7E", "#075E54", "#e5484d", "#7c3aed", "#f59e0b", "#111827"];
+
+type StatusMode = { m: "list" } | { m: "compose" } | { m: "view"; author: string };
+
+/** Status screen (T5.11): the story ring — my status + contacts' active stories,
+ *  the composer, and the tap-through viewer. Content is E2EE; this dev build
+ *  caches the author's own payload locally (cross-device rides STORY_KEY). */
+export function Status({ onBack }: { onBack: () => void }) {
+  const { services } = useServices();
+  const [feed, setFeed] = useState<StoryFeedItem[]>([]);
+  const [mode, setMode] = useState<StatusMode>({ m: "list" });
+  const me = services.myUserId();
+
+  useEffect(() => {
+    let alive = true;
+    const load = (): void => {
+      services
+        .storyFeed()
+        .then((f) => {
+          if (!alive) return;
+          setFeed(f);
+          for (const s of f) if (s.author !== me) void services.loadUserProfile(s.author);
+        })
+        .catch(() => {});
+    };
+    load();
+    const unsub = services.onChange(load);
+    const h = setInterval(load, 15000);
+    return () => {
+      alive = false;
+      unsub();
+      clearInterval(h);
+    };
+  }, [services, me]);
+
+  const byAuthor = new Map<string, StoryFeedItem[]>();
+  for (const s of feed) {
+    const arr = byAuthor.get(s.author) ?? [];
+    arr.push(s);
+    byAuthor.set(s.author, arr);
+  }
+  for (const arr of byAuthor.values()) arr.sort((a, b) => a.expiresAtMs - b.expiresAtMs);
+  const mine = byAuthor.get(me) ?? [];
+  const others = [...byAuthor.entries()].filter(([a]) => a !== me);
+
+  if (mode.m === "compose") return <StatusComposer onClose={() => setMode({ m: "list" })} />;
+  if (mode.m === "view") {
+    return (
+      <StoryViewerOverlay
+        author={mode.author}
+        stories={byAuthor.get(mode.author) ?? []}
+        isMine={mode.author === me}
+        onClose={() => setMode({ m: "list" })}
+      />
+    );
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>Status</h1>
+      <ul className="list">
+        <li
+          className="row"
+          role="button"
+          tabIndex={0}
+          onClick={() => (mine.length ? setMode({ m: "view", author: me }) : setMode({ m: "compose" }))}
+          onKeyDown={onActivate(() => (mine.length ? setMode({ m: "view", author: me }) : setMode({ m: "compose" })))}
+        >
+          <div className="row-title">➕ My status</div>
+          <div className="row-sub">
+            {mine.length ? `${mine.length} update${mine.length > 1 ? "s" : ""} · tap to view` : "Tap to add a status update"}
+          </div>
+        </li>
+      </ul>
+      <button className="btn small" onClick={() => setMode({ m: "compose" })}>
+        ＋ Add status
+      </button>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Recent updates</h2>
+      {others.length === 0 ? (
+        <p className="muted">No status updates from your contacts yet.</p>
+      ) : (
+        <ul className="list">
+          {others.map(([author, stories]) => (
+            <li
+              key={author}
+              className="row"
+              role="button"
+              tabIndex={0}
+              onClick={() => setMode({ m: "view", author })}
+              onKeyDown={onActivate(() => setMode({ m: "view", author }))}
+            >
+              <div className="row-title">🟢 {services.nameForUser(author)}</div>
+              <div className="row-sub">
+                {stories.length} update{stories.length > 1 ? "s" : ""}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function StatusComposer({ onClose }: { onClose: () => void }) {
+  const { services } = useServices();
+  const [tab, setTab] = useState<"text" | "photo">("text");
+  const [text, setText] = useState("");
+  const [bg, setBg] = useState(STORY_BG[0]);
+  const [dataUrl, setDataUrl] = useState<string | null>(null);
+  const [fileBytes, setFileBytes] = useState<{ bytes: Uint8Array; mime: string } | null>(null);
+  const [audienceMode, setAudienceMode] = useState<"contacts" | "specific">("contacts");
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<UserRef[]>([]);
+  const [picked, setPicked] = useState<UserRef[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pickedIds = new Set(picked.map((p) => p.userId));
+
+  useEffect(() => {
+    if (audienceMode !== "specific" || query.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    let alive = true;
+    const h = setTimeout(() => {
+      services
+        .searchContacts(query)
+        .then((r) => {
+          if (alive) setResults(r);
+        })
+        .catch(() => {});
+    }, 200);
+    return () => {
+      alive = false;
+      clearTimeout(h);
+    };
+  }, [query, audienceMode, services]);
+
+  async function onPickPhoto(e: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      setError("Image too large (max 2 MB).");
+      return;
+    }
+    setError(null);
+    setFileBytes({ bytes: new Uint8Array(await file.arrayBuffer()), mime: file.type || "image/jpeg" });
+    const reader = new FileReader();
+    reader.onload = () => setDataUrl(reader.result as string);
+    reader.readAsDataURL(file);
+    setTab("photo");
+  }
+
+  async function post(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      const audience = audienceMode === "specific" ? picked.map((p) => p.userId) : null;
+      if (audienceMode === "specific" && (audience?.length ?? 0) === 0) {
+        throw new Error("Pick at least one person, or share with your contacts.");
+      }
+      if (tab === "text") {
+        if (!text.trim()) throw new Error("Write something first.");
+        await services.postStory("text", null, audience, { kind: "text", text: text.trim(), bg });
+      } else {
+        if (!fileBytes || !dataUrl) throw new Error("Choose a photo first.");
+        const mediaRef = await services.uploadStoryMedia(fileBytes.bytes, fileBytes.mime);
+        await services.postStory("image", mediaRef, audience, { kind: "image", dataUrl });
+      }
+      onClose();
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onClose}>
+        ‹ Cancel
+      </button>
+      <h1>New status</h1>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem" }}>
+        <button className={tab === "text" ? "btn small" : "btn small ghost"} onClick={() => setTab("text")}>
+          Text
+        </button>
+        <button className={tab === "photo" ? "btn small" : "btn small ghost"} onClick={() => setTab("photo")}>
+          Photo
+        </button>
+      </div>
+
+      {tab === "text" ? (
+        <>
+          <div
+            style={{
+              background: bg,
+              color: "#fff",
+              borderRadius: 12,
+              minHeight: 160,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              padding: "1rem",
+              marginBottom: "0.6rem",
+              textAlign: "center",
+              fontSize: "1.1rem",
+              wordBreak: "break-word",
+            }}
+          >
+            {text || "Type your status…"}
+          </div>
+          <textarea className="input" rows={2} value={text} onChange={(e) => setText(e.target.value)} placeholder="Type your status…" aria-label="Status text" maxLength={280} />
+          <div style={{ display: "flex", gap: "0.4rem", margin: "0.5rem 0" }}>
+            {STORY_BG.map((c) => (
+              <button
+                key={c}
+                aria-label={`Background ${c}`}
+                onClick={() => setBg(c)}
+                style={{ width: 28, height: 28, borderRadius: "50%", background: c, border: c === bg ? "3px solid #333" : "2px solid #ccc", cursor: "pointer" }}
+              />
+            ))}
+          </div>
+        </>
+      ) : (
+        <>
+          {dataUrl ? (
+            <img src={dataUrl} alt="Status preview" style={{ maxWidth: "100%", borderRadius: 12, marginBottom: "0.6rem" }} />
+          ) : (
+            <p className="muted">Choose a photo to share as your status.</p>
+          )}
+          <label className="btn small ghost" style={{ display: "inline-block", cursor: "pointer" }}>
+            {dataUrl ? "Change photo" : "Choose photo"}
+            <input type="file" accept="image/*" hidden onChange={(e) => void onPickPhoto(e)} />
+          </label>
+        </>
+      )}
+
+      <h2 style={{ marginTop: "1rem" }}>Who can see this</h2>
+      <label style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+        <input type="radio" checked={audienceMode === "contacts"} onChange={() => setAudienceMode("contacts")} /> My contacts
+      </label>
+      <label style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginBottom: "0.4rem" }}>
+        <input type="radio" checked={audienceMode === "specific"} onChange={() => setAudienceMode("specific")} /> Only share with…
+      </label>
+      {audienceMode === "specific" && (
+        <>
+          {picked.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.5rem" }}>
+              {picked.map((p) => (
+                <button key={p.userId} className="btn small ghost" onClick={() => setPicked((s) => s.filter((x) => x.userId !== p.userId))}>
+                  @{p.username} ✕
+                </button>
+              ))}
+            </div>
+          )}
+          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by username…" aria-label="Audience search" />
+          {query.trim().length >= 2 && (
+            <ul className="list">
+              {results
+                .filter((r) => !pickedIds.has(r.userId))
+                .map((r) => (
+                  <li key={r.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                    <span>@{r.username}</span>
+                    <button className="btn small" onClick={() => { setPicked((s) => [...s, r]); setQuery(""); }}>
+                      Add
+                    </button>
+                  </li>
+                ))}
+            </ul>
+          )}
+        </>
+      )}
+
+      {error && (
+        <p className="error" role="alert" style={{ marginTop: "0.6rem" }}>
+          {error}
+        </p>
+      )}
+      <button className="btn" onClick={() => void post()} disabled={busy} style={{ marginTop: "0.8rem" }}>
+        {busy ? "Posting…" : "Post status"}
+      </button>
+    </div>
+  );
+}
+
+function StoryViewerOverlay({
+  author,
+  stories,
+  isMine,
+  onClose,
+}: {
+  author: string;
+  stories: StoryFeedItem[];
+  isMine: boolean;
+  onClose: () => void;
+}) {
+  const { services } = useServices();
+  const [idx, setIdx] = useState(0);
+  const [viewers, setViewers] = useState<StoryViewer[]>([]);
+  const [showViewers, setShowViewers] = useState(false);
+  const story = stories[idx];
+
+  useEffect(() => {
+    if (!story) return;
+    if (!isMine) void services.viewStory(story.storyId); // don't self-count the author's own view
+    if (isMine) void services.storyViewers(story.storyId).then(setViewers).catch(() => {});
+    if (showViewers) return; // pause auto-advance while the viewer list is open
+    const t = setTimeout(() => {
+      if (idx < stories.length - 1) setIdx(idx + 1);
+      else onClose();
+    }, 5000);
+    return () => clearTimeout(t);
+  }, [idx, story, stories.length, isMine, showViewers, services, onClose]);
+
+  if (!story) {
+    onClose();
+    return null;
+  }
+  const content = services.loadStoryContent(story.storyId);
+
+  return (
+    <div className="story-viewer">
+      <div className="story-progress">
+        {stories.map((s, i) => (
+          <span key={s.storyId} className={i < idx ? "done" : i === idx ? "active" : ""} />
+        ))}
+      </div>
+      <div className="story-head">
+        <span>{isMine ? "My status" : services.nameForUser(author)}</span>
+        {isMine && (
+          <button className="btn small ghost" onClick={() => void services.deleteStory(story.storyId).then(onClose)} aria-label="Delete status">
+            🗑
+          </button>
+        )}
+        <button className="btn small ghost" onClick={onClose} aria-label="Close">
+          ✕
+        </button>
+      </div>
+
+      <div className="story-body" style={content?.kind === "text" ? { background: content.bg } : undefined}>
+        {content?.kind === "text" ? (
+          <p className="story-text">{content.text}</p>
+        ) : content?.kind === "image" ? (
+          <img src={content.dataUrl} alt="Status" className="story-image" />
+        ) : (
+          <div className="story-locked">
+            🔒
+            <div>Encrypted status</div>
+            <span className="muted">content rides the STORY_KEY channel (not wired in this dev build)</span>
+          </div>
+        )}
+      </div>
+
+      <button className="story-tap left" aria-label="Previous" onClick={() => (idx > 0 ? setIdx(idx - 1) : undefined)} />
+      <button className="story-tap right" aria-label="Next" onClick={() => (idx < stories.length - 1 ? setIdx(idx + 1) : onClose())} />
+
+      {isMine && (
+        <button className="story-viewers-btn" onClick={() => setShowViewers((v) => !v)}>
+          👁 Viewed by {viewers.length}
+        </button>
+      )}
+      {isMine && showViewers && (
+        <div className="story-viewers-panel">
+          <h3>Viewed by {viewers.length}</h3>
+          {viewers.length === 0 ? (
+            <p className="muted">No views yet.</p>
+          ) : (
+            <ul className="list">
+              {viewers.map((v) => (
+                <li key={v.userId} className="row">
+                  {services.nameForUser(v.userId)}
+                </li>
+              ))}
+            </ul>
+          )}
+          <button className="btn small" onClick={() => setShowViewers(false)}>
+            Close
+          </button>
+        </div>
+      )}
     </div>
   );
 }

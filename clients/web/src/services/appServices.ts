@@ -99,6 +99,31 @@ export interface GroupInviteLink {
   qr: string;
 }
 
+/** StoryFeedItem is one entry from GET /v1/stories/feed (metadata only — the
+ *  content itself is E2EE and rides the STORY_KEY channel). */
+export interface StoryFeedItem {
+  storyId: string;
+  author: string;
+  expiresAtMs: number;
+  keyAvailable: boolean;
+}
+
+/** StoryViewer is one row from GET /v1/stories/{id}/viewers (author-only). */
+export interface StoryViewer {
+  userId: string;
+  viewedAtMs: number;
+}
+
+/** StoryContent is the displayable payload. On this dev build it's cached
+ *  locally for the author's own stories; cross-device delivery is the (unwired)
+ *  STORY_KEY seam, so a viewer without it sees the encrypted placeholder. */
+export interface StoryContent {
+  kind: "text" | "image";
+  text?: string;
+  bg?: string; // text-story background color
+  dataUrl?: string; // image data URL
+}
+
 /** CallSignalHandler receives the WS call-signaling frames (dev.{id}.call),
  *  forwarded to the CallProvider which drives the CallSession. */
 export interface CallSignalHandler {
@@ -640,6 +665,111 @@ export class AppServices {
     this.notifyChange();
     return g.id;
   }
+
+  // ── stories / status (T5.11) ──────────────────────────────────────────────
+
+  /** myUserId decodes the current access token's subject (the caller's user id),
+   *  or "" when signed out. Used to tell own stories from contacts'. */
+  myUserId(): string {
+    const jwt = this.sessions.current()?.accessJwt;
+    if (!jwt) return "";
+    try {
+      const payload = jwt.split(".")[1] ?? "";
+      const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+      return (JSON.parse(json) as { sub?: string }).sub ?? "";
+    } catch {
+      return "";
+    }
+  }
+
+  /** postStory publishes a status. kind is text|image|video; mediaRef is the
+   *  encrypted blob id (null for text); audienceOverride restricts the viewers
+   *  (null = the author's contacts). Content is cached locally for own-view. */
+  async postStory(
+    kind: string,
+    mediaRef: string | null,
+    audienceOverride: string[] | null,
+    content: StoryContent,
+  ): Promise<string> {
+    const res = await this.authedRequest("POST", "/v1/stories", {
+      kind,
+      media_ref: mediaRef,
+      audience_override: audienceOverride,
+    });
+    if (!res.ok) throw new Error("Couldn't post your status.");
+    const b = (await res.json()) as { story_id: string; expires_at_ms: number };
+    this.saveStoryContent(b.story_id, content);
+    this.notifyChange();
+    return b.story_id;
+  }
+
+  /** uploadStoryMedia encrypts + uploads an image/video and returns its media
+   *  object id (the story's media_ref). Reuses the chat media pipeline; the
+   *  per-file key would ride the STORY_KEY channel to viewers (dev seam). */
+  async uploadStoryMedia(bytes: Uint8Array, mime: string): Promise<string> {
+    const envelope = await this.mediaPipeline().prepare({ bytes, mime });
+    return envelope.objectKey;
+  }
+
+  /** storyFeed returns the active stories the caller may view (own + contacts'). */
+  async storyFeed(): Promise<StoryFeedItem[]> {
+    const res = await this.authedRequest("GET", "/v1/stories/feed");
+    if (!res.ok) return [];
+    const b = (await res.json()) as {
+      stories?: Array<{ story_id: string; author: string; expires_at_ms: number; key_available: boolean }>;
+    };
+    return (b.stories ?? []).map((s) => ({
+      storyId: s.story_id,
+      author: s.author,
+      expiresAtMs: s.expires_at_ms,
+      keyAvailable: s.key_available,
+    }));
+  }
+
+  /** viewStory records that the caller viewed a story (drives view receipts). */
+  async viewStory(storyId: string): Promise<void> {
+    await this.authedRequest("POST", `/v1/stories/${storyId}/view`);
+  }
+
+  /** storyViewers returns who viewed a story (author-only; 403/404 → []). */
+  async storyViewers(storyId: string): Promise<StoryViewer[]> {
+    const res = await this.authedRequest("GET", `/v1/stories/${storyId}/viewers`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { viewers?: Array<{ user_id: string; viewed_at_ms: number }> };
+    return (b.viewers ?? []).map((v) => ({ userId: v.user_id, viewedAtMs: v.viewed_at_ms }));
+  }
+
+  async deleteStory(storyId: string): Promise<void> {
+    await this.authedRequest("DELETE", `/v1/stories/${storyId}`);
+    try {
+      localStorage.removeItem(`wa.story.${storyId}`);
+    } catch {
+      /* ignore */
+    }
+    this.notifyChange();
+  }
+
+  /** saveStoryContent stashes a story's displayable payload locally (dev seam —
+   *  real content rides the E2EE STORY_KEY channel to each viewer). */
+  saveStoryContent(storyId: string, content: StoryContent): void {
+    try {
+      localStorage.setItem(`wa.story.${storyId}`, JSON.stringify(content));
+    } catch {
+      /* quota/full — the placeholder renders instead */
+    }
+  }
+
+  /** loadStoryContent returns a locally-cached story payload, or null (viewer
+   *  without the STORY_KEY sees the encrypted placeholder). */
+  loadStoryContent(storyId: string): StoryContent | null {
+    try {
+      const raw = localStorage.getItem(`wa.story.${storyId}`);
+      return raw ? (JSON.parse(raw) as StoryContent) : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */
   isPeerTyping(conversationId: string): boolean {
     const exp = this.typingByConv.get(conversationId);

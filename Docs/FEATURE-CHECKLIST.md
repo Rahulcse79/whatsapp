@@ -119,9 +119,9 @@ of the screens (media send, groups, calls, stories, settings) are the open work.
 
 | ID | Feature | D | S | C |
 |---|---|:-:|:-:|:-:|
-| FR-STORY-01 | Photo/video/text stories, 24 h expiry | ✅ | ✅ | ⬜ |
+| FR-STORY-01 | Photo/text stories, 24 h expiry (video same path) | ✅ | ✅ | ✅ |
 | FR-STORY-02 | Audience at post time; per-story E2EE key | ✅ | ✅ | 🔶 |
-| FR-STORY-03 | View receipts + reactions; viewer list | ✅ | ✅ | ⬜ |
+| FR-STORY-03 | View receipts + viewer list (reactions deferred) | ✅ | ✅ | 🔶 |
 
 ## NOTIF — Notifications
 

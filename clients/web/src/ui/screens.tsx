@@ -1664,6 +1664,11 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
   const [theme, setThemeState] = useState<ThemeChoice>(() => getTheme());
   const [notifs, setNotifs] = useState<NotificationEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // T6.04 saved-reply + auto-reply local editor state
+  const [tplTitle, setTplTitle] = useState("");
+  const [tplText, setTplText] = useState("");
+  const [autoReply, setAutoReplyState] = useState(() => services.getAutoReply());
+  const [, setTick] = useState(0); // re-render on template/scheduled changes
   const myId = services.myDeviceId();
 
   const load = useCallback(() => {
@@ -1672,7 +1677,8 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
   }, [services]);
   useEffect(() => {
     load();
-  }, [load]);
+    return services.onChange(() => setTick((n) => n + 1)); // refresh scheduled/templates lists
+  }, [load, services]);
 
   async function saveName(id: string): Promise<void> {
     setError(null);
@@ -1837,6 +1843,84 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
             Clear history
           </button>
         </>
+      )}
+
+      <h2 style={{ marginTop: "1.5rem" }}>Saved replies</h2>
+      <p className="muted" style={{ fontSize: "0.85rem" }}>Reusable messages you can insert from a chat's 📋 button.</p>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
+        <input className="input" placeholder="Title" value={tplTitle} style={{ maxWidth: 140 }} onChange={(e) => setTplTitle(e.target.value)} />
+        <input className="input" placeholder="Message text" value={tplText} onChange={(e) => setTplText(e.target.value)} />
+        <button
+          className="btn small"
+          disabled={tplText.trim() === ""}
+          onClick={() => {
+            services.addTemplate(tplTitle.trim() || tplText.trim().slice(0, 20), tplText.trim());
+            setTplTitle("");
+            setTplText("");
+          }}
+        >
+          Add
+        </button>
+      </div>
+      <ul className="list">
+        {services.listTemplates().map((t) => (
+          <li key={t.id} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="row-title">{t.title}</div>
+              <div className="row-sub">{t.text}</div>
+            </div>
+            <button className="btn small ghost" aria-label="Delete saved reply" onClick={() => services.removeTemplate(t.id)}>
+              🗑
+            </button>
+          </li>
+        ))}
+        {services.listTemplates().length === 0 ? <li className="row muted">No saved replies yet.</li> : null}
+      </ul>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Auto-reply (away)</h2>
+      <p className="muted" style={{ fontSize: "0.85rem" }}>
+        When on, incoming messages get one automatic reply per chat per hour (skips chats you're viewing).
+      </p>
+      <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
+        <input
+          type="checkbox"
+          checked={autoReply.enabled}
+          onChange={(e) => {
+            const next = { ...autoReply, enabled: e.target.checked };
+            setAutoReplyState(next);
+            services.setAutoReply(next.enabled, next.text);
+          }}
+        />
+        Enable auto-reply
+      </label>
+      <input
+        className="input"
+        placeholder="Away message (e.g. I'm away, back soon)"
+        value={autoReply.text}
+        onChange={(e) => {
+          const next = { ...autoReply, text: e.target.value };
+          setAutoReplyState(next);
+          services.setAutoReply(next.enabled, next.text);
+        }}
+      />
+
+      <h2 style={{ marginTop: "1.5rem" }}>Scheduled messages</h2>
+      {services.scheduledMessages().length === 0 ? (
+        <p className="muted" style={{ fontSize: "0.85rem" }}>Nothing scheduled. Type a message in a chat and tap 🕒 to schedule it.</p>
+      ) : (
+        <ul className="list">
+          {services.scheduledMessages().map((m) => (
+            <li key={m.id} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div className="row-title">{m.text.slice(0, 40)}</div>
+                <div className="row-sub">{new Date(m.sendAtMs).toLocaleString()}</div>
+              </div>
+              <button className="btn small ghost" aria-label="Cancel scheduled message" onClick={() => services.cancelScheduled(m.id)}>
+                Cancel
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
 
       <h2 style={{ marginTop: "1.5rem" }}>Chat backup</h2>
@@ -2264,6 +2348,65 @@ function ContactPicker({ conversationId, onClose }: { conversationId: string; on
   );
 }
 
+// toLocalInput formats an epoch-ms as a <input type="datetime-local"> value in
+// the browser's local time.
+function toLocalInput(ms: number): string {
+  const d = new Date(ms - new Date(ms).getTimezoneOffset() * 60_000);
+  return d.toISOString().slice(0, 16);
+}
+
+/** ScheduleSheet picks a future time to send the current draft (T6.04). */
+function ScheduleSheet({ draft, onSchedule, onClose }: { draft: string; onSchedule: (sendAtMs: number) => void; onClose: () => void }) {
+  const [when, setWhen] = useState(() => toLocalInput(Date.now() + 60 * 60_000)); // default +1h
+  const ms = new Date(when).getTime();
+  const valid = draft.trim() !== "" && Number.isFinite(ms) && ms > Date.now();
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Schedule message</strong>
+        <p className="muted" style={{ margin: 0 }}>“{draft.trim().slice(0, 80) || "(type a message first)"}”</p>
+        <input className="input" type="datetime-local" value={when} onChange={(e) => setWhen(e.target.value)} />
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn" disabled={!valid} onClick={() => onSchedule(ms)}>
+            Schedule
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** TemplatePicker inserts a saved reply into the composer (T6.04). */
+function TemplatePicker({ onPick, onClose }: { onPick: (text: string) => void; onClose: () => void }) {
+  const { services } = useServices();
+  const templates = services.listTemplates();
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Saved replies</strong>
+        {templates.length === 0 ? (
+          <p className="muted">No saved replies yet — add them in Settings → Saved replies.</p>
+        ) : (
+          <ul className="list" style={{ maxHeight: "50vh" }}>
+            {templates.map((t) => (
+              <li key={t.id} className="row" role="button" tabIndex={0} onClick={() => onPick(t.text)} onKeyDown={onActivate(() => onPick(t.text))}>
+                <div className="row-title">{t.title || t.text.slice(0, 30)}</div>
+                <div className="row-sub">{t.text}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button className="btn ghost" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Thread({
   conversationId,
   onBack,
@@ -2291,6 +2434,8 @@ export function Thread({
   const [showPoll, setShowPoll] = useState(false); // poll-creation modal
   const [showLocation, setShowLocation] = useState(false); // location-share sheet
   const [showContact, setShowContact] = useState(false); // contact-share picker
+  const [showSchedule, setShowSchedule] = useState(false); // schedule-message sheet
+  const [showTemplates, setShowTemplates] = useState(false); // saved-reply picker
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLInputElement>(null);
   const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -2632,6 +2777,30 @@ export function Thread({
       ) : null}
       {showLocation ? <LocationSheet conversationId={conversationId} onClose={() => setShowLocation(false)} /> : null}
       {showContact ? <ContactPicker conversationId={conversationId} onClose={() => setShowContact(false)} /> : null}
+      {showTemplates ? (
+        <TemplatePicker
+          onClose={() => setShowTemplates(false)}
+          onPick={(text) => {
+            setShowTemplates(false);
+            insertAtCursor(text);
+          }}
+        />
+      ) : null}
+      {showSchedule ? (
+        <ScheduleSheet
+          draft={draft}
+          onClose={() => setShowSchedule(false)}
+          onSchedule={(sendAtMs) => {
+            const text = draft.trim();
+            if (text) {
+              services.scheduleMessage(conversationId, text, sendAtMs);
+              setDraft("");
+              services.setDraft(conversationId, "");
+            }
+            setShowSchedule(false);
+          }}
+        />
+      ) : null}
       {replyingTo || editing ? (
         <div className="reply-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border, #e2e2e2)", fontSize: "0.82rem" }}>
           <span style={{ flex: 1, opacity: 0.8 }}>
@@ -2703,6 +2872,12 @@ export function Thread({
             </button>
             <button className="btn small ghost" type="button" aria-label="Contact" title="Share a contact" disabled={!!editing} onClick={() => setShowContact(true)}>
               👤
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Saved replies" title="Saved replies" disabled={!!editing} onClick={() => setShowTemplates(true)}>
+              📋
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Schedule" title="Schedule this message" disabled={!!editing || draft.trim() === ""} onClick={() => setShowSchedule(true)}>
+              🕒
             </button>
             <button
               className="btn small ghost"

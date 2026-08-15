@@ -168,6 +168,21 @@ export interface StickerPackInfo {
   stickers?: StickerItem[];
 }
 
+/** ScheduledMessage is a client-held message queued to send at sendAtMs (T6.04). */
+export interface ScheduledMessage {
+  id: string;
+  conversationId: string;
+  text: string;
+  sendAtMs: number;
+}
+
+/** MessageTemplate is a saved reply the user can insert into the composer. */
+export interface MessageTemplate {
+  id: string;
+  title: string;
+  text: string;
+}
+
 /** PollResults mirrors GET /v1/polls/{id} — the index-based tally the server
  *  keeps (option TEXTS stay client-side/E2EE). */
 export interface PollResults {
@@ -218,6 +233,12 @@ export class AppServices {
   private readonly draftByConv = new Map<string, string>(); // conversationId → composer draft
   // undo-send: a just-sent message is held for a short window before dispatch.
   private pendingSend: { conversationId: string; text: string; reply?: QuotedRef; timer: ReturnType<typeof setTimeout> } | null = null;
+  // ── scheduling + templates + auto-reply (T6.04, client-local) ──
+  private scheduledMsgs: ScheduledMessage[] = []; // wa.scheduled
+  private msgTemplates: MessageTemplate[] = []; // wa.templates
+  private autoReplyCfg = { enabled: false, text: "" }; // wa.autoreply
+  private readonly autoRepliedAt = new Map<string, number>(); // conversationId → last auto-reply (cooldown)
+  private scheduleTimer: ReturnType<typeof setInterval> | null = null;
 
   /** onChange fires whenever the local store changes (inbound messages, send
    *  acks, or a fresh send). Screens re-fetch on it so the open thread and the
@@ -259,6 +280,12 @@ export class AppServices {
       if (wp) for (const [id, key] of Object.entries(JSON.parse(wp) as Record<string, string>)) this.wallpaperByConv.set(id, key);
       const dr = localStorage.getItem("wa.drafts");
       if (dr) for (const [id, text] of Object.entries(JSON.parse(dr) as Record<string, string>)) this.draftByConv.set(id, text);
+      const sch = localStorage.getItem("wa.scheduled");
+      if (sch) this.scheduledMsgs = JSON.parse(sch) as ScheduledMessage[];
+      const tpl = localStorage.getItem("wa.templates");
+      if (tpl) this.msgTemplates = JSON.parse(tpl) as MessageTemplate[];
+      const ar = localStorage.getItem("wa.autoreply");
+      if (ar) this.autoReplyCfg = JSON.parse(ar) as { enabled: boolean; text: string };
     } catch {
       /* no persisted prefs — defaults */
     }
@@ -338,6 +365,7 @@ export class AppServices {
               for (const cb of this.toastListeners) cb(entry);
             }
           }
+          this.maybeAutoReply(b.items); // T6.04 away auto-responder
           this.notifyChange(); // new inbound message(s) → refresh open screens
           // Tell each sender their message reached this device (drives ✓✓).
           const maxByConv = new Map<string, number>();
@@ -383,6 +411,7 @@ export class AppServices {
       },
     });
     this.ws.start();
+    this.startScheduleTicker(); // fire due scheduled messages while connected (T6.04)
   }
 
   async sendText(conversationId: string, text: string, reply?: QuotedRef): Promise<void> {
@@ -468,6 +497,108 @@ export class AppServices {
   /** isLiveSharing reports whether a live share is still ticking on this device. */
   isLiveSharing(shareId: string): boolean {
     return this.liveShares.has(shareId);
+  }
+
+  // ── scheduled messages + templates + auto-reply (T6.04) ────────────────────
+
+  private startScheduleTicker(): void {
+    if (this.scheduleTimer) return;
+    this.scheduleTimer = setInterval(() => void this.fireDueScheduled(), 15_000);
+    void this.fireDueScheduled(); // catch any already due at connect
+  }
+
+  private async fireDueScheduled(): Promise<void> {
+    const now = Date.now();
+    const due = this.scheduledMsgs.filter((m) => m.sendAtMs <= now);
+    if (due.length === 0) return;
+    this.scheduledMsgs = this.scheduledMsgs.filter((m) => m.sendAtMs > now);
+    this.persistScheduled();
+    // Enqueue via the normal send path — if offline, it sits in the durable
+    // outbox and flushes on reconnect (the client-held "offline" fallback; a
+    // server scheduler for a fully-closed app is a documented seam).
+    for (const m of due) await this.sendText(m.conversationId, m.text).catch(() => {});
+    this.notifyChange();
+  }
+
+  /** scheduleMessage queues a message to send at sendAtMs (client-held). */
+  scheduleMessage(conversationId: string, text: string, sendAtMs: number): void {
+    this.scheduledMsgs.push({ id: newId(), conversationId, text, sendAtMs });
+    this.persistScheduled();
+    this.notifyChange();
+  }
+
+  /** scheduledMessages lists pending scheduled messages (optionally per chat). */
+  scheduledMessages(conversationId?: string): ScheduledMessage[] {
+    return this.scheduledMsgs
+      .filter((m) => conversationId === undefined || m.conversationId === conversationId)
+      .sort((a, b) => a.sendAtMs - b.sendAtMs);
+  }
+
+  cancelScheduled(id: string): void {
+    this.scheduledMsgs = this.scheduledMsgs.filter((m) => m.id !== id);
+    this.persistScheduled();
+    this.notifyChange();
+  }
+
+  /** listTemplates returns the saved-reply templates. */
+  listTemplates(): MessageTemplate[] {
+    return [...this.msgTemplates];
+  }
+  addTemplate(title: string, text: string): void {
+    this.msgTemplates.push({ id: newId(), title: title.trim(), text });
+    this.persistTemplates();
+    this.notifyChange();
+  }
+  removeTemplate(id: string): void {
+    this.msgTemplates = this.msgTemplates.filter((t) => t.id !== id);
+    this.persistTemplates();
+    this.notifyChange();
+  }
+
+  /** getAutoReply / setAutoReply drive the away auto-responder. */
+  getAutoReply(): { enabled: boolean; text: string } {
+    return { ...this.autoReplyCfg };
+  }
+  setAutoReply(enabled: boolean, text: string): void {
+    this.autoReplyCfg = { enabled, text };
+    try {
+      localStorage.setItem("wa.autoreply", JSON.stringify(this.autoReplyCfg));
+    } catch {
+      /* ignore */
+    }
+    this.notifyChange();
+  }
+
+  // maybeAutoReply sends the away message once per conversation per hour, only
+  // for real inbound (not overlays) in a conversation I'm not viewing. The
+  // per-conversation cooldown keeps two away-repliers from ping-ponging tightly.
+  private maybeAutoReply(items: { conversationId: string; overlayTarget?: string }[]): void {
+    if (!this.autoReplyCfg.enabled || !this.autoReplyCfg.text) return;
+    const cooldownMs = 60 * 60 * 1000;
+    const now = Date.now();
+    const handled = new Set<string>();
+    for (const it of items) {
+      if (it.overlayTarget || it.conversationId === this.activeConv || handled.has(it.conversationId)) continue;
+      if (now - (this.autoRepliedAt.get(it.conversationId) ?? 0) < cooldownMs) continue;
+      handled.add(it.conversationId);
+      this.autoRepliedAt.set(it.conversationId, now);
+      void this.sendText(it.conversationId, this.autoReplyCfg.text).catch(() => {});
+    }
+  }
+
+  private persistScheduled(): void {
+    try {
+      localStorage.setItem("wa.scheduled", JSON.stringify(this.scheduledMsgs));
+    } catch {
+      /* ignore */
+    }
+  }
+  private persistTemplates(): void {
+    try {
+      localStorage.setItem("wa.templates", JSON.stringify(this.msgTemplates));
+    } catch {
+      /* ignore */
+    }
   }
 
   // ── polls (T6.02) ─────────────────────────────────────────────────────────

@@ -133,6 +133,16 @@ export interface LinkedDevice {
   lastActiveMs: number;
 }
 
+/** NotificationEntry is one in-app notification (a new inbound message in a
+ *  conversation you weren't viewing). Content is the E2EE placeholder in dev. */
+export interface NotificationEntry {
+  id: string;
+  conversationId: string;
+  title: string;
+  preview: string;
+  ts: number;
+}
+
 /** CallSignalHandler receives the WS call-signaling frames (dev.{id}.call),
  *  forwarded to the CallProvider which drives the CallSession. */
 export interface CallSignalHandler {
@@ -155,6 +165,13 @@ export class AppServices {
   private callHandler: CallSignalHandler | null = null; // set by CallProvider
   private readonly groupCache = new Map<string, GroupInfo>(); // conversationId → group info
   private readonly notGroup = new Set<string>(); // conversationIds confirmed to be direct chats
+  // ── notifications (T5.13, client-local) ──
+  private readonly unreadByConv = new Map<string, number>(); // conversationId → unread count
+  private activeConv: string | null = null; // the conversation currently on screen
+  private readonly mutedConvs = new Set<string>(); // per-chat mute (localStorage)
+  private globalMuted = false; // global mute (localStorage)
+  private readonly notifLog: NotificationEntry[] = []; // recent in-app notifications (newest first)
+  private readonly toastListeners = new Set<(n: NotificationEntry) => void>();
   private readonly typingByConv = new Map<string, number>(); // conversationId → typing-expiry ts
   private readonly presenceByUser = new Map<string, { online: boolean; lastSeenMs: number }>();
 
@@ -174,6 +191,17 @@ export class AppServices {
     this.sessions = new SessionManager(indexedDbSecureStore);
     const worker = new Worker(new URL("../worker/db.worker.ts", import.meta.url), { type: "module" });
     this.db = createDbClient(worker);
+    this.loadMuteState();
+  }
+
+  private loadMuteState(): void {
+    try {
+      const convs = localStorage.getItem("wa.mute.convs");
+      if (convs) for (const id of JSON.parse(convs) as string[]) this.mutedConvs.add(id);
+      this.globalMuted = localStorage.getItem("wa.mute.global") === "1";
+    } catch {
+      /* no persisted prefs — defaults (unmuted) */
+    }
   }
 
   static async create(): Promise<AppServices> {
@@ -217,6 +245,24 @@ export class AppServices {
           for (const it of b.items) this.peerByConv.set(it.conversationId, it.senderUserId);
           const watermark = await this.db.persistInboxBatch(b);
           this.mergeCursors(watermark);
+          // Raise unread + an in-app notification for real messages (not overlay
+          // edits/reactions/receipts) in conversations I'm not currently viewing.
+          for (const it of b.items) {
+            if (it.overlayTarget || it.conversationId === this.activeConv) continue;
+            this.unreadByConv.set(it.conversationId, (this.unreadByConv.get(it.conversationId) ?? 0) + 1);
+            const entry: NotificationEntry = {
+              id: it.msgUuid,
+              conversationId: it.conversationId,
+              title: this.groupNameOf(it.conversationId) || this.nameForUser(it.senderUserId),
+              preview: "New message", // content is E2EE (decrypt seam) — no plaintext preview in dev
+              ts: it.acceptedAtMs || Date.now(),
+            };
+            this.notifLog.unshift(entry);
+            if (this.notifLog.length > 50) this.notifLog.pop();
+            if (!this.globalMuted && !this.mutedConvs.has(it.conversationId)) {
+              for (const cb of this.toastListeners) cb(entry);
+            }
+          }
           this.notifyChange(); // new inbound message(s) → refresh open screens
           // Tell each sender their message reached this device (drives ✓✓).
           const maxByConv = new Map<string, number>();
@@ -812,6 +858,75 @@ export class AppServices {
   async revokeDevice(deviceId: string): Promise<void> {
     const res = await this.authedRequest("DELETE", `/v1/devices/${deviceId}`);
     if (!res.ok) throw new Error("Couldn't revoke that device.");
+  }
+
+  // ── notifications / mute / badges (T5.13) ─────────────────────────────────
+
+  /** setActiveConversation marks a conversation as on-screen: its unread count
+   *  clears and inbound messages there raise no notification. Pass null on close. */
+  setActiveConversation(conversationId: string | null): void {
+    this.activeConv = conversationId;
+    if (conversationId && (this.unreadByConv.get(conversationId) ?? 0) > 0) {
+      this.unreadByConv.set(conversationId, 0);
+      this.notifyChange();
+    }
+  }
+
+  /** unreadCount is the number of unread inbound messages in a conversation. */
+  unreadCount(conversationId: string): number {
+    return this.unreadByConv.get(conversationId) ?? 0;
+  }
+
+  /** totalUnread is the sum of unread across all conversations (topbar badge). */
+  totalUnread(): number {
+    let n = 0;
+    for (const v of this.unreadByConv.values()) n += v;
+    return n;
+  }
+
+  isMuted(conversationId: string): boolean {
+    return this.mutedConvs.has(conversationId);
+  }
+
+  toggleMute(conversationId: string): void {
+    if (this.mutedConvs.has(conversationId)) this.mutedConvs.delete(conversationId);
+    else this.mutedConvs.add(conversationId);
+    try {
+      localStorage.setItem("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
+    } catch {
+      /* ignore */
+    }
+    this.notifyChange();
+  }
+
+  isGlobalMute(): boolean {
+    return this.globalMuted;
+  }
+
+  setGlobalMute(on: boolean): void {
+    this.globalMuted = on;
+    try {
+      localStorage.setItem("wa.mute.global", on ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+    this.notifyChange();
+  }
+
+  /** onToast subscribes to in-app notification toasts (returns an unsubscribe). */
+  onToast(cb: (n: NotificationEntry) => void): () => void {
+    this.toastListeners.add(cb);
+    return () => this.toastListeners.delete(cb);
+  }
+
+  /** notificationHistory returns recent in-app notifications (newest first). */
+  notificationHistory(): NotificationEntry[] {
+    return [...this.notifLog];
+  }
+
+  clearNotifications(): void {
+    this.notifLog.length = 0;
+    this.notifyChange();
   }
 
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */

@@ -22,7 +22,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { CallHistoryItem, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -547,21 +547,49 @@ export function ChatList({
         <p className="muted center">No conversations yet. Start one with ＋ New.</p>
       ) : (
         <ul className="list">
-          {items.map((c) => (
-            <li
-              key={c.conversationId}
-              className="row"
-              role="button"
-              tabIndex={0}
-              onClick={() => onOpen(c.conversationId)}
-              onKeyDown={onActivate(() => onOpen(c.conversationId))}
-            >
-              <div className="row-title">
-                {services.groupNameOf(c.conversationId) ? `👥 ${services.groupNameOf(c.conversationId)}` : services.peerNameOf(c.conversationId) || c.title}
-              </div>
-              <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
-            </li>
-          ))}
+          {items.map((c) => {
+            const unread = services.unreadCount(c.conversationId);
+            const muted = services.isMuted(c.conversationId);
+            return (
+              <li
+                key={c.conversationId}
+                className="row"
+                role="button"
+                tabIndex={0}
+                onClick={() => onOpen(c.conversationId)}
+                onKeyDown={onActivate(() => onOpen(c.conversationId))}
+                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+              >
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="row-title">
+                    {services.groupNameOf(c.conversationId) ? `👥 ${services.groupNameOf(c.conversationId)}` : services.peerNameOf(c.conversationId) || c.title}
+                    {muted && <span title="Muted" style={{ marginLeft: 6, opacity: 0.6 }}>🔇</span>}
+                  </div>
+                  <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
+                </div>
+                {unread > 0 && (
+                  <span
+                    aria-label={`${unread} unread`}
+                    style={{
+                      background: muted ? "#9aa0a6" : "#25D366",
+                      color: "#fff",
+                      borderRadius: 999,
+                      minWidth: 20,
+                      height: 20,
+                      padding: "0 6px",
+                      fontSize: "0.72rem",
+                      fontWeight: 700,
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    {unread > 99 ? "99+" : unread}
+                  </span>
+                )}
+              </li>
+            );
+          })}
         </ul>
       )}
     </div>
@@ -1587,11 +1615,14 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
       return false;
     }
   });
+  const [globalMute, setGlobalMute] = useState<boolean>(() => services.isGlobalMute());
+  const [notifs, setNotifs] = useState<NotificationEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const myId = services.myDeviceId();
 
   const load = useCallback(() => {
     void services.listDevices().then(setDevices).catch(() => {});
+    setNotifs(services.notificationHistory());
   }, [services]);
   useEffect(() => {
     load();
@@ -1716,6 +1747,31 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
         <input type="checkbox" checked={pushOn} onChange={() => void togglePush()} />
         <span>Push notifications on this device</span>
       </label>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.4rem" }}>
+        <input type="checkbox" checked={globalMute} onChange={(e) => { services.setGlobalMute(e.target.checked); setGlobalMute(e.target.checked); }} />
+        <span>Mute all chats (no in-app alerts)</span>
+      </label>
+
+      <h3 style={{ marginTop: "1rem" }}>Recent notifications</h3>
+      {notifs.length === 0 ? (
+        <p className="muted" style={{ fontSize: "0.85rem" }}>Nothing recent.</p>
+      ) : (
+        <>
+          <ul className="list">
+            {notifs.slice(0, 20).map((n) => (
+              <li key={n.id} className="row">
+                <div className="row-title">{n.title}</div>
+                <div className="row-sub">
+                  {n.preview} · {formatLastSeen(n.ts)}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <button className="btn small ghost" onClick={() => { services.clearNotifications(); setNotifs([]); }}>
+            Clear history
+          </button>
+        </>
+      )}
 
       <h2 style={{ marginTop: "1.5rem" }}>Chat backup</h2>
       <p className="muted" style={{ fontSize: "0.85rem" }}>
@@ -1772,6 +1828,7 @@ export function Thread({
   const call = useCall();
   const [messages, setMessages] = useState<ThreadMessage[]>([]);
   const [group, setGroup] = useState<GroupInfo | null>(() => services.groupOf(conversationId) ?? null);
+  const [muted, setMuted] = useState<boolean>(() => services.isMuted(conversationId));
   const [draft, setDraft] = useState("");
   const [gallery, setGallery] = useState<{ items: MediaEnvelope[]; startKey: string } | null>(null);
   const [replyingTo, setReplyingTo] = useState<QuotedRef | null>(null);
@@ -1786,6 +1843,8 @@ export function Thread({
     let alive = true;
     lastReadRef.current = 0; // reset the read watermark per conversation
     subscribedRef.current = false;
+    services.setActiveConversation(conversationId); // clears unread + suppresses toasts here
+    setMuted(services.isMuted(conversationId));
     setGroup(services.groupOf(conversationId) ?? null);
     // Classify the conversation: a group (name + settings for the header/composer)
     // or a 1:1 (peer presence). loadGroup 404s on direct chats → null.
@@ -1821,6 +1880,7 @@ export function Thread({
       alive = false;
       unsub();
       clearInterval(handle);
+      services.setActiveConversation(null); // leaving the thread → toasts resume
     };
   }, [services, conversationId]);
 
@@ -1938,6 +1998,17 @@ export function Thread({
             </span>
           ) : null}
         </div>
+        <button
+          className="btn small ghost"
+          title={muted ? "Unmute notifications" : "Mute notifications"}
+          aria-label={muted ? "Unmute notifications" : "Mute notifications"}
+          onClick={() => {
+            services.toggleMute(conversationId);
+            setMuted(services.isMuted(conversationId));
+          }}
+        >
+          <span aria-hidden>{muted ? "🔇" : "🔔"}</span>
+        </button>
         {group ? (
           <button className="btn small ghost" title="Group info" aria-label="Group info" onClick={() => onGroupInfo(conversationId)}>
             <span aria-hidden>ℹ️</span>

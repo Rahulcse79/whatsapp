@@ -704,3 +704,57 @@ body {
   border-radius: 16px 16px 0 0;
   padding: 16px;
 }
+
+/* Notifications (T5.13) */
+.topbar-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  margin-left: 8px;
+  border-radius: 999px;
+  background: #25D366;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  vertical-align: middle;
+}
+.toast-stack {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 1200;
+  max-width: min(340px, 90vw);
+}
+.toast {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  text-align: left;
+  background: var(--panel, #fff);
+  color: var(--text, #111);
+  border: 1px solid var(--border, #e2e2e2);
+  border-left: 4px solid #25D366;
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+  cursor: pointer;
+  animation: toast-in 0.18s ease-out;
+}
+.toast strong {
+  font-size: 0.9rem;
+}
+.toast span {
+  font-size: 0.8rem;
+  opacity: 0.75;
+}
+@keyframes toast-in {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}

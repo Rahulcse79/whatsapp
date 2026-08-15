@@ -68,3 +68,23 @@ func (s *NATSCallSource) Subscribe(deviceID string, deliver func([]byte)) (func(
 	}
 	return func() { _ = sub.Unsubscribe() }, nil
 }
+
+// NATSChannelSource subscribes to per-channel broadcast nudges (channel.{id}.post,
+// published by channels/adapters.NATSBroadcaster). The gateway forwards a
+// ChannelEvent to followers who subscribed the channel; the durable path is the
+// client pulling ListPosts, so a lost nudge only costs immediacy (T7.04).
+type NATSChannelSource struct{ nc *nats.Conn }
+
+func NewNATSChannelSource(nc *nats.Conn) *NATSChannelSource {
+	return &NATSChannelSource{nc: nc}
+}
+
+func (s *NATSChannelSource) Subscribe(channelID string, deliver func([]byte)) (func(), error) {
+	sub, err := s.nc.Subscribe("channel."+channelID+".post", func(msg *nats.Msg) {
+		deliver(msg.Data)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("subscribing channel %s: %w", channelID, err)
+	}
+	return func() { _ = sub.Unsubscribe() }, nil
+}

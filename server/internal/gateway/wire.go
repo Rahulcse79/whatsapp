@@ -136,6 +136,15 @@ func typingFrame(frameID uint64, tp *wsv1.Typing) []byte {
 	return payload
 }
 
+// channelEventFrame wraps a channel real-time nudge (T7.04) for one follower.
+func channelEventFrame(frameID uint64, ev *wsv1.ChannelEvent) []byte {
+	payload, _ := proto.Marshal(&wsv1.Frame{
+		FrameId: frameID,
+		Body:    &wsv1.Frame_ChannelEvent{ChannelEvent: ev},
+	})
+	return payload
+}
+
 // decodeReceipt decodes one NATS receipt payload (wsv1.Receipt, published by
 // chat/adapters.RelayReceipt).
 func decodeReceipt(payload []byte) (*wsv1.Receipt, error) {

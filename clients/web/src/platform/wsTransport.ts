@@ -114,6 +114,11 @@ function clientBody(frame: ClientFrame): BodyInit {
         case: "presenceSub",
         value: { subscribeUserIds: frame.subscribe, unsubscribeUserIds: frame.unsubscribe },
       };
+    case "channel_sub":
+      return {
+        case: "channelSub",
+        value: { subscribeChannelIds: frame.subscribe, unsubscribeChannelIds: frame.unsubscribe },
+      };
   }
 }
 
@@ -192,6 +197,8 @@ function decodeServerFrame(data: Uint8Array): ServerFrame | null {
       return { t: "call_ring", ringId: b.value.ringId, state: ringState(b.value.state), byUserId: b.value.byUserId };
     case "callEnd":
       return { t: "call_end", ringId: b.value.ringId, roomId: b.value.roomId, reason: b.value.reason };
+    case "channelEvent":
+      return { t: "channel_event", channelId: b.value.channelId, postId: b.value.postId };
     case "msgAck":
       return {
         t: "msg_ack",

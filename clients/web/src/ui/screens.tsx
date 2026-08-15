@@ -2164,9 +2164,19 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
   }, [services, channelId]);
   useEffect(() => {
     load();
-    const h = setInterval(load, 8000);
-    return () => clearInterval(h);
-  }, [load]);
+    // Real-time push (T7.04): the gateway forwards a channel_event when a post
+    // lands; refetch on it. The poll is now just a safety net for missed nudges.
+    services.subscribeChannel(channelId);
+    const unsub = services.onChannelEvent((id) => {
+      if (id === channelId) load();
+    });
+    const h = setInterval(load, 20000);
+    return () => {
+      services.unsubscribeChannel(channelId);
+      unsub();
+      clearInterval(h);
+    };
+  }, [load, services, channelId]);
 
   if (!channel) return <p className="muted center">Loading…</p>;
   const isAdmin = channel.myRole === "owner" || channel.myRole === "admin";

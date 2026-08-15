@@ -50,6 +50,7 @@ type Server struct {
 	delivery DeliverySource  // nil = no live delivery (some tests)
 	receipts DeliverySource  // nil = no receipt forwarding (dev.{id}.receipt)
 	calls    DeliverySource  // nil = no call signaling (dev.{id}.call)
+	channels ChannelSource   // nil = no channel real-time push (channel.{id}.post)
 	chat     ChatClient      // nil = no core-api (some tests): no replay, no send path
 	resume   ResumeStore     // nil = resume tokens disabled (some tests)
 	presence PresenceBackend // nil = presence/typing disabled (some tests)
@@ -72,6 +73,7 @@ type Config struct {
 	Delivery       DeliverySource
 	Receipts       DeliverySource
 	Calls          DeliverySource
+	Channels       ChannelSource
 	Chat           ChatClient
 	Resume         ResumeStore
 	Presence       PresenceBackend
@@ -99,7 +101,7 @@ func NewServer(cfg Config) *Server {
 	s := &Server{
 		reg: cfg.Registry, verifier: cfg.Verifier, authz: cfg.Authorizer,
 		routes: cfg.Routes, delivery: cfg.Delivery, receipts: cfg.Receipts,
-		calls: cfg.Calls, chat: cfg.Chat, resume: cfg.Resume, presence: cfg.Presence,
+		calls: cfg.Calls, channels: cfg.Channels, chat: cfg.Chat, resume: cfg.Resume, presence: cfg.Presence,
 		podID: cfg.PodID, routeTTL: cfg.RouteTTL, log: cfg.Log,
 		allowedOrigins: cfg.AllowedOrigins,
 	}
@@ -146,6 +148,9 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.presence != nil {
 		c.pres = newConnPresence()
+	}
+	if s.channels != nil {
+		c.chans = newConnChannels()
 	}
 	if displaced := s.reg.Add(c); displaced != nil {
 		// Close asynchronously: a WebSocket close performs a closing handshake
@@ -428,6 +433,10 @@ func (s *Server) serve(ctx context.Context, c *Conn) {
 			if s.presence != nil {
 				s.handleTyping(ctx, c, body.Typing)
 			}
+		case *wsv1.Frame_ChannelSub:
+			if s.channels != nil {
+				s.handleChannelSub(c, body.ChannelSub)
+			}
 		default:
 			// Presence, typing, … arrive with their tasks (T0.15+). Unknown
 			// frames are ignored, not fatal: old servers must tolerate newer
@@ -518,6 +527,9 @@ func (s *Server) heartbeat(ctx context.Context, c *Conn) {
 func (s *Server) cleanup(c *Conn) {
 	if s.presence != nil && c.pres != nil && c.pres.connected {
 		s.presenceDisconnect(c)
+	}
+	if c.chans != nil {
+		c.chans.closeAll()
 	}
 	if s.reg.Remove(c) {
 		_ = s.routes.Release(context.Background(), c.deviceID, s.podID)

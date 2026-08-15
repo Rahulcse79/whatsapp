@@ -82,7 +82,15 @@ export interface PresenceSub {
   unsubscribe: string[];
 }
 
-export type ClientFrame = Hello | Ping | Pong | MsgSend | ClientAck | Receipt | SyncPull | Typing | PresenceSub;
+/** ChannelSub declares the channels this device follows so the gateway pushes
+ *  real-time post nudges for them (client→server; mirrors PresenceSub). */
+export interface ChannelSub {
+  t: "channel_sub";
+  subscribe: string[];
+  unsubscribe: string[];
+}
+
+export type ClientFrame = Hello | Ping | Pong | MsgSend | ClientAck | Receipt | SyncPull | Typing | PresenceSub | ChannelSub;
 
 // ── server → client ────────────────────────────────────────────────────────
 
@@ -186,7 +194,16 @@ export type ServerFrame =
   | PresenceUpdate
   | CallOffer
   | CallRing
-  | CallEnd;
+  | CallEnd
+  | ChannelEvent;
+
+/** ChannelEvent signals a new post in a followed channel (server→client). The
+ *  client pulls the post over REST — the event carries only ids (T7.04). */
+export interface ChannelEvent {
+  t: "channel_event";
+  channelId: string;
+  postId: string;
+}
 
 /** WSS close codes and their client contract (websocket-protocol.md §6). */
 export const CloseCode = {

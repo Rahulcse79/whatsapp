@@ -43,6 +43,7 @@ type Conn struct {
 	gate      *replayGate       // live/replay interleave (ws-gateway-lld §3)
 	rcoal     *receiptCoalescer // inbound receipt coalescing (DS&A §9)
 	pres      *connPresence     // presence subscriptions + fan-out (nil if disabled)
+	chans     *connChannels     // channel real-time subscriptions (nil if disabled)
 	frameID   atomic.Uint64     // per-connection frame_id counter (tracing only)
 	closeOnce sync.Once
 }

@@ -52,6 +52,9 @@ message Frame {
     PttGrant ptt_grant = 61;
     PttRelease ptt_release = 62;
     PttQueuePos ptt_queue_pos = 63;
+    // channels (broadcast real-time nudges — content is pulled, not pushed)
+    ChannelSub channel_sub = 70;
+    ChannelEvent channel_event = 71;
   }
 }
 
@@ -328,4 +331,21 @@ message PttRelease {
 message PttQueuePos {
   string room_id = 1;
   int32 position = 2;
+}
+
+// ─────────────────────────────── channels ───────────────────────────────
+// Real-time nudges for the broadcast plane (T7.04). The client declares the
+// channels it follows (ChannelSub, mirroring PresenceSub); the gateway
+// subscribes channel.{id}.post and forwards a ChannelEvent when a post lands.
+// The event carries only ids — the client pulls the post over REST (the durable
+// path), so a dropped nudge costs immediacy, not the post.
+
+message ChannelSub {
+  repeated string subscribe_channel_ids = 1;
+  repeated string unsubscribe_channel_ids = 2;
+}
+
+message ChannelEvent {
+  string channel_id = 1;
+  string post_id = 2;
 }

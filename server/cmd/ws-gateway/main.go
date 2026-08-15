@@ -108,6 +108,7 @@ func main() {
 		Delivery: gwadapters.NewNATSDeliverySource(nc),
 		Receipts: gwadapters.NewNATSReceiptSource(nc),
 		Calls:    gwadapters.NewNATSCallSource(nc),
+		Channels: gwadapters.NewNATSChannelSource(nc),
 		Chat:     gwadapters.NewGRPCChatClient(coreConn),
 		Resume:   gwadapters.NewValkeyResumeStore(vk),
 		Presence: presenceBackend{

@@ -256,6 +256,7 @@ export class AppServices {
   private readonly peerByConv = new Map<string, string>(); // conversationId → peer userId
   private readonly profileCache = new Map<string, PublicProfile>(); // userId → public profile
   private callHandler: CallSignalHandler | null = null; // set by CallProvider
+  private readonly channelEventListeners = new Set<(channelId: string, postId: string) => void>(); // T7.04
   private readonly groupCache = new Map<string, GroupInfo>(); // conversationId → group info
   private readonly notGroup = new Set<string>(); // conversationIds confirmed to be direct chats
   // ── notifications (T5.13, client-local) ──
@@ -442,6 +443,9 @@ export class AppServices {
         onCallOffer: (o) => this.callHandler?.onOffer(o.callerUserId, o.roomId, o.ringId, o.kind),
         onCallRing: (r) => this.callHandler?.onRing(r.state),
         onCallEnd: (e) => this.callHandler?.onEnd(e.reason),
+        onChannelEvent: (e) => {
+          for (const cb of this.channelEventListeners) cb(e.channelId, e.postId);
+        },
         pendingSends: () => this.db.pendingSends(),
         onAuthExpired: () => {
           void this.refreshToken();
@@ -1474,6 +1478,22 @@ export class AppServices {
   }
 
   // ── channels (T7.02) ──────────────────────────────────────────────────────
+
+  // ── channel real-time push (T7.04) ──
+  /** subscribeChannel asks the gateway to push post nudges for a channel (call on
+   *  ChannelScreen open); unsubscribeChannel stops them (on close). */
+  subscribeChannel(channelId: string): void {
+    this.ws?.send({ t: "channel_sub", subscribe: [channelId], unsubscribe: [] });
+  }
+  unsubscribeChannel(channelId: string): void {
+    this.ws?.send({ t: "channel_sub", subscribe: [], unsubscribe: [channelId] });
+  }
+  /** onChannelEvent fires when a followed/open channel gets a new post (the UI
+   *  pulls the feed). Returns an unsubscribe. */
+  onChannelEvent(cb: (channelId: string, postId: string) => void): () => void {
+    this.channelEventListeners.add(cb);
+    return () => this.channelEventListeners.delete(cb);
+  }
 
   private toChannel(c: {
     id: string;

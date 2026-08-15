@@ -15,6 +15,7 @@ import {
   type CallEnd,
   type CallOffer,
   type CallRing,
+  type ChannelEvent,
   type ClientFrame,
   type ConversationCursor,
   type HelloAck,
@@ -61,6 +62,8 @@ export interface WsClientHandlers {
   onCallRing?(r: CallRing): void;
   /** A terminal call end (room finished / peer ended). */
   onCallEnd?(e: CallEnd): void;
+  /** A new post in a followed channel — the client pulls it over REST. */
+  onChannelEvent?(e: ChannelEvent): void;
   /** 4401 / AUTH_TOKEN_EXPIRED — refresh via REST; the client reconnects. */
   onAuthExpired(): void;
   /** 4403 — device revoked / account suspended: wipe session, stop for good. */
@@ -206,6 +209,9 @@ export class WsClient {
         break;
       case "call_end":
         this.o.handlers.onCallEnd?.(f);
+        break;
+      case "channel_event":
+        this.o.handlers.onChannelEvent?.(f);
         break;
       case "server_hint":
         this.onServerHint(f);

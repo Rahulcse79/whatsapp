@@ -35,7 +35,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { CallHistoryItem, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, ChannelInfo, ChannelPost, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -489,6 +489,7 @@ export function ChatList({
   onNewGroup,
   onCalls,
   onStatus,
+  onChannels,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -498,6 +499,7 @@ export function ChatList({
   onNewGroup: () => void;
   onCalls: () => void;
   onStatus: () => void;
+  onChannels: () => void;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
@@ -606,6 +608,9 @@ export function ChatList({
           </button>
           <button className="btn small ghost" onClick={onCalls} aria-label="Call history">
             📞 Calls
+          </button>
+          <button className="btn small ghost" onClick={onChannels} aria-label="Channels">
+            📢 Channels
           </button>
           <button className="btn small ghost" onClick={onStatus} aria-label="Status updates">
             ⭕ Status
@@ -2016,6 +2021,283 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
         <p className="error" role="alert" style={{ marginTop: "1rem" }}>
           {error}
         </p>
+      )}
+    </div>
+  );
+}
+
+const CHANNEL_EMOJIS = ["👍", "❤️", "🔥", "😂", "🎉"];
+
+function channelRow(c: ChannelInfo, onOpen: (id: string) => void): ReactNode {
+  return (
+    <li key={c.id} className="row" role="button" tabIndex={0} onClick={() => onOpen(c.id)} onKeyDown={onActivate(() => onOpen(c.id))}>
+      <div className="row-title">
+        📢 {c.name} {c.verified && <span title="Verified">✔️</span>}
+        <span className="muted" style={{ fontWeight: 400, fontSize: "0.75rem" }}> · @{c.handle}</span>
+      </div>
+      <div className="row-sub">
+        {c.followers} follower{c.followers === 1 ? "" : "s"}
+        {c.description ? ` · ${c.description}` : ""}
+      </div>
+    </li>
+  );
+}
+
+/** Channels screen (T7.02): discover + search public channels, or create one. */
+export function Channels({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () => void }) {
+  const { services } = useServices();
+  const [tab, setTab] = useState<"discover" | "create">("discover");
+  const [query, setQuery] = useState("");
+  const [discover, setDiscover] = useState<ChannelInfo[]>([]);
+  const [results, setResults] = useState<ChannelInfo[]>([]);
+  // create form
+  const [handle, setHandle] = useState("");
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<"public" | "private">("public");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    services.discoverChannels().then((c) => alive && setDiscover(c)).catch(() => {});
+    const unsub = services.onChange(() => services.discoverChannels().then((c) => alive && setDiscover(c)).catch(() => {}));
+    return () => { alive = false; unsub(); };
+  }, [services]);
+
+  useEffect(() => {
+    if (query.trim().length < 2) { setResults([]); return; }
+    let alive = true;
+    const h = setTimeout(() => services.searchChannels(query).then((r) => alive && setResults(r)).catch(() => {}), 200);
+    return () => { alive = false; clearTimeout(h); };
+  }, [query, services]);
+
+  async function create(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      onOpen(await services.createChannel(handle.trim(), name.trim(), description.trim(), kind));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>Channels</h1>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem" }}>
+        <button className={tab === "discover" ? "btn small" : "btn small ghost"} onClick={() => setTab("discover")}>
+          Discover
+        </button>
+        <button className={tab === "create" ? "btn small" : "btn small ghost"} onClick={() => setTab("create")}>
+          ＋ Create
+        </button>
+      </div>
+
+      {tab === "discover" ? (
+        <>
+          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search channels by name…" aria-label="Search channels" />
+          {query.trim().length >= 2 ? (
+            results.length === 0 ? (
+              <p className="muted">No channels found.</p>
+            ) : (
+              <ul className="list">{results.map((c) => channelRow(c, onOpen))}</ul>
+            )
+          ) : (
+            <>
+              <h2 style={{ marginTop: "1rem" }}>Popular</h2>
+              {discover.length === 0 ? <p className="muted">No channels yet — create the first one.</p> : <ul className="list">{discover.map((c) => channelRow(c, onOpen))}</ul>}
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>Handle (a–z, 0–9, _)</span>
+            <input className="input" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="my_channel" maxLength={30} />
+          </label>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>Name</span>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Channel" maxLength={80} />
+          </label>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>Description</span>
+            <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's it about?" maxLength={500} />
+          </label>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>Visibility</span>
+            <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "public" | "private")}>
+              <option value="public">Public — anyone can find &amp; follow</option>
+              <option value="private">Private — invite-only</option>
+            </select>
+          </label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button className="btn" onClick={() => void create()} disabled={busy || !handle.trim() || !name.trim()}>
+            {busy ? "Creating…" : "Create channel"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** ChannelScreen (T7.02): a channel's feed — follow/unfollow, admin composer,
+ *  posts with reactions + comments. */
+export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack: () => void }) {
+  const { services } = useServices();
+  const [channel, setChannel] = useState<ChannelInfo | null>(null);
+  const [posts, setPosts] = useState<ChannelPost[]>([]);
+  const [draft, setDraft] = useState("");
+  const [scheduleAt, setScheduleAt] = useState("");
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    void services.getChannel(channelId).then(setChannel).catch(() => {});
+    void services.channelPosts(channelId).then(setPosts).catch(() => {});
+  }, [services, channelId]);
+  useEffect(() => {
+    load();
+    const h = setInterval(load, 8000);
+    return () => clearInterval(h);
+  }, [load]);
+
+  if (!channel) return <p className="muted center">Loading…</p>;
+  const isAdmin = channel.myRole === "owner" || channel.myRole === "admin";
+  const isMember = channel.myRole !== "";
+
+  async function publish(): Promise<void> {
+    const body = draft.trim();
+    if (!body) return;
+    setError(null);
+    try {
+      const at = scheduleAt ? new Date(scheduleAt).getTime() : undefined;
+      await services.postToChannel(channelId, body, at && at > Date.now() ? at : undefined);
+      setDraft("");
+      setScheduleAt("");
+      load();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  return (
+    <div className="pane">
+      <div className="pane-head">
+        <button className="btn small ghost" onClick={onBack}>‹ Back</button>
+        <div className="thread-title">
+          <span>📢 {channel.name} {channel.verified && "✔️"}</span>
+          <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
+            @{channel.handle} · {channel.followers} follower{channel.followers === 1 ? "" : "s"} · {channel.kind}
+          </span>
+        </div>
+        {channel.myRole === "owner" ? (
+          <button className="btn small ghost" title="Delete channel" onClick={() => { if (window.confirm("Delete this channel for everyone?")) void services.deleteChannel(channelId).then(onBack); }}>
+            🗑
+          </button>
+        ) : isMember ? (
+          <button className="btn small ghost" onClick={() => void services.unfollowChannel(channelId).then(load)}>Following ✓</button>
+        ) : (
+          <button className="btn small" onClick={() => void services.followChannel(channelId).then(load)}>Follow</button>
+        )}
+      </div>
+
+      {channel.description && <p className="muted" style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>{channel.description}</p>}
+
+      {isAdmin && (
+        <div style={{ padding: "0.6rem 0.8rem", borderBottom: "1px solid var(--border, #e2e2e2)" }}>
+          <textarea className="input" rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Broadcast to your followers…" aria-label="New post" />
+          <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.4rem", flexWrap: "wrap" }}>
+            <label className="muted" style={{ fontSize: "0.75rem" }}>
+              Schedule <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
+            </label>
+            <button className="btn small" onClick={() => void publish()} disabled={!draft.trim()}>
+              {scheduleAt && new Date(scheduleAt).getTime() > Date.now() ? "Schedule" : "Post"}
+            </button>
+          </div>
+          {error && <p className="error" role="alert">{error}</p>}
+        </div>
+      )}
+
+      <div className="messages">
+        {posts.length === 0 ? <p className="muted center">No posts yet.</p> : null}
+        {posts.map((p) => (
+          <ChannelPostCard key={p.id} post={p} canDelete={isAdmin} onChanged={load} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ChannelPostCard({ post, canDelete, onChanged }: { post: ChannelPost; canDelete: boolean; onChanged: () => void }) {
+  const { services } = useServices();
+  const [mine, setMine] = useState<Set<string>>(new Set());
+  const [open, setOpen] = useState(false);
+  const [comments, setComments] = useState<Array<{ id: string; authorId: string; body: string; createdAtMs: number }>>([]);
+  const [draft, setDraft] = useState("");
+
+  async function react(emoji: string): Promise<void> {
+    const on = !mine.has(emoji);
+    setMine((s) => {
+      const n = new Set(s);
+      if (on) n.add(emoji);
+      else n.delete(emoji);
+      return n;
+    });
+    await services.reactToPost(post.id, emoji, on).catch(() => {});
+    onChanged();
+  }
+
+  async function toggleComments(): Promise<void> {
+    const next = !open;
+    setOpen(next);
+    if (next) setComments(await services.postComments(post.id));
+  }
+
+  async function comment(): Promise<void> {
+    const body = draft.trim();
+    if (!body) return;
+    setDraft("");
+    await services.commentOnPost(post.id, body).catch(() => {});
+    setComments(await services.postComments(post.id));
+    onChanged();
+  }
+
+  return (
+    <div className="bubble theirs" style={{ maxWidth: "100%", position: "relative" }}>
+      {post.scheduled && <div className="muted" style={{ fontSize: "0.72rem" }}>⏰ scheduled for {new Date(post.publishAtMs).toLocaleString()}</div>}
+      <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{post.body}</div>
+      <div className="muted" style={{ fontSize: "0.7rem", marginTop: 4 }}>{new Date(post.createdAtMs).toLocaleString()}</div>
+      <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", marginTop: 6, alignItems: "center" }}>
+        {CHANNEL_EMOJIS.map((e) => (
+          <button key={e} className="btn small ghost" style={{ padding: "2px 8px", opacity: mine.has(e) ? 1 : 0.7 }} onClick={() => void react(e)}>
+            {e} {post.reactions[e] ? post.reactions[e] : ""}
+          </button>
+        ))}
+        <button className="btn small ghost" onClick={() => void toggleComments()}>💬 {post.comments}</button>
+        {canDelete && (
+          <button className="btn small ghost" title="Delete post" onClick={() => void services.deleteChannelPost(post.id).then(onChanged)}>
+            🗑
+          </button>
+        )}
+      </div>
+      {open && (
+        <div style={{ marginTop: 8, borderTop: "1px solid var(--border, #e2e2e2)", paddingTop: 8 }}>
+          {comments.length === 0 ? <p className="muted" style={{ fontSize: "0.8rem" }}>No comments yet.</p> : null}
+          {comments.map((c) => (
+            <div key={c.id} style={{ fontSize: "0.82rem", marginBottom: 4 }}>
+              <strong className="mono">{services.nameForUser(c.authorId)}</strong> {c.body}
+            </div>
+          ))}
+          <div style={{ display: "flex", gap: "0.4rem", marginTop: 4 }}>
+            <input className="input" value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Add a comment…" aria-label="Comment" />
+            <button className="btn small" onClick={() => void comment()} disabled={!draft.trim()}>Send</button>
+          </div>
+        </div>
       )}
     </div>
   );

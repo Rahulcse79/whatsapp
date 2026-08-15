@@ -3,7 +3,7 @@ import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import type { NotificationEntry } from "./services/appServices";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { CallHistory, ChatList, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
+import { CallHistory, ChannelScreen, Channels, ChatList, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
 /** NotificationToasts shows a transient banner for each in-app notification
@@ -50,6 +50,8 @@ type Nav =
   | { name: "contacts" }
   | { name: "createGroup" }
   | { name: "groupInfo"; conversationId: string }
+  | { name: "channels" }
+  | { name: "channel"; channelId: string }
   | { name: "thread"; conversationId: string; focusMsgUuid?: string };
 
 function Router() {
@@ -74,6 +76,7 @@ function Router() {
         onNewGroup={() => setNav({ name: "createGroup" })}
         onCalls={() => setNav({ name: "calls" })}
         onStatus={() => setNav({ name: "status" })}
+        onChannels={() => setNav({ name: "channels" })}
       />
     );
   }
@@ -85,6 +88,12 @@ function Router() {
   }
   if (nav.name === "status") {
     return <Status onBack={() => setNav({ name: "chats" })} />;
+  }
+  if (nav.name === "channels") {
+    return <Channels onOpen={(channelId) => setNav({ name: "channel", channelId })} onBack={() => setNav({ name: "chats" })} />;
+  }
+  if (nav.name === "channel") {
+    return <ChannelScreen channelId={nav.channelId} onBack={() => setNav({ name: "channels" })} />;
   }
   if (nav.name === "calls") {
     return <CallHistory onBack={() => setNav({ name: "chats" })} />;

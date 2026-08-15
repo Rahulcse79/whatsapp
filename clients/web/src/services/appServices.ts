@@ -133,6 +133,32 @@ export interface LinkedDevice {
   lastActiveMs: number;
 }
 
+/** ChannelInfo is the client view of a broadcast channel. */
+export interface ChannelInfo {
+  id: string;
+  handle: string;
+  name: string;
+  description: string;
+  kind: string; // public | private
+  verified: boolean;
+  followers: number;
+  myRole: string; // owner | admin | follower | "" (not a member)
+  createdAtMs: number;
+}
+
+/** ChannelPost is one channel feed entry (broadcast — content is server-visible). */
+export interface ChannelPost {
+  id: string;
+  channelId: string;
+  body: string;
+  mediaRef: string;
+  scheduled: boolean;
+  publishAtMs: number;
+  reactions: Record<string, number>;
+  comments: number;
+  createdAtMs: number;
+}
+
 /** NotificationEntry is one in-app notification (a new inbound message in a
  *  conversation you weren't viewing). Content is the E2EE placeholder in dev. */
 export interface NotificationEntry {
@@ -1430,6 +1456,136 @@ export class AppServices {
   clearNotifications(): void {
     this.notifLog.length = 0;
     this.notifyChange();
+  }
+
+  // ── channels (T7.02) ──────────────────────────────────────────────────────
+
+  private toChannel(c: {
+    id: string;
+    handle: string;
+    name: string;
+    description?: string;
+    kind: string;
+    verified: boolean;
+    followers: number;
+    my_role?: string;
+    created_at_ms: number;
+  }): ChannelInfo {
+    return {
+      id: c.id,
+      handle: c.handle,
+      name: c.name,
+      description: c.description ?? "",
+      kind: c.kind,
+      verified: c.verified,
+      followers: c.followers,
+      myRole: c.my_role ?? "",
+      createdAtMs: c.created_at_ms,
+    };
+  }
+
+  private toPost(p: {
+    id: string;
+    channel_id: string;
+    body: string;
+    media_ref?: string;
+    scheduled?: boolean;
+    publish_at_ms: number;
+    reactions?: Record<string, number>;
+    comments: number;
+    created_at_ms: number;
+  }): ChannelPost {
+    return {
+      id: p.id,
+      channelId: p.channel_id,
+      body: p.body,
+      mediaRef: p.media_ref ?? "",
+      scheduled: !!p.scheduled,
+      publishAtMs: p.publish_at_ms,
+      reactions: p.reactions ?? {},
+      comments: p.comments,
+      createdAtMs: p.created_at_ms,
+    };
+  }
+
+  async createChannel(handle: string, name: string, description: string, kind: "public" | "private"): Promise<string> {
+    const res = await this.authedRequest("POST", "/v1/channels", { handle, name, description, kind });
+    if (res.status === 409) throw new Error("That channel handle is already taken.");
+    if (!res.ok) throw new Error("Couldn't create the channel — check the fields.");
+    const c = this.toChannel((await res.json()) as Parameters<AppServices["toChannel"]>[0]);
+    this.notifyChange();
+    return c.id;
+  }
+
+  async getChannel(channelId: string): Promise<ChannelInfo | null> {
+    const res = await this.authedRequest("GET", `/v1/channels/${channelId}`);
+    if (!res.ok) return null;
+    return this.toChannel((await res.json()) as Parameters<AppServices["toChannel"]>[0]);
+  }
+
+  async discoverChannels(): Promise<ChannelInfo[]> {
+    const res = await this.authedRequest("GET", "/v1/channels/discover?limit=50");
+    if (!res.ok) return [];
+    const b = (await res.json()) as { channels?: Parameters<AppServices["toChannel"]>[0][] };
+    return (b.channels ?? []).map((c) => this.toChannel(c));
+  }
+
+  async searchChannels(query: string): Promise<ChannelInfo[]> {
+    const q = query.trim();
+    if (q.length < 2) return [];
+    const res = await this.authedRequest("GET", `/v1/channels/search?q=${encodeURIComponent(q)}&limit=50`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { channels?: Parameters<AppServices["toChannel"]>[0][] };
+    return (b.channels ?? []).map((c) => this.toChannel(c));
+  }
+
+  async followChannel(channelId: string): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/channels/${channelId}/follow`);
+    if (!res.ok) throw new Error("Couldn't follow that channel.");
+    this.notifyChange();
+  }
+  async unfollowChannel(channelId: string): Promise<void> {
+    await this.authedRequest("DELETE", `/v1/channels/${channelId}/follow`);
+    this.notifyChange();
+  }
+  async deleteChannel(channelId: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/channels/${channelId}`);
+    if (!res.ok) throw new Error("Couldn't delete the channel.");
+    this.notifyChange();
+  }
+
+  async channelPosts(channelId: string): Promise<ChannelPost[]> {
+    const res = await this.authedRequest("GET", `/v1/channels/${channelId}/posts?limit=100`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { posts?: Parameters<AppServices["toPost"]>[0][] };
+    return (b.posts ?? []).map((p) => this.toPost(p));
+  }
+
+  /** postToChannel publishes (publishAtMs omitted/0) or schedules (future ms). */
+  async postToChannel(channelId: string, body: string, publishAtMs?: number): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/channels/${channelId}/posts`, {
+      body,
+      publish_at_ms: publishAtMs ?? 0,
+    });
+    if (!res.ok) throw new Error("Couldn't publish the post.");
+    this.notifyChange();
+  }
+  async deleteChannelPost(postId: string): Promise<void> {
+    await this.authedRequest("DELETE", `/v1/channel-posts/${postId}`);
+    this.notifyChange();
+  }
+  async reactToPost(postId: string, emoji: string, on: boolean): Promise<void> {
+    await this.authedRequest("POST", `/v1/channel-posts/${postId}/react`, { emoji, on });
+  }
+  async postComments(postId: string): Promise<Array<{ id: string; authorId: string; body: string; createdAtMs: number }>> {
+    const res = await this.authedRequest("GET", `/v1/channel-posts/${postId}/comments?limit=100`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { comments?: Array<{ id: string; author_id: string; body: string; created_at_ms: number }> };
+    return (b.comments ?? []).map((c) => ({ id: c.id, authorId: c.author_id, body: c.body, createdAtMs: c.created_at_ms }));
+  }
+  async commentOnPost(postId: string, body: string): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/channel-posts/${postId}/comments`, { body });
+    if (!res.ok) throw new Error("Couldn't post the comment.");
   }
 
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */

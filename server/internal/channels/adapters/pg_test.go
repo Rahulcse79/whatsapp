@@ -118,6 +118,52 @@ func TestIntegration_ChannelLifecycle(t *testing.T) {
 	}
 }
 
+func TestIntegration_AnalyticsAndPremium(t *testing.T) {
+	pool := testPool(t)
+	s := NewStore(pool)
+	ctx := context.Background()
+
+	owner := seedUser(t, pool)
+	sub := seedUser(t, pool)
+	ch := channels.Channel{ID: id.New(), OwnerID: owner, Handle: "an" + id.New()[:8], Name: "Analytics", Kind: domain.KindPublic, CreatedAt: time.Now().UTC()}
+	mustExec(t, s.CreateChannel(ctx, ch))
+	mustExec(t, s.AddMember(ctx, channels.Member{ChannelID: ch.ID, UserID: owner, Role: domain.RoleOwner, JoinedAt: time.Now()}))
+	post := channels.Post{ID: id.New(), ChannelID: ch.ID, AuthorID: owner, Body: "hi", PublishAt: time.Now().UTC(), Published: true, CreatedAt: time.Now().UTC()}
+	mustExec(t, s.CreatePost(ctx, post))
+
+	// Views accumulate on the post + roll up into insights.
+	mustExec(t, s.IncrementViews(ctx, post.ID))
+	mustExec(t, s.IncrementViews(ctx, post.ID))
+	if got, _ := s.GetPost(ctx, post.ID); got.Views != 2 {
+		t.Fatalf("post views = %d, want 2", got.Views)
+	}
+
+	// Premium + a subscription.
+	mustExec(t, s.SetPremium(ctx, ch.ID, true, 500))
+	if c, _ := s.GetChannel(ctx, ch.ID); !c.Premium || c.PriceCents != 500 {
+		t.Fatal("premium not persisted")
+	}
+	now := time.Now().UTC()
+	if ok, _ := s.IsSubscribed(ctx, ch.ID, sub, now); ok {
+		t.Fatal("should not be subscribed yet")
+	}
+	mustExec(t, s.Subscribe(ctx, ch.ID, sub, "ref-1", now.Add(30*24*time.Hour)))
+	if ok, _ := s.IsSubscribed(ctx, ch.ID, sub, now); !ok {
+		t.Fatal("should be subscribed")
+	}
+	if ok, _ := s.IsSubscribed(ctx, ch.ID, sub, now.Add(31*24*time.Hour)); ok {
+		t.Fatal("subscription should have expired")
+	}
+
+	ins, err := s.Insights(ctx, ch.ID)
+	if err != nil {
+		t.Fatalf("insights: %v", err)
+	}
+	if ins.Views != 2 || ins.Posts != 1 || ins.Followers != 1 || ins.Subscribers != 1 || !ins.Premium || ins.PriceCents != 500 {
+		t.Fatalf("insights wrong: %+v", ins)
+	}
+}
+
 func mustExec(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {

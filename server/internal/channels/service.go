@@ -19,18 +19,23 @@ const (
 	maxListLimit     = 200
 )
 
+// subscriptionPeriod is how long one charge grants premium access.
+const subscriptionPeriod = 30 * 24 * time.Hour
+
 // Service orchestrates the channel lifecycle, membership, posting, reactions,
-// and comments, enforcing the domain permission matrix.
+// comments, analytics, and premium subscriptions, enforcing the domain
+// permission matrix.
 type Service struct {
 	store       Store
 	broadcaster Broadcaster
+	payments    PaymentGateway
 	log         *slog.Logger
 	now         func() time.Time
 	newID       func() string
 }
 
-func NewService(store Store, broadcaster Broadcaster, log *slog.Logger) *Service {
-	return &Service{store: store, broadcaster: broadcaster, log: log, now: time.Now, newID: id.New}
+func NewService(store Store, broadcaster Broadcaster, payments PaymentGateway, log *slog.Logger) *Service {
+	return &Service{store: store, broadcaster: broadcaster, payments: payments, log: log, now: time.Now, newID: id.New}
 }
 
 // ── channels ────────────────────────────────────────────────────────────────
@@ -62,7 +67,7 @@ func (s *Service) Create(ctx context.Context, ident auth.Identity, handle, name,
 	if err := s.store.AddMember(ctx, Member{ChannelID: c.ID, UserID: ident.UserID, Role: domain.RoleOwner, JoinedAt: s.now()}); err != nil {
 		return ChannelView{}, httpx.Transient()
 	}
-	return s.view(ctx, c, domain.RoleOwner, true), nil
+	return s.view(ctx, c, domain.RoleOwner, true, ident.UserID), nil
 }
 
 // Get returns a channel view. A private channel is 404 to non-members (can't
@@ -75,7 +80,7 @@ func (s *Service) Get(ctx context.Context, ident auth.Identity, channelID string
 	if c.Kind == domain.KindPrivate && !member {
 		return ChannelView{}, s.notFound()
 	}
-	return s.view(ctx, c, me.Role, member), nil
+	return s.view(ctx, c, me.Role, member, ident.UserID), nil
 }
 
 // Update edits name/description (admin+).
@@ -261,11 +266,14 @@ func (s *Service) CreatePost(ctx context.Context, ident auth.Identity, channelID
 // Posts returns a channel's feed (published posts). Public channels are readable
 // by anyone; private channels only by members.
 func (s *Service) Posts(ctx context.Context, ident auth.Identity, channelID string, limit int) ([]PostView, error) {
-	c, _, member, err := s.caller(ctx, channelID, ident.UserID)
+	c, me, member, err := s.caller(ctx, channelID, ident.UserID)
 	if err != nil {
 		return nil, err
 	}
-	if c.Kind == domain.KindPrivate && !member {
+	if !s.canRead(ctx, c, me, member, ident.UserID) {
+		if c.Premium {
+			return nil, httpx.Reject(http.StatusPaymentRequired, "PREMIUM_REQUIRED", "subscribe to view this channel")
+		}
 		return nil, s.notFound()
 	}
 	ps, err := s.store.ListPosts(ctx, channelID, clampLimit(limit))
@@ -390,6 +398,107 @@ func (s *Service) DeleteComment(ctx context.Context, ident auth.Identity, commen
 	return nil
 }
 
+// ── analytics + monetization (T7.03) ────────────────────────────────────────
+
+// RecordView bumps a post's aggregate view counter (privacy-preserving — no
+// per-viewer row). Any authed user who may see the post may record a view.
+func (s *Service) RecordView(ctx context.Context, ident auth.Identity, postID string) error {
+	if _, err := s.viewablePost(ctx, postID, ident.UserID); err != nil {
+		return err
+	}
+	if err := s.store.IncrementViews(ctx, postID); err != nil {
+		return httpx.Transient()
+	}
+	return nil
+}
+
+// GetInsights returns a channel's aggregate analytics (channel admin+ only).
+func (s *Service) GetInsights(ctx context.Context, ident auth.Identity, channelID string) (Insights, error) {
+	_, me, member, err := s.caller(ctx, channelID, ident.UserID)
+	if err != nil {
+		return Insights{}, err
+	}
+	if !member || !domain.CanEditInfo(me.Role) {
+		return Insights{}, s.notFound()
+	}
+	ins, err := s.store.Insights(ctx, channelID)
+	if err != nil {
+		return Insights{}, httpx.Transient()
+	}
+	ins.ChannelID = channelID
+	return ins, nil
+}
+
+// SetPremium toggles a channel's premium gate + monthly price (owner only).
+func (s *Service) SetPremium(ctx context.Context, ident auth.Identity, channelID string, premium bool, priceCents int) error {
+	_, me, member, err := s.caller(ctx, channelID, ident.UserID)
+	if err != nil {
+		return err
+	}
+	if !member || !domain.CanDelete(me.Role) { // owner-only (reuse the owner gate)
+		return s.notFound()
+	}
+	if priceCents < 0 || priceCents > 100_000 {
+		return httpx.Reject(http.StatusBadRequest, "VALIDATION_PRICE", "price must be 0–100000 cents")
+	}
+	if err := s.store.SetPremium(ctx, channelID, premium, priceCents); err != nil {
+		return httpx.Transient()
+	}
+	return nil
+}
+
+// Subscribe grants the caller premium access for a period. The CHARGE runs
+// through the PaymentGateway seam (Noop in dev — no money moves). A subscriber
+// also follows the channel.
+func (s *Service) Subscribe(ctx context.Context, ident auth.Identity, channelID string) (SubscribeResult, error) {
+	c, me, member, err := s.caller(ctx, channelID, ident.UserID)
+	if err != nil {
+		return SubscribeResult{}, err
+	}
+	if c.Kind == domain.KindPrivate && !member {
+		return SubscribeResult{}, s.notFound()
+	}
+	if !c.Premium {
+		return SubscribeResult{}, httpx.Reject(http.StatusConflict, "NOT_PREMIUM", "this channel is not premium")
+	}
+	if member && me.Role >= domain.RoleAdmin {
+		return SubscribeResult{}, httpx.Reject(http.StatusConflict, "ALREADY_MEMBER", "admins already have access")
+	}
+	ref, err := s.charge(ctx, ident.UserID, channelID, c.PriceCents)
+	if err != nil {
+		return SubscribeResult{}, httpx.Reject(http.StatusPaymentRequired, "PAYMENT_FAILED", "the payment could not be completed")
+	}
+	expires := s.now().Add(subscriptionPeriod)
+	if err := s.store.Subscribe(ctx, channelID, ident.UserID, ref, expires); err != nil {
+		return SubscribeResult{}, httpx.Transient()
+	}
+	_ = s.store.AddMember(ctx, Member{ChannelID: channelID, UserID: ident.UserID, Role: domain.RoleFollower, JoinedAt: s.now()})
+	return SubscribeResult{PaymentRef: ref, ExpiresAtMS: expires.UnixMilli()}, nil
+}
+
+func (s *Service) charge(ctx context.Context, userID, channelID string, cents int) (string, error) {
+	if s.payments == nil {
+		return "dev-noop", nil
+	}
+	return s.payments.Charge(ctx, userID, channelID, cents)
+}
+
+// canRead reports whether the caller may read a channel's posts: public+free →
+// anyone; private → members; premium → admins or active subscribers.
+func (s *Service) canRead(ctx context.Context, c Channel, me Member, member bool, userID string) bool {
+	if c.Kind == domain.KindPrivate && !member {
+		return false
+	}
+	if c.Premium {
+		if member && me.Role >= domain.RoleAdmin {
+			return true
+		}
+		ok, _ := s.store.IsSubscribed(ctx, c.ID, userID, s.now())
+		return ok
+	}
+	return true
+}
+
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 // caller loads the channel and the caller's membership (member=false if none).
@@ -430,24 +539,31 @@ func (s *Service) post(ctx context.Context, postID, userID string) (Post, Channe
 // viewablePost checks the caller may see a post (public channel or member) and
 // returns it.
 func (s *Service) viewablePost(ctx context.Context, postID, userID string) (Post, error) {
-	p, c, _, member, err := s.post(ctx, postID, userID)
+	p, c, me, member, err := s.post(ctx, postID, userID)
 	if err != nil {
 		return Post{}, err
 	}
-	if !p.Published || (c.Kind == domain.KindPrivate && !member) {
+	if !p.Published || !s.canRead(ctx, c, me, member, userID) {
 		return Post{}, s.notFoundPost()
 	}
 	return p, nil
 }
 
-func (s *Service) view(ctx context.Context, c Channel, myRole domain.Role, member bool) ChannelView {
+func (s *Service) view(ctx context.Context, c Channel, myRole domain.Role, member bool, userID string) ChannelView {
 	followers, _ := s.store.FollowerCount(ctx, c.ID)
 	v := ChannelView{
 		ID: c.ID, Handle: c.Handle, Name: c.Name, Description: c.Description,
-		Kind: c.Kind.String(), Verified: c.Verified, Followers: followers, CreatedAt: c.CreatedAt.UnixMilli(),
+		Kind: c.Kind.String(), Verified: c.Verified, Followers: followers,
+		Premium: c.Premium, PriceCents: c.PriceCents, CreatedAt: c.CreatedAt.UnixMilli(),
 	}
 	if member {
 		v.MyRole = myRole.String()
+	}
+	// The owner/admins always have premium access; others need a subscription.
+	if myRole >= domain.RoleAdmin && member {
+		v.MySubscribed = true
+	} else if c.Premium {
+		v.MySubscribed, _ = s.store.IsSubscribed(ctx, c.ID, userID, s.now())
 	}
 	return v
 }
@@ -458,7 +574,8 @@ func (s *Service) publicViews(ctx context.Context, cs []Channel) []ChannelView {
 		followers, _ := s.store.FollowerCount(ctx, c.ID)
 		out = append(out, ChannelView{
 			ID: c.ID, Handle: c.Handle, Name: c.Name, Description: c.Description,
-			Kind: c.Kind.String(), Verified: c.Verified, Followers: followers, CreatedAt: c.CreatedAt.UnixMilli(),
+			Kind: c.Kind.String(), Verified: c.Verified, Followers: followers,
+			Premium: c.Premium, PriceCents: c.PriceCents, CreatedAt: c.CreatedAt.UnixMilli(),
 		})
 	}
 	return out

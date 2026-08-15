@@ -20,12 +20,15 @@ type fakeStore struct {
 	reactions map[string]map[string]int // postID → emoji → count (dedup ignored in fake)
 	comments  map[string]Comment
 	handles   map[string]bool
+	views     map[string]int64            // postID → views
+	subs      map[string]map[string]int64 // channelID → userID → expiry ms
 }
 
 func newFake() *fakeStore {
 	return &fakeStore{
 		channels: map[string]Channel{}, members: map[string]Member{}, posts: map[string]Post{},
 		reactions: map[string]map[string]int{}, comments: map[string]Comment{}, handles: map[string]bool{},
+		views: map[string]int64{}, subs: map[string]map[string]int64{},
 	}
 }
 
@@ -191,17 +194,76 @@ func (f *fakeStore) DeleteComment(_ context.Context, id string) error {
 	delete(f.comments, id)
 	return nil
 }
+func (f *fakeStore) IncrementViews(_ context.Context, postID string) error {
+	f.views[postID]++
+	return nil
+}
+func (f *fakeStore) Insights(_ context.Context, channelID string) (Insights, error) {
+	c := f.channels[channelID]
+	ins := Insights{ChannelID: channelID, Premium: c.Premium, PriceCents: c.PriceCents}
+	for _, m := range f.members {
+		if m.ChannelID == channelID {
+			ins.Followers++
+		}
+	}
+	for range f.subs[channelID] {
+		ins.Subscribers++
+	}
+	for _, p := range f.posts {
+		if p.ChannelID == channelID && p.Published {
+			ins.Posts++
+			ins.Views += f.views[p.ID]
+		}
+	}
+	for pid, rx := range f.reactions {
+		if f.posts[pid].ChannelID == channelID {
+			for _, n := range rx {
+				ins.Reactions += n
+			}
+		}
+	}
+	for _, cm := range f.comments {
+		if f.posts[cm.PostID].ChannelID == channelID {
+			ins.Comments++
+		}
+	}
+	return ins, nil
+}
+func (f *fakeStore) SetPremium(_ context.Context, channelID string, premium bool, priceCents int) error {
+	c := f.channels[channelID]
+	c.Premium = premium
+	c.PriceCents = priceCents
+	f.channels[channelID] = c
+	return nil
+}
+func (f *fakeStore) Subscribe(_ context.Context, channelID, userID, _ string, expiresAt time.Time) error {
+	if f.subs[channelID] == nil {
+		f.subs[channelID] = map[string]int64{}
+	}
+	f.subs[channelID][userID] = expiresAt.UnixMilli()
+	return nil
+}
+func (f *fakeStore) IsSubscribed(_ context.Context, channelID, userID string, now time.Time) (bool, error) {
+	exp, ok := f.subs[channelID][userID]
+	return ok && exp > now.UnixMilli(), nil
+}
 
 type fakeBroadcaster struct{ posts int }
 
 func (b *fakeBroadcaster) PostPublished(_ context.Context, _, _ string) error { b.posts++; return nil }
+
+type okGateway struct{}
+
+func (okGateway) Charge(_ context.Context, _, _ string, _ int) (string, error) {
+	return "test-ref", nil
+}
 
 // ── helpers ─────────────────────────────────────────────────────────────────
 
 func newSvc() (*Service, *fakeStore, *fakeBroadcaster) {
 	f := newFake()
 	b := &fakeBroadcaster{}
-	s := NewService(f, b, nil)
+	s := NewService(f, b, okGateway{}, nil)
 	n := 0
 	s.newID = func() string { n++; return "id" + string(rune('A'+n)) }
 	s.now = func() time.Time { return time.UnixMilli(1_000_000) }
@@ -347,5 +409,66 @@ func TestReactionsCommentsAndRoles(t *testing.T) {
 	cm2, _ := s.Comment(ctx, ident("alice"), p.ID, "second")
 	if err := s.DeleteComment(ctx, ident("stranger"), cm2.ID); status(t, err) != 404 {
 		t.Fatal("stranger cannot delete a comment")
+	}
+}
+
+func TestAnalyticsAndPremium(t *testing.T) {
+	s, _, _ := newSvc()
+	ctx := context.Background()
+	ch, _ := s.Create(ctx, ident("owner"), "news", "News", "", "public")
+	p, _ := s.CreatePost(ctx, ident("owner"), ch.ID, "Hello", nil, 0)
+	_ = s.Follow(ctx, ident("alice"), ch.ID)
+
+	// Views accumulate; insights aggregate them (channel-admin only).
+	for i := 0; i < 3; i++ {
+		if err := s.RecordView(ctx, ident("alice"), p.ID); err != nil {
+			t.Fatalf("view: %v", err)
+		}
+	}
+	if _, err := s.GetInsights(ctx, ident("alice"), ch.ID); status(t, err) != 404 {
+		t.Fatal("non-admin cannot read insights")
+	}
+	ins, err := s.GetInsights(ctx, ident("owner"), ch.ID)
+	if err != nil {
+		t.Fatalf("insights: %v", err)
+	}
+	if ins.Views != 3 || ins.Followers != 2 || ins.Posts != 1 {
+		t.Fatalf("insights wrong: %+v", ins)
+	}
+
+	// Premium: only the owner may set it; then non-subscribers lose feed access.
+	if err := s.SetPremium(ctx, ident("alice"), ch.ID, true, 500); status(t, err) != 404 {
+		t.Fatal("non-owner cannot set premium")
+	}
+	if err := s.SetPremium(ctx, ident("owner"), ch.ID, true, 500); err != nil {
+		t.Fatalf("set premium: %v", err)
+	}
+	if _, err := s.Posts(ctx, ident("alice"), ch.ID, 0); status(t, err) != 402 {
+		t.Fatal("non-subscriber must get 402 on a premium feed")
+	}
+	// The owner still reads their own premium channel.
+	if _, err := s.Posts(ctx, ident("owner"), ch.ID, 0); err != nil {
+		t.Fatalf("owner reads premium feed: %v", err)
+	}
+
+	// Subscribe (payment seam) grants access + reflects in the view.
+	res, err := s.Subscribe(ctx, ident("alice"), ch.ID)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	if res.PaymentRef != "test-ref" || res.ExpiresAtMS <= s.now().UnixMilli() {
+		t.Fatalf("subscribe result wrong: %+v", res)
+	}
+	if _, err := s.Posts(ctx, ident("alice"), ch.ID, 0); err != nil {
+		t.Fatalf("subscriber reads premium feed: %v", err)
+	}
+	got, _ := s.Get(ctx, ident("alice"), ch.ID)
+	if !got.Premium || !got.MySubscribed || got.PriceCents != 500 {
+		t.Fatalf("subscriber channel view wrong: %+v", got)
+	}
+	// Subscribing to a free channel is rejected.
+	free, _ := s.Create(ctx, ident("owner"), "free", "Free", "", "public")
+	if _, err := s.Subscribe(ctx, ident("alice"), free.ID); status(t, err) != 409 {
+		t.Fatal("cannot subscribe to a non-premium channel")
 	}
 }

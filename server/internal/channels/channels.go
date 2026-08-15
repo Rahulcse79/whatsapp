@@ -31,6 +31,8 @@ type Channel struct {
 	Description string
 	Kind        domain.Kind
 	Verified    bool
+	Premium     bool
+	PriceCents  int
 	CreatedAt   time.Time
 }
 
@@ -51,7 +53,30 @@ type Post struct {
 	MediaRef  *string
 	PublishAt time.Time
 	Published bool
+	Views     int64
 	CreatedAt time.Time
+}
+
+// Insights is a channel's aggregate, privacy-preserving analytics (channel
+// admin only) — sums over the channel's own content + audience, no per-viewer
+// data. "Reach" is the total post views (impressions).
+type Insights struct {
+	ChannelID   string `json:"channel_id"`
+	Followers   int    `json:"followers"`
+	Subscribers int    `json:"subscribers"`
+	Posts       int    `json:"posts"`
+	Views       int64  `json:"views"` // total impressions across posts (= reach)
+	Reactions   int    `json:"reactions"`
+	Comments    int    `json:"comments"`
+	Premium     bool   `json:"premium"`
+	PriceCents  int    `json:"price_cents"`
+}
+
+// SubscribeResult is the POST /subscribe response (the payment ref comes from
+// the external processor via the PaymentGateway seam).
+type SubscribeResult struct {
+	PaymentRef  string `json:"payment_ref"`
+	ExpiresAtMS int64  `json:"expires_at_ms"`
 }
 
 // Comment is a channel_comments row.
@@ -67,15 +92,18 @@ type Comment struct {
 
 // ChannelView is returned by the channel endpoints.
 type ChannelView struct {
-	ID          string `json:"id"`
-	Handle      string `json:"handle"`
-	Name        string `json:"name"`
-	Description string `json:"description,omitempty"`
-	Kind        string `json:"kind"` // public | private
-	Verified    bool   `json:"verified"`
-	Followers   int    `json:"followers"`
-	MyRole      string `json:"my_role,omitempty"` // "" if not a member
-	CreatedAt   int64  `json:"created_at_ms"`
+	ID           string `json:"id"`
+	Handle       string `json:"handle"`
+	Name         string `json:"name"`
+	Description  string `json:"description,omitempty"`
+	Kind         string `json:"kind"` // public | private
+	Verified     bool   `json:"verified"`
+	Followers    int    `json:"followers"`
+	MyRole       string `json:"my_role,omitempty"` // "" if not a member
+	Premium      bool   `json:"premium"`
+	PriceCents   int    `json:"price_cents"`
+	MySubscribed bool   `json:"my_subscribed"` // caller has an active subscription
+	CreatedAt    int64  `json:"created_at_ms"`
 }
 
 // PostView is one feed entry.
@@ -140,10 +168,27 @@ type Store interface {
 	CommentCount(ctx context.Context, postID string) (int, error)
 	GetComment(ctx context.Context, id string) (Comment, error)
 	DeleteComment(ctx context.Context, id string) error
+
+	// analytics + monetization (T7.03)
+	IncrementViews(ctx context.Context, postID string) error
+	Insights(ctx context.Context, channelID string) (Insights, error)
+	SetPremium(ctx context.Context, channelID string, premium bool, priceCents int) error
+	Subscribe(ctx context.Context, channelID, userID, paymentRef string, expiresAt time.Time) error
+	// IsSubscribed reports whether the user has an unexpired subscription.
+	IsSubscribed(ctx context.Context, channelID, userID string, now time.Time) (bool, error)
 }
 
 // Broadcaster notifies online followers of a new post over NATS → WS gateway
 // (the real-time seam; the durable path is followers pulling ListPosts).
 type Broadcaster interface {
 	PostPublished(ctx context.Context, channelID, postID string) error
+}
+
+// PaymentGateway is the monetization SEAM: charging a subscriber runs through an
+// external processor. The dev/self-host build uses a Noop that records a
+// placeholder reference and never moves money (per the project's no-payments
+// stance). A real deployment injects a Stripe/… adapter here.
+type PaymentGateway interface {
+	// Charge attempts a monthly charge and returns the processor's reference.
+	Charge(ctx context.Context, userID, channelID string, cents int) (ref string, err error)
 }

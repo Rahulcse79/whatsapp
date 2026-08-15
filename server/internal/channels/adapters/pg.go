@@ -20,14 +20,14 @@ type Store struct{ pool *pgxpool.Pool }
 
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
-const channelCols = `id, owner_id::text, handle, name, COALESCE(description,''), kind, verified, created_at`
+const channelCols = `id, owner_id::text, handle, name, COALESCE(description,''), kind, verified, premium, price_cents, created_at`
 
 func scanChannel(row pgx.Row) (channels.Channel, error) {
 	var (
 		c    channels.Channel
 		kind int16
 	)
-	err := row.Scan(&c.ID, &c.OwnerID, &c.Handle, &c.Name, &c.Description, &kind, &c.Verified, &c.CreatedAt)
+	err := row.Scan(&c.ID, &c.OwnerID, &c.Handle, &c.Name, &c.Description, &kind, &c.Verified, &c.Premium, &c.PriceCents, &c.CreatedAt)
 	c.Kind = domain.Kind(kind)
 	return c, err
 }
@@ -92,7 +92,7 @@ func (s *Store) Discover(ctx context.Context, limit int) ([]channels.Channel, er
 			kind      int16
 			followers int
 		)
-		if err := rows.Scan(&c.ID, &c.OwnerID, &c.Handle, &c.Name, &c.Description, &kind, &c.Verified, &c.CreatedAt, &followers); err != nil {
+		if err := rows.Scan(&c.ID, &c.OwnerID, &c.Handle, &c.Name, &c.Description, &kind, &c.Verified, &c.Premium, &c.PriceCents, &c.CreatedAt, &followers); err != nil {
 			return nil, err
 		}
 		c.Kind = domain.Kind(kind)
@@ -169,11 +169,11 @@ func (s *Store) ListMembers(ctx context.Context, channelID string, limit int) ([
 	return out, rows.Err()
 }
 
-const postCols = `id, channel_id::text, author_id::text, body, media_ref::text, publish_at, published, created_at`
+const postCols = `id, channel_id::text, author_id::text, body, media_ref::text, publish_at, published, views, created_at`
 
 func scanPost(row pgx.Row) (channels.Post, error) {
 	var p channels.Post
-	err := row.Scan(&p.ID, &p.ChannelID, &p.AuthorID, &p.Body, &p.MediaRef, &p.PublishAt, &p.Published, &p.CreatedAt)
+	err := row.Scan(&p.ID, &p.ChannelID, &p.AuthorID, &p.Body, &p.MediaRef, &p.PublishAt, &p.Published, &p.Views, &p.CreatedAt)
 	return p, err
 }
 
@@ -301,6 +301,54 @@ func (s *Store) GetComment(ctx context.Context, id string) (channels.Comment, er
 func (s *Store) DeleteComment(ctx context.Context, id string) error {
 	_, err := s.pool.Exec(ctx, `UPDATE channel_comments SET deleted_at = now() WHERE id = $1 AND deleted_at IS NULL`, id)
 	return err
+}
+
+// ── analytics + monetization (T7.03) ────────────────────────────────────────
+
+func (s *Store) IncrementViews(ctx context.Context, postID string) error {
+	_, err := s.pool.Exec(ctx, `UPDATE channel_posts SET views = views + 1 WHERE id = $1 AND deleted_at IS NULL`, postID)
+	return err
+}
+
+func (s *Store) Insights(ctx context.Context, channelID string) (channels.Insights, error) {
+	var ins channels.Insights
+	// One round-trip for the channel-level aggregates.
+	err := s.pool.QueryRow(ctx, `
+		SELECT
+		  (SELECT count(*) FROM channel_members m WHERE m.channel_id = $1),
+		  (SELECT count(*) FROM channel_subscriptions su WHERE su.channel_id = $1 AND su.expires_at > now()),
+		  (SELECT count(*) FROM channel_posts p WHERE p.channel_id = $1 AND p.deleted_at IS NULL AND p.published),
+		  (SELECT COALESCE(sum(views), 0) FROM channel_posts p WHERE p.channel_id = $1 AND p.deleted_at IS NULL),
+		  (SELECT count(*) FROM channel_post_reactions r JOIN channel_posts p ON p.id = r.post_id WHERE p.channel_id = $1 AND p.deleted_at IS NULL),
+		  (SELECT count(*) FROM channel_comments c JOIN channel_posts p ON p.id = c.post_id WHERE p.channel_id = $1 AND p.deleted_at IS NULL AND c.deleted_at IS NULL),
+		  c.premium, c.price_cents
+		FROM channels c WHERE c.id = $1`, channelID).
+		Scan(&ins.Followers, &ins.Subscribers, &ins.Posts, &ins.Views, &ins.Reactions, &ins.Comments, &ins.Premium, &ins.PriceCents)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return channels.Insights{}, channels.ErrNotFound
+	}
+	return ins, err
+}
+
+func (s *Store) SetPremium(ctx context.Context, channelID string, premium bool, priceCents int) error {
+	_, err := s.pool.Exec(ctx, `UPDATE channels SET premium = $2, price_cents = $3 WHERE id = $1 AND deleted_at IS NULL`, channelID, premium, priceCents)
+	return err
+}
+
+func (s *Store) Subscribe(ctx context.Context, channelID, userID, paymentRef string, expiresAt time.Time) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO channel_subscriptions (channel_id, user_id, payment_ref, expires_at) VALUES ($1, $2, $3, $4)
+		 ON CONFLICT (channel_id, user_id) DO UPDATE SET payment_ref = EXCLUDED.payment_ref, expires_at = EXCLUDED.expires_at, started_at = now()`,
+		channelID, userID, paymentRef, expiresAt)
+	return err
+}
+
+func (s *Store) IsSubscribed(ctx context.Context, channelID, userID string, now time.Time) (bool, error) {
+	var ok bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM channel_subscriptions WHERE channel_id = $1 AND user_id = $2 AND expires_at > $3)`,
+		channelID, userID, now).Scan(&ok)
+	return ok, err
 }
 
 func collectChannels(rows pgx.Rows) ([]channels.Channel, error) {

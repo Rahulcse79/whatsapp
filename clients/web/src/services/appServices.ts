@@ -143,7 +143,22 @@ export interface ChannelInfo {
   verified: boolean;
   followers: number;
   myRole: string; // owner | admin | follower | "" (not a member)
+  premium: boolean;
+  priceCents: number;
+  mySubscribed: boolean;
   createdAtMs: number;
+}
+
+/** ChannelInsights is a channel's aggregate analytics (admin-only). */
+export interface ChannelInsights {
+  followers: number;
+  subscribers: number;
+  posts: number;
+  views: number;
+  reactions: number;
+  comments: number;
+  premium: boolean;
+  priceCents: number;
 }
 
 /** ChannelPost is one channel feed entry (broadcast — content is server-visible). */
@@ -1469,6 +1484,9 @@ export class AppServices {
     verified: boolean;
     followers: number;
     my_role?: string;
+    premium?: boolean;
+    price_cents?: number;
+    my_subscribed?: boolean;
     created_at_ms: number;
   }): ChannelInfo {
     return {
@@ -1480,6 +1498,9 @@ export class AppServices {
       verified: c.verified,
       followers: c.followers,
       myRole: c.my_role ?? "",
+      premium: !!c.premium,
+      priceCents: c.price_cents ?? 0,
+      mySubscribed: !!c.my_subscribed,
       createdAtMs: c.created_at_ms,
     };
   }
@@ -1586,6 +1607,55 @@ export class AppServices {
   async commentOnPost(postId: string, body: string): Promise<void> {
     const res = await this.authedRequest("POST", `/v1/channel-posts/${postId}/comments`, { body });
     if (!res.ok) throw new Error("Couldn't post the comment.");
+  }
+
+  /** recordPostView bumps a channel post's aggregate view counter (best-effort). */
+  async recordPostView(postId: string): Promise<void> {
+    await this.authedRequest("POST", `/v1/channel-posts/${postId}/view`).catch(() => {});
+  }
+
+  /** channelInsights returns a channel's aggregate analytics (admin-only → null). */
+  async channelInsights(channelId: string): Promise<ChannelInsights | null> {
+    const res = await this.authedRequest("GET", `/v1/channels/${channelId}/insights`);
+    if (!res.ok) return null;
+    const i = (await res.json()) as {
+      followers: number;
+      subscribers: number;
+      posts: number;
+      views: number;
+      reactions: number;
+      comments: number;
+      premium: boolean;
+      price_cents: number;
+    };
+    return {
+      followers: i.followers,
+      subscribers: i.subscribers,
+      posts: i.posts,
+      views: i.views,
+      reactions: i.reactions,
+      comments: i.comments,
+      premium: i.premium,
+      priceCents: i.price_cents,
+    };
+  }
+
+  /** setChannelPremium toggles the premium gate + monthly price in cents (owner). */
+  async setChannelPremium(channelId: string, premium: boolean, priceCents: number): Promise<void> {
+    const res = await this.authedRequest("PATCH", `/v1/channels/${channelId}/premium`, { premium, price_cents: priceCents });
+    if (!res.ok) throw new Error("Couldn't update premium settings.");
+    this.notifyChange();
+  }
+
+  /** subscribeToChannel runs the (seam) payment + grants access. Returns the
+   *  processor reference (a noop placeholder in this dev build). */
+  async subscribeToChannel(channelId: string): Promise<string> {
+    const res = await this.authedRequest("POST", `/v1/channels/${channelId}/subscribe`);
+    if (res.status === 402) throw new Error("The payment could not be completed.");
+    if (!res.ok) throw new Error("Couldn't subscribe.");
+    const b = (await res.json()) as { payment_ref: string };
+    this.notifyChange();
+    return b.payment_ref;
   }
 
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */

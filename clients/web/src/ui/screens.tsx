@@ -35,7 +35,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { CallHistoryItem, ChannelInfo, ChannelPost, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -2154,6 +2154,8 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
   const [posts, setPosts] = useState<ChannelPost[]>([]);
   const [draft, setDraft] = useState("");
   const [scheduleAt, setScheduleAt] = useState("");
+  const [insights, setInsights] = useState<ChannelInsights | null>(null);
+  const [showInsights, setShowInsights] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -2168,7 +2170,9 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
 
   if (!channel) return <p className="muted center">Loading…</p>;
   const isAdmin = channel.myRole === "owner" || channel.myRole === "admin";
+  const isOwner = channel.myRole === "owner";
   const isMember = channel.myRole !== "";
+  const premiumLocked = channel.premium && !channel.mySubscribed && !isAdmin;
 
   async function publish(): Promise<void> {
     const body = draft.trim();
@@ -2185,14 +2189,51 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
     }
   }
 
+  async function toggleInsights(): Promise<void> {
+    const next = !showInsights;
+    setShowInsights(next);
+    if (next) setInsights(await services.channelInsights(channelId));
+  }
+
+  async function subscribe(): Promise<void> {
+    setError(null);
+    try {
+      await services.subscribeToChannel(channelId);
+      load();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function togglePremium(): Promise<void> {
+    if (!channel) return;
+    setError(null);
+    const on = !channel.premium;
+    let price = 0;
+    if (on) {
+      const raw = window.prompt("Monthly price in US cents (e.g. 500 = $5.00):", String(channel.priceCents || 500));
+      if (raw === null) return;
+      price = Math.max(0, Math.floor(Number(raw) || 0));
+    }
+    try {
+      await services.setChannelPremium(channelId, on, price);
+      load();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  const price = `$${(channel.priceCents / 100).toFixed(2)}`;
+
   return (
     <div className="pane">
       <div className="pane-head">
         <button className="btn small ghost" onClick={onBack}>‹ Back</button>
         <div className="thread-title">
-          <span>📢 {channel.name} {channel.verified && "✔️"}</span>
+          <span>📢 {channel.name} {channel.verified && "✔️"} {channel.premium && <span title={`Premium · ${price}/mo`}>💎</span>}</span>
           <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
             @{channel.handle} · {channel.followers} follower{channel.followers === 1 ? "" : "s"} · {channel.kind}
+            {channel.premium ? ` · 💎 ${price}/mo` : ""}
           </span>
         </div>
         {channel.myRole === "owner" ? (
@@ -2209,6 +2250,35 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
       {channel.description && <p className="muted" style={{ padding: "0.4rem 0.8rem", fontSize: "0.85rem" }}>{channel.description}</p>}
 
       {isAdmin && (
+        <div style={{ display: "flex", gap: "0.5rem", padding: "0 0.8rem 0.4rem", flexWrap: "wrap" }}>
+          <button className="btn small ghost" onClick={() => void toggleInsights()}>📊 Insights</button>
+          {isOwner && (
+            <button className="btn small ghost" onClick={() => void togglePremium()}>
+              💎 {channel.premium ? `Premium ${price}/mo (turn off)` : "Enable premium"}
+            </button>
+          )}
+        </div>
+      )}
+
+      {isAdmin && showInsights && insights && (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: "0.5rem", padding: "0.4rem 0.8rem", borderBottom: "1px solid var(--border, #e2e2e2)" }}>
+          {[
+            ["Followers", insights.followers],
+            ["Subscribers", insights.subscribers],
+            ["Posts", insights.posts],
+            ["Views (reach)", insights.views],
+            ["Reactions", insights.reactions],
+            ["Comments", insights.comments],
+          ].map(([label, val]) => (
+            <div key={label} style={{ textAlign: "center", padding: "0.4rem", border: "1px solid var(--border, #e2e2e2)", borderRadius: 8 }}>
+              <div style={{ fontSize: "1.2rem", fontWeight: 700 }}>{val}</div>
+              <div className="muted" style={{ fontSize: "0.72rem" }}>{label}</div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isAdmin && (
         <div style={{ padding: "0.6rem 0.8rem", borderBottom: "1px solid var(--border, #e2e2e2)" }}>
           <textarea className="input" rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Broadcast to your followers…" aria-label="New post" />
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.4rem", flexWrap: "wrap" }}>
@@ -2223,12 +2293,23 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
         </div>
       )}
 
-      <div className="messages">
-        {posts.length === 0 ? <p className="muted center">No posts yet.</p> : null}
-        {posts.map((p) => (
-          <ChannelPostCard key={p.id} post={p} canDelete={isAdmin} onChanged={load} />
-        ))}
-      </div>
+      {premiumLocked ? (
+        <div className="card" style={{ margin: "1rem", textAlign: "center" }}>
+          <div style={{ fontSize: "2rem" }}>🔒</div>
+          <h2>Premium channel</h2>
+          <p className="muted">Subscribe for {price}/month to read {channel.name}'s posts.</p>
+          <p className="muted" style={{ fontSize: "0.75rem" }}>Payments run through your provider — this dev build uses a no-op gateway (no charge).</p>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button className="btn" onClick={() => void subscribe()}>Subscribe · {price}/mo</button>
+        </div>
+      ) : (
+        <div className="messages">
+          {posts.length === 0 ? <p className="muted center">No posts yet.</p> : null}
+          {posts.map((p) => (
+            <ChannelPostCard key={p.id} post={p} canDelete={isAdmin} onChanged={load} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -2239,6 +2320,11 @@ function ChannelPostCard({ post, canDelete, onChanged }: { post: ChannelPost; ca
   const [open, setOpen] = useState(false);
   const [comments, setComments] = useState<Array<{ id: string; authorId: string; body: string; createdAtMs: number }>>([]);
   const [draft, setDraft] = useState("");
+
+  // Record an (aggregate, privacy-preserving) view once when the post renders.
+  useEffect(() => {
+    if (!post.scheduled) void services.recordPostView(post.id);
+  }, [services, post.id, post.scheduled]);
 
   async function react(emoji: string): Promise<void> {
     const on = !mine.has(emoji);

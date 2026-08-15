@@ -273,6 +273,64 @@ func Routes(mux *http.ServeMux, s *Service, v auth.TokenVerifier) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+
+	// ── analytics + monetization (T7.03) ──
+	mux.HandleFunc("POST /v1/channel-posts/{postId}/view", func(w http.ResponseWriter, r *http.Request) {
+		ident, ok := auth.BearerIdentity(w, r, v)
+		if !ok {
+			return
+		}
+		if err := s.RecordView(r.Context(), ident, r.PathValue("postId")); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /v1/channels/{id}/insights", func(w http.ResponseWriter, r *http.Request) {
+		ident, ok := auth.BearerIdentity(w, r, v)
+		if !ok {
+			return
+		}
+		ins, err := s.GetInsights(r.Context(), ident, r.PathValue("id"))
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusOK, ins)
+	})
+
+	mux.HandleFunc("PATCH /v1/channels/{id}/premium", func(w http.ResponseWriter, r *http.Request) {
+		ident, ok := auth.BearerIdentity(w, r, v)
+		if !ok {
+			return
+		}
+		var body struct {
+			Premium    bool `json:"premium"`
+			PriceCents int  `json:"price_cents"`
+		}
+		if !decode(w, r, &body) {
+			return
+		}
+		if err := s.SetPremium(r.Context(), ident, r.PathValue("id"), body.Premium, body.PriceCents); err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("POST /v1/channels/{id}/subscribe", func(w http.ResponseWriter, r *http.Request) {
+		ident, ok := auth.BearerIdentity(w, r, v)
+		if !ok {
+			return
+		}
+		res, err := s.Subscribe(r.Context(), ident, r.PathValue("id"))
+		if err != nil {
+			httpx.WriteError(w, r, err)
+			return
+		}
+		httpx.JSON(w, http.StatusCreated, res)
+	})
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

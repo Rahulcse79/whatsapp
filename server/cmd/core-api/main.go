@@ -258,7 +258,7 @@ func main() {
 	// + metadata only.
 	storiesSvc := stories.NewService(storiesadapters.NewStore(pool), storiesadapters.NewAudience(pool))
 	pollsSvc := polls.NewService(pollsadapters.NewStore(pool))
-	channelsSvc := channels.NewService(channelsadapters.NewStore(pool), channelsadapters.NewNATSBroadcaster(nc, log), log)
+	channelsSvc := channels.NewService(channelsadapters.NewStore(pool), channelsadapters.NewNATSBroadcaster(nc, log), channelsadapters.NewNoopGateway(), log)
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only

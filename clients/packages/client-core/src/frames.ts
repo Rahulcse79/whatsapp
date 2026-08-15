@@ -134,6 +134,43 @@ export interface PresenceUpdate {
   lastSeenMs: number;
 }
 
+// ── calls (signaling only — media rides LiveKit, never the WS) ────────────────
+
+/** CallKind mirrors wsv1.CallKind. */
+export type CallKind = "voice" | "video";
+
+/** RingState mirrors wsv1.RingState — the 1:1/group call lifecycle relayed to
+ *  each party's device (matches @wa/call-engine RingSignal). */
+export type RingState = "ringing" | "answered" | "answered_elsewhere" | "declined" | "busy" | "missed" | "ended";
+
+/** CallOffer surfaces an incoming call to the callee's device (server→client,
+ *  relayed from the caller on dev.{id}.call). */
+export interface CallOffer {
+  t: "call_offer";
+  ringId: string;
+  roomId: string;
+  kind: CallKind;
+  callerUserId: string;
+  callerDeviceId: string;
+  participantUserIds: string[];
+}
+
+/** CallRing is a ring-state transition for a call this device is party to. */
+export interface CallRing {
+  t: "call_ring";
+  ringId: string;
+  state: RingState;
+  byUserId: string;
+}
+
+/** CallEnd is a terminal call end (e.g. the LiveKit room finished). */
+export interface CallEnd {
+  t: "call_end";
+  ringId: string;
+  roomId: string;
+  reason: string;
+}
+
 // Receipt and Typing are bidirectional: a client sends its watermark / typing
 // state, and the server relays the peer's back.
 export type ServerFrame =
@@ -146,7 +183,10 @@ export type ServerFrame =
   | InboxBatch
   | Receipt
   | Typing
-  | PresenceUpdate;
+  | PresenceUpdate
+  | CallOffer
+  | CallRing
+  | CallEnd;
 
 /** WSS close codes and their client contract (websocket-protocol.md §6). */
 export const CloseCode = {

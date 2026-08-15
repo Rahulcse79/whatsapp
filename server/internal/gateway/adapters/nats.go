@@ -47,3 +47,24 @@ func (s *NATSReceiptSource) Subscribe(deviceID string, deliver func([]byte)) (fu
 	}
 	return func() { _ = sub.Unsubscribe() }, nil
 }
+
+// NATSCallSource subscribes to per-device call-signaling subjects
+// (dev.{id}.call, published by calls/adapters.Signaler). Same live-only,
+// lossy semantics as receipts: a ring frame published while the device is
+// between subscriptions is recovered by the ring state machine (re-ring /
+// timeout), never replayed. Mirrors calls/adapters.CallSubject.
+type NATSCallSource struct{ nc *nats.Conn }
+
+func NewNATSCallSource(nc *nats.Conn) *NATSCallSource {
+	return &NATSCallSource{nc: nc}
+}
+
+func (s *NATSCallSource) Subscribe(deviceID string, deliver func([]byte)) (func(), error) {
+	sub, err := s.nc.Subscribe("dev."+deviceID+".call", func(msg *nats.Msg) {
+		deliver(msg.Data)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("subscribing calls for %s: %w", deviceID, err)
+	}
+	return func() { _ = sub.Unsubscribe() }, nil
+}

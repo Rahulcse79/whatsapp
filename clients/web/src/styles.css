@@ -541,6 +541,27 @@ body {
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
 }
 
+/* Remote media sink: LiveKit attaches subscribed tracks here. Audio elements
+   are display:none (they only need to play); remote video shows as a floating
+   tile above the in-call card. */
+.call-media-sink {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.call-remote-video {
+  width: 240px;
+  max-width: 40vw;
+  border-radius: 12px;
+  background: #000;
+  object-fit: cover;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
 /* Local self-view for a video call (T2.05). */
 .call-preview {
   width: 160px;

@@ -5,6 +5,7 @@ import {
   type ClientFrame,
   type ConversationCursor,
   type InboxItemFrame,
+  type RingState,
   type ServerFrame,
   type TransportFactory,
   type WsTransport,
@@ -120,6 +121,20 @@ function pbCursor(c: ConversationCursor): Record<string, unknown> {
   return { conversationId: c.conversationId, lastSeq: BigInt(c.lastSeq) };
 }
 
+// wsv1.RingState (frames.proto) → client-core RingState string.
+const RING_STATES: Record<number, RingState> = {
+  1: "ringing",
+  2: "answered",
+  3: "answered_elsewhere",
+  4: "declined",
+  5: "busy",
+  6: "missed",
+  7: "ended",
+};
+function ringState(v: number): RingState {
+  return RING_STATES[v] ?? "ended";
+}
+
 // ── server → client ──────────────────────────────────────────────────────────
 
 function decodeServerFrame(data: Uint8Array): ServerFrame | null {
@@ -163,6 +178,20 @@ function decodeServerFrame(data: Uint8Array): ServerFrame | null {
         online: b.value.online,
         lastSeenMs: Number(b.value.lastSeenMs),
       };
+    case "callOffer":
+      return {
+        t: "call_offer",
+        ringId: b.value.ringId,
+        roomId: b.value.roomId,
+        kind: b.value.kind === 2 ? "video" : "voice", // wsv1.CallKind: 2 = VIDEO
+        callerUserId: b.value.callerUserId,
+        callerDeviceId: b.value.callerDeviceId,
+        participantUserIds: b.value.participantUserIds ?? [],
+      };
+    case "callRing":
+      return { t: "call_ring", ringId: b.value.ringId, state: ringState(b.value.state), byUserId: b.value.byUserId };
+    case "callEnd":
+      return { t: "call_end", ringId: b.value.ringId, roomId: b.value.roomId, reason: b.value.reason };
     case "msgAck":
       return {
         t: "msg_ack",

@@ -25,23 +25,11 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 import { config } from "../config";
 import { useServices } from "../ui/ServicesContext";
 import { createCallControl } from "./callControl";
+import { createLiveKitRtc } from "./liveKitRtc";
 import { createWebCamera } from "./webCamera";
 import { createWebScreenShare } from "./webScreenShare";
 import { createWebVideoProcessor, type SegmentationBlur } from "./webVideoEffect";
-import { WebCallMedia, type RtcSession } from "./webCallMedia";
-
-// Until livekit-client is wired, media join is a no-op: the control plane, ring
-// state machine, E2EE key setup, camera capture, and simulcast params all run;
-// only the RTP path is absent.
-const stubRtc: RtcSession = {
-  join: () => Promise.resolve(),
-  senders: () => [],
-  receivers: () => [],
-  onTrackSubscribed: () => {},
-  publishVideo: () => {},
-  publishScreen: () => {},
-  leave: () => Promise.resolve(),
-};
+import { WebCallMedia } from "./webCallMedia";
 
 // The person-segmentation model (MediaPipe/WebGL) is the on-device blur seam;
 // until the model bundle is wired it passes the camera track through unchanged.
@@ -87,26 +75,40 @@ export function CallProvider({ children }: { children: ReactNode }) {
   const { session, controller, webCam, screenCtrl, effectCtrl, webScreen } = useMemo(() => {
     const token = (): string => services.sessions.current()?.accessJwt ?? "";
     const selfId = services.sessions.current()?.deviceId ?? "self";
+    // One LiveKit session backs the media transport AND the camera/screen
+    // publish callbacks, so a track the controllers capture reaches the SFU.
+    const rtc = createLiveKitRtc(config.livekitUrl);
     const s = new CallSession(
       createCallControl(config.apiBaseUrl, token),
-      new WebCallMedia(stubRtc),
+      new WebCallMedia(rtc),
       createDevRootSecretProvider(selfId, "dev-seed"),
       selfId,
       setState,
     );
-    const cam = createWebCamera((track, encodings) => stubRtc.publishVideo?.(track, encodings));
+    const cam = createWebCamera((track, encodings) => rtc.publishVideo?.(track, encodings));
     const ctrl = new CameraController(cam.device, setCamera);
-    const screenShare = createWebScreenShare((track, encodings) => stubRtc.publishScreen?.(track, encodings));
+    const screenShare = createWebScreenShare((track, encodings) => rtc.publishScreen?.(track, encodings));
     const sctrl = new ScreenShareController(screenShare.source, setScreen);
     // Blur swaps the published camera track for the on-device blurred one.
     const processor = createWebVideoProcessor(
       () => cam.track(),
-      (track) => stubRtc.publishVideo?.(track, buildSimulcastEncodings()),
+      (track) => rtc.publishVideo?.(track, buildSimulcastEncodings()),
       stubBlur,
     );
     const ectrl = new EffectController(processor, setEffect);
     return { session: s, controller: ctrl, webCam: cam, screenCtrl: sctrl, effectCtrl: ectrl, webScreen: screenShare };
   }, [services]);
+
+  // Route incoming WS call frames (dev.{id}.call) into the session. Offers show
+  // the ring; ring updates connect media when answered; ends tear down.
+  useEffect(() => {
+    services.onCallSignal({
+      onOffer: (callerUserId, roomId, ringId, kind) => session.onOffer(callerUserId, roomId, ringId, kind),
+      onRing: (state) => void session.onRing(state),
+      onEnd: (reason) => void session.onRemoteEnd(reason),
+    });
+    return () => services.onCallSignal(null);
+  }, [services, session]);
 
   // Reset the surfaced state whenever the session is rebuilt; release the camera
   // and stop sharing when a call ends.

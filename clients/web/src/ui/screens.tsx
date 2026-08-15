@@ -1376,14 +1376,26 @@ export function Thread({
             <span aria-hidden>ℹ️</span>
           </button>
         ) : (
-          <button
-            className="btn small ghost call-btn"
-            title="Voice call"
-            aria-label="Start voice call"
-            onClick={() => void call.startCall(conversationId, "voice")}
-          >
-            <span aria-hidden>📞</span>
-          </button>
+          <>
+            <button
+              className="btn small ghost call-btn"
+              title="Voice call"
+              aria-label="Start voice call"
+              disabled={!peerId}
+              onClick={() => peerId && void call.startCall(peerId, "voice")}
+            >
+              <span aria-hidden>📞</span>
+            </button>
+            <button
+              className="btn small ghost call-btn"
+              title="Video call"
+              aria-label="Start video call"
+              disabled={!peerId}
+              onClick={() => peerId && void call.startCall(peerId, "video")}
+            >
+              <span aria-hidden>📹</span>
+            </button>
+          </>
         )}
       </div>
       <div className="messages">

@@ -18,11 +18,25 @@ function defaultMediaUrl(api: string): string {
   }
 }
 
+// livekitUrl derives from VITE_LIVEKIT_URL, else the API host as a ws:// origin
+// on the LiveKit signal port (:7880). LiveKit (the SFU) is a separate deployable.
+function defaultLiveKitUrl(api: string): string {
+  try {
+    const u = new URL(api);
+    u.protocol = u.protocol === "https:" ? "wss:" : "ws:";
+    u.port = "7880";
+    return u.origin;
+  } catch {
+    return "ws://localhost:7880";
+  }
+}
+
 const apiBaseUrl = envStr("VITE_API_URL", "http://localhost:8080");
 
 export const config = {
   apiBaseUrl,
   mediaBaseUrl: envStr("VITE_MEDIA_URL", defaultMediaUrl(apiBaseUrl)),
+  livekitUrl: envStr("VITE_LIVEKIT_URL", defaultLiveKitUrl(apiBaseUrl)),
   wsUrl: envStr("VITE_WS_URL", "ws://localhost:8080/v1/ws"),
   // VAPID public key for WebPush; the self-hosted notification-svc provides one.
   vapidPublicKey: envStr("VITE_VAPID_PUBLIC_KEY", ""),

@@ -12,6 +12,9 @@ import { backoffDelay, defaultBackoff, type BackoffConfig } from "./backoff";
 import {
   CloseCode,
   ErrorCode,
+  type CallEnd,
+  type CallOffer,
+  type CallRing,
   type ClientFrame,
   type ConversationCursor,
   type HelloAck,
@@ -52,6 +55,12 @@ export interface WsClientHandlers {
   onTyping?(t: Typing): void;
   /** A tracked peer's online/last-seen change. */
   onPresence?(p: PresenceUpdate): void;
+  /** An incoming call offer relayed from the caller (dev.{id}.call). */
+  onCallOffer?(o: CallOffer): void;
+  /** A ring-state transition for a call this device is party to. */
+  onCallRing?(r: CallRing): void;
+  /** A terminal call end (room finished / peer ended). */
+  onCallEnd?(e: CallEnd): void;
   /** 4401 / AUTH_TOKEN_EXPIRED — refresh via REST; the client reconnects. */
   onAuthExpired(): void;
   /** 4403 — device revoked / account suspended: wipe session, stop for good. */
@@ -188,6 +197,15 @@ export class WsClient {
         break;
       case "presence_update":
         this.o.handlers.onPresence?.(f);
+        break;
+      case "call_offer":
+        this.o.handlers.onCallOffer?.(f);
+        break;
+      case "call_ring":
+        this.o.handlers.onCallRing?.(f);
+        break;
+      case "call_end":
+        this.o.handlers.onCallEnd?.(f);
         break;
       case "server_hint":
         this.onServerHint(f);

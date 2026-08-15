@@ -49,6 +49,7 @@ type Server struct {
 	routes   RouteStore
 	delivery DeliverySource  // nil = no live delivery (some tests)
 	receipts DeliverySource  // nil = no receipt forwarding (dev.{id}.receipt)
+	calls    DeliverySource  // nil = no call signaling (dev.{id}.call)
 	chat     ChatClient      // nil = no core-api (some tests): no replay, no send path
 	resume   ResumeStore     // nil = resume tokens disabled (some tests)
 	presence PresenceBackend // nil = presence/typing disabled (some tests)
@@ -70,6 +71,7 @@ type Config struct {
 	Routes         RouteStore
 	Delivery       DeliverySource
 	Receipts       DeliverySource
+	Calls          DeliverySource
 	Chat           ChatClient
 	Resume         ResumeStore
 	Presence       PresenceBackend
@@ -97,7 +99,7 @@ func NewServer(cfg Config) *Server {
 	s := &Server{
 		reg: cfg.Registry, verifier: cfg.Verifier, authz: cfg.Authorizer,
 		routes: cfg.Routes, delivery: cfg.Delivery, receipts: cfg.Receipts,
-		chat: cfg.Chat, resume: cfg.Resume, presence: cfg.Presence,
+		calls: cfg.Calls, chat: cfg.Chat, resume: cfg.Resume, presence: cfg.Presence,
 		podID: cfg.PodID, routeTTL: cfg.RouteTTL, log: cfg.Log,
 		allowedOrigins: cfg.AllowedOrigins,
 	}
@@ -219,6 +221,36 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Call signaling: ring/offer/answer/end frames relayed by core-api on
+	// dev.{id}.call. Lossy like receipts — a full queue drops the frame; the
+	// ring state machine (re-ring / timeout) recovers, so nothing replays them.
+	// The Signaler publishes whole wsv1.Frames; re-stamp the frame ID so IDs
+	// stay monotonic on this connection, then forward.
+	var unsubCalls func()
+	if s.calls != nil {
+		unsubCalls, err = s.calls.Subscribe(ident.DeviceID, func(payload []byte) {
+			frame, derr := stampCallFrame(payload, c.nextFrameID())
+			if derr != nil {
+				s.log.Warn("dropping malformed call frame", "device_id", c.deviceID, "err", derr)
+				return
+			}
+			if !c.Deliver(frame) {
+				s.log.Debug("dropping call frame on full queue", "device_id", c.deviceID)
+			}
+		})
+		if err != nil {
+			s.log.Error("call subscribe failed", "device_id", ident.DeviceID, "err", err)
+			if unsubscribe != nil {
+				unsubscribe()
+			}
+			if unsubReceipts != nil {
+				unsubReceipts()
+			}
+			s.cleanup(c)
+			return
+		}
+	}
+
 	// Now that the feeds are live, tell the client it is connected.
 	ack := helloAckFrame(c.nextFrameID(), ident.SessionID, time.Now().UnixMilli(), resumeToken, willReplay)
 	if err := c.write(ctx, ack); err != nil {
@@ -227,6 +259,9 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 		}
 		if unsubReceipts != nil {
 			unsubReceipts()
+		}
+		if unsubCalls != nil {
+			unsubCalls()
 		}
 		s.cleanup(c)
 		return
@@ -244,6 +279,9 @@ func (s *Server) Handle(w http.ResponseWriter, r *http.Request) {
 	s.serve(ctx, c)
 	if unsubReceipts != nil {
 		unsubReceipts()
+	}
+	if unsubCalls != nil {
+		unsubCalls()
 	}
 	if unsubscribe != nil {
 		unsubscribe()

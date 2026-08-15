@@ -85,6 +85,12 @@ load_env() {
   export WA_MINIO_ENDPOINT="$(lan_ip):9000" WA_MINIO_ACCESS_KEY=minioadmin \
          WA_MINIO_SECRET_KEY=minioadmin WA_MINIO_BUCKET=media WA_MINIO_SECURE=false
   export WA_CORE_API_GRPC_ADDR=127.0.0.1:9090
+  # LiveKit (calls SFU). --dev mode uses fixed placeholder credentials
+  # (devkey/secret); core-api mints room join tokens with these so LiveKit
+  # accepts them. WA_LIVEKIT_URL uses the LAN IP so a phone on the same WiFi can
+  # reach the SFU (the web client derives its own ws:// URL from the API host).
+  export WA_LIVEKIT_API_KEY=devkey WA_LIVEKIT_API_SECRET=secret
+  export WA_LIVEKIT_URL="ws://$(lan_ip):7880"
 }
 
 # Per-service HTTP/gRPC ports (distinct so all four share one host).
@@ -186,6 +192,10 @@ infra_up_native() {
   # installed/started (e.g. low disk), we skip it and media-svc, and the rest of
   # the stack still runs.
   minio_up_native || MINIO_OK=0
+
+  # LiveKit — calls SFU (voice/video). Best-effort like MinIO: if it can't
+  # start, calls are unavailable but the rest of the stack runs.
+  livekit_up_native || warn "LiveKit unavailable — voice/video calls off"
 }
 
 # nats_up_native ensures a JETSTREAM-enabled NATS on :4222 — the PUSH durable
@@ -252,6 +262,23 @@ minio_up_native() {
     for b in media backups wal-archive; do "$mc_bin" mb -p "wa-local/$b" >/dev/null 2>&1 || true; done
   fi
   ok "MinIO on :9000 (console :9001, minioadmin/minioadmin)"
+}
+
+# livekit_up_native ensures a LiveKit SFU on :7880 in --dev mode. --dev uses the
+# fixed placeholder credentials devkey/secret, which match load_env's
+# WA_LIVEKIT_* so core-api's minted room tokens verify. It binds 0.0.0.0 (:7880
+# signal + UDP 7882+ for WebRTC) so a phone on the same WiFi can reach it. No
+# prebuilt fetch: LiveKit ships per-arch archives — if it isn't installed we skip
+# (calls off) with an install hint rather than guessing a download.
+livekit_up_native() {
+  if port_up 7880; then ok "Reusing LiveKit on :7880"; return 0; fi
+  local bin; bin="$(command -v livekit-server 2>/dev/null || true)"
+  [ -x "$bin" ] || { warn "livekit-server not found — 'brew install livekit' (or livekit.io/downloads) to enable calls"; return 1; }
+  "$bin" --dev --bind 0.0.0.0 >"$LOG_DIR/livekit.log" 2>&1 &
+  echo $! > "$PID_DIR/livekit.pid"
+  printf '  waiting for LiveKit'
+  for _ in $(seq 1 20); do curl -fsS http://localhost:7880 -o /dev/null 2>&1 && break; printf '.'; sleep 1; done; printf '\n'
+  curl -fsS http://localhost:7880 -o /dev/null 2>&1 && ok "LiveKit on :7880 (dev)" || { warn "LiveKit not ready — see ./start.sh logs livekit"; return 1; }
 }
 
 migrate_native() {

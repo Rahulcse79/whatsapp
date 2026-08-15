@@ -107,6 +107,7 @@ func main() {
 		Routes:   gwadapters.NewValkeyRouteStore(vk),
 		Delivery: gwadapters.NewNATSDeliverySource(nc),
 		Receipts: gwadapters.NewNATSReceiptSource(nc),
+		Calls:    gwadapters.NewNATSCallSource(nc),
 		Chat:     gwadapters.NewGRPCChatClient(coreConn),
 		Resume:   gwadapters.NewValkeyResumeStore(vk),
 		Presence: presenceBackend{

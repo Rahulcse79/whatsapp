@@ -8,8 +8,10 @@ import {
   SessionManager,
   WsClient,
   newId,
+  type CallKind,
   type ChatSummary,
   type ConversationCursor,
+  type RingState,
   type SearchHit,
   type SessionProvider,
   type ThreadMessage,
@@ -97,6 +99,14 @@ export interface GroupInviteLink {
   qr: string;
 }
 
+/** CallSignalHandler receives the WS call-signaling frames (dev.{id}.call),
+ *  forwarded to the CallProvider which drives the CallSession. */
+export interface CallSignalHandler {
+  onOffer(callerUserId: string, roomId: string, ringId: string, kind: CallKind): void;
+  onRing(state: RingState): void;
+  onEnd(reason: string): void;
+}
+
 export class AppServices {
   readonly otp: OtpClient;
   readonly sessions: SessionManager;
@@ -108,6 +118,7 @@ export class AppServices {
   private readonly changeListeners = new Set<() => void>();
   private readonly peerByConv = new Map<string, string>(); // conversationId → peer userId
   private readonly profileCache = new Map<string, PublicProfile>(); // userId → public profile
+  private callHandler: CallSignalHandler | null = null; // set by CallProvider
   private readonly groupCache = new Map<string, GroupInfo>(); // conversationId → group info
   private readonly notGroup = new Set<string>(); // conversationIds confirmed to be direct chats
   private readonly typingByConv = new Map<string, number>(); // conversationId → typing-expiry ts
@@ -204,6 +215,9 @@ export class AppServices {
           this.presenceByUser.set(p.userId, { online: p.online, lastSeenMs: p.lastSeenMs });
           this.notifyChange();
         },
+        onCallOffer: (o) => this.callHandler?.onOffer(o.callerUserId, o.roomId, o.ringId, o.kind),
+        onCallRing: (r) => this.callHandler?.onRing(r.state),
+        onCallEnd: (e) => this.callHandler?.onEnd(e.reason),
         pendingSends: () => this.db.pendingSends(),
         onAuthExpired: () => {
           void this.refreshToken();
@@ -642,6 +656,12 @@ export class AppServices {
   /** sendTyping relays my typing state for a conversation (throttle at the caller). */
   sendTyping(conversationId: string, recording: boolean): void {
     this.ws?.send({ t: "typing", conversationId, recording });
+  }
+  /** onCallSignal registers the CallProvider's handler for WS call frames; pass
+   *  null to detach. Offers/rings/ends arrive on dev.{id}.call and drive the
+   *  CallSession (outgoing calls + answer/decline go via REST in callControl). */
+  onCallSignal(handler: CallSignalHandler | null): void {
+    this.callHandler = handler;
   }
 
   // authedJson POSTs with the bearer token, transparently refreshing once on a

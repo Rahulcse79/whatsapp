@@ -106,6 +106,18 @@ func receiptFrame(frameID uint64, r *wsv1.Receipt) []byte {
 	return payload
 }
 
+// stampCallFrame re-stamps a call-signaling frame (published whole by the
+// calls Signaler as a marshaled wsv1.Frame) with a per-connection frame ID so
+// IDs stay monotonic on the wire, then re-marshals it for delivery.
+func stampCallFrame(payload []byte, frameID uint64) ([]byte, error) {
+	var frame wsv1.Frame
+	if err := proto.Unmarshal(payload, &frame); err != nil {
+		return nil, err
+	}
+	frame.FrameId = frameID
+	return proto.Marshal(&frame)
+}
+
 // presenceUpdateFrame relays a tracked user's online/last-seen change.
 func presenceUpdateFrame(frameID uint64, u *wsv1.PresenceUpdate) []byte {
 	payload, _ := proto.Marshal(&wsv1.Frame{

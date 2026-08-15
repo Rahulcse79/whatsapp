@@ -30,6 +30,8 @@ import (
 	channelsadapters "github.com/whatsapp-v2/server/internal/channels/adapters"
 	"github.com/whatsapp-v2/server/internal/chat"
 	chatadapters "github.com/whatsapp-v2/server/internal/chat/adapters"
+	"github.com/whatsapp-v2/server/internal/communities"
+	communitiesadapters "github.com/whatsapp-v2/server/internal/communities/adapters"
 	"github.com/whatsapp-v2/server/internal/contacts"
 	contactsadapters "github.com/whatsapp-v2/server/internal/contacts/adapters"
 	"github.com/whatsapp-v2/server/internal/devices"
@@ -259,6 +261,9 @@ func main() {
 	storiesSvc := stories.NewService(storiesadapters.NewStore(pool), storiesadapters.NewAudience(pool))
 	pollsSvc := polls.NewService(pollsadapters.NewStore(pool))
 	channelsSvc := channels.NewService(channelsadapters.NewStore(pool), channelsadapters.NewNATSBroadcaster(nc, log), channelsadapters.NewNoopGateway(), log)
+	// Communities roof over groups; the announcement group is minted through the
+	// groups service via a thin GroupCreator adapter (keeps communities decoupled).
+	communitiesSvc := communities.NewService(communitiesadapters.NewStore(pool), announcementGroupCreator{groups: groupsSvc})
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -409,10 +414,11 @@ func main() {
 	calls.Routes(mux, callsSvc, issuer, callsWebhook)
 	ptt.Routes(mux, pttSvc, pttMinter, issuer)
 	stories.Routes(mux, storiesSvc, issuer)
-	polls.Routes(mux, pollsSvc, issuer)       // /v1/polls create/vote/close/results (T6.02)
-	channels.Routes(mux, channelsSvc, issuer) // /v1/channels broadcast: CRUD/follow/posts/react/comment (T7.01)
-	chat.Routes(mux, chatStore, issuer)       // POST /v1/conversations/direct (start a 1:1)
-	profile.Routes(mux, profileSvc, issuer)   // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
+	polls.Routes(mux, pollsSvc, issuer)             // /v1/polls create/vote/close/results (T6.02)
+	channels.Routes(mux, channelsSvc, issuer)       // /v1/channels broadcast: CRUD/follow/posts/react/comment (T7.01)
+	communities.Routes(mux, communitiesSvc, issuer) // /v1/communities: groups-roof + roles/events/discovery (T8.01)
+	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
+	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {
 		admin.Routes(mux, adminSvc)
 		admin.FlagRoutes(mux, adminSvc, adminFlags)
@@ -523,6 +529,19 @@ func devCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// announcementGroupCreator adapts the groups service to communities.GroupCreator
+// so a new community mints its announcement group without communities depending
+// on the groups package directly (T8.01).
+type announcementGroupCreator struct{ groups *groups.Service }
+
+func (a announcementGroupCreator) CreateAnnouncementGroup(ctx context.Context, ident auth.Identity, name string) (string, error) {
+	gv, err := a.groups.Create(ctx, ident, name, "Community announcements", nil)
+	if err != nil {
+		return "", err
+	}
+	return gv.ID, nil
 }
 
 // ensure the domain package is referenced (compile guard for future wiring).

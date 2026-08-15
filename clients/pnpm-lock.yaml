@@ -17,6 +17,9 @@ importers:
 
   mobile:
     dependencies:
+      '@bufbuild/protobuf':
+        specifier: ^2.2.0
+        version: 2.13.0
       '@wa/call-engine':
         specifier: workspace:*
         version: link:../packages/call-engine
@@ -29,6 +32,9 @@ importers:
       '@wa/media-pipeline':
         specifier: workspace:*
         version: link:../packages/media-pipeline
+      '@wa/proto-types':
+        specifier: workspace:^
+        version: link:../packages/proto-types
       '@wa/sync-engine':
         specifier: workspace:*
         version: link:../packages/sync-engine

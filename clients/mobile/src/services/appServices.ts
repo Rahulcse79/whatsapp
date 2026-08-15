@@ -3,8 +3,8 @@
 // connection, the local store, and the send path. Screens never touch ports,
 // sockets, or SQL directly.
 
-import { DevSessionCipher, generateDevIdentity } from "@wa/crypto-wrapper";
 import { encodeTextMessage, generateLinkPreview } from "@wa/media-pipeline";
+import { openForConversation, sealForConversation } from "./convCrypto";
 import { Cursors } from "@wa/sync-engine";
 import {
   MessageStore,
@@ -12,7 +12,9 @@ import {
   SessionManager,
   WsClient,
   newId,
+  type CallKind,
   type HttpClient,
+  type RingState,
   type SessionProvider,
   type SqliteDB,
   type VerifiedSession,
@@ -27,6 +29,15 @@ import { createWsTransportFactory } from "../platform/wsTransport";
 export interface AppConfig {
   apiBaseUrl: string;
   wsUrl: string;
+  livekitUrl: string;
+}
+
+/** CallSignalHandler receives WS call-signaling frames (dev.{id}.call),
+ *  forwarded to the CallProvider which drives the CallSession. */
+export interface CallSignalHandler {
+  onOffer(callerUserId: string, roomId: string, ringId: string, kind: CallKind): void;
+  onRing(state: RingState): void;
+  onEnd(reason: string): void;
 }
 
 // Backend endpoints. Baked in at build time from EXPO_PUBLIC_* (Expo inlines
@@ -39,6 +50,7 @@ export interface AppConfig {
 export const defaultConfig: AppConfig = {
   apiBaseUrl: process.env.EXPO_PUBLIC_API_URL ?? "http://localhost:8080",
   wsUrl: process.env.EXPO_PUBLIC_WS_URL ?? "ws://localhost:8081/v1/ws",
+  livekitUrl: process.env.EXPO_PUBLIC_LIVEKIT_URL ?? "ws://localhost:7880",
 };
 
 export class AppServices {
@@ -47,14 +59,15 @@ export class AppServices {
 
   private store!: MessageStore;
   private readonly cursors = new Cursors();
-  private readonly cipher = new DevSessionCipher(generateDevIdentity({ userId: "self", deviceId: "mobile" }));
-  private readonly encoder = new TextEncoder();
   private ws: WsClient | null = null;
+  private readonly http: HttpClient;
+  private callHandler: CallSignalHandler | null = null; // set by CallProvider
 
   private constructor(
     private readonly cfg: AppConfig,
     http: HttpClient,
   ) {
+    this.http = http;
     this.otp = new OtpClient(http);
     this.sessions = new SessionManager(secureStore);
   }
@@ -62,6 +75,13 @@ export class AppServices {
   /** The backend endpoints this instance is bound to (user-configured). */
   get config(): AppConfig {
     return this.cfg;
+  }
+
+  /** onCallSignal registers the CallProvider's handler for WS call frames; pass
+   *  null to detach. Offers/rings/ends arrive on dev.{id}.call and drive the
+   *  CallSession (outgoing calls + answer/decline go via REST in callControl). */
+  onCallSignal(handler: CallSignalHandler | null): void {
+    this.callHandler = handler;
   }
 
   static async create(cfg: AppConfig = defaultConfig): Promise<AppServices> {
@@ -108,10 +128,26 @@ export class AppServices {
       scheduler: rnScheduler,
       session: provider,
       handlers: {
-        onInboxBatch: (b) => store.persistInboxBatch(b),
+        onInboxBatch: (b) => {
+          // Decrypt each inbound ciphertext with the conversation-shared key so
+          // the recipient stores real text, not the "[encrypted]" placeholder.
+          // A bad MAC (foreign/rotated key) just leaves that item unresolved.
+          const bodies = new Map<string, string>();
+          for (const it of b.items) {
+            try {
+              bodies.set(it.msgUuid, openForConversation(it.conversationId, it.ciphertext));
+            } catch {
+              /* leave as placeholder */
+            }
+          }
+          return store.persistInboxBatch(b, bodies);
+        },
         onMsgAck: (a) => {
           void store.markSent(a.clientRef, a.seq);
         },
+        onCallOffer: (o) => this.callHandler?.onOffer(o.callerUserId, o.roomId, o.ringId, o.kind),
+        onCallRing: (r) => this.callHandler?.onRing(r.state),
+        onCallEnd: (e) => this.callHandler?.onEnd(e.reason),
         pendingSends: () => store.pendingSends(),
         onAuthExpired: () => {
           void this.refreshToken();
@@ -134,9 +170,38 @@ export class AppServices {
     const clientRef = newId();
     const preview = await generateLinkPreview(text, rnHtmlFetcher).catch(() => null);
     const body = encodeTextMessage(text, preview ?? undefined);
-    const payload = await this.seal(conversationId, body);
+    const payload = sealForConversation(conversationId, body);
     await this.store.enqueueOutgoing({ clientRef, conversationId, plaintext: body, listText: text, payload, now: Date.now() });
     await this.ws?.flush();
+  }
+
+  /** startDirectChat resolves a phone number to a registered user, then gets (or
+   *  creates) the shared 1:1 conversation and returns its id. Throws a friendly
+   *  message if no account exists for that number (mirrors the web client). */
+  async startDirectChat(phone: string): Promise<string> {
+    const sync = (await this.authedJson("/v1/contacts/sync", { handles: [phone.trim()] })) as {
+      matched?: Array<{ user_id?: string }>;
+    };
+    const peer = sync.matched?.[0]?.user_id;
+    if (!peer) throw new Error("No account is registered with that number yet.");
+    const conv = (await this.authedJson("/v1/conversations/direct", { peer_user_id: peer })) as {
+      conversation_id?: string;
+    };
+    if (!conv.conversation_id) throw new Error("Couldn't start the conversation.");
+    return conv.conversation_id;
+  }
+
+  // authedJson POSTs with the bearer token, refreshing once on a 401 (the
+  // 10-minute access token may have lapsed since sign-in).
+  private async authedJson(path: string, body: unknown): Promise<unknown> {
+    const hdr = () => ({ authorization: `Bearer ${this.sessions.current()?.accessJwt ?? ""}` });
+    let res = await this.http.post(path, body, hdr());
+    if (res.status === 401) {
+      await this.refreshToken();
+      res = await this.http.post(path, body, hdr());
+    }
+    if (res.status >= 400) throw new Error("Request failed — please try again.");
+    return res.json();
   }
 
   async logout(): Promise<void> {
@@ -155,21 +220,5 @@ export class AppServices {
       // A reused/expired refresh token is fatal — drop the session.
       await this.logout();
     }
-  }
-
-  // Seals via the T0.20 DevSessionCipher (INSECURE dev double) so the send path
-  // speaks ciphertext through the real E2EE contract. Live per-device fan-out
-  // (E2EEEngine + keys directory + real libsignal) activates once the keys API
-  // is wired; self-addressed placeholder peer until then.
-  private async seal(conversationId: string, text: string): Promise<Uint8Array> {
-    const address = { userId: conversationId, deviceId: "peer" };
-    if (!this.cipher.hasSession(address)) {
-      await this.cipher.establish({
-        address,
-        identityKey: this.encoder.encode(conversationId),
-        signedPrekey: this.encoder.encode("spk"),
-      });
-    }
-    return this.cipher.encrypt(address, this.encoder.encode(text));
   }
 }

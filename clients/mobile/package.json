@@ -12,10 +12,12 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@bufbuild/protobuf": "^2.2.0",
     "@wa/call-engine": "workspace:*",
     "@wa/client-core": "workspace:*",
     "@wa/crypto-wrapper": "workspace:*",
     "@wa/media-pipeline": "workspace:*",
+    "@wa/proto-types": "workspace:^",
     "@wa/sync-engine": "workspace:*",
     "expo": "~52.0.0",
     "expo-build-properties": "~0.13.0",

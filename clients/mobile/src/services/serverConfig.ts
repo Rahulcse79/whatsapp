@@ -44,6 +44,9 @@ export function deriveConfig(raw: string): AppConfig {
     return {
       apiBaseUrl: `${scheme}://${host}:${apiPort}`,
       wsUrl: `${secure ? "wss" : "ws"}://${host}:${wsPort}/v1/ws`,
+      // LiveKit (calls SFU) rides its own port; over https it's reverse-proxied
+      // as wss on the same origin, over http it's the dev :7880.
+      livekitUrl: secure ? `wss://${host}:${apiPort}` : `ws://${host}:7880`,
     };
   }
 
@@ -54,5 +57,6 @@ export function deriveConfig(raw: string): AppConfig {
   return {
     apiBaseUrl: `http://${host}:${apiPort}`,
     wsUrl: `ws://${host}:8081/v1/ws`,
+    livekitUrl: `ws://${host}:7880`,
   };
 }

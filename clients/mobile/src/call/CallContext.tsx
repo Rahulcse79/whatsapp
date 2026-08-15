@@ -131,6 +131,16 @@ export function CallProvider({ children }: { children: ReactNode }) {
   }, [services]);
 
   useEffect(() => setState(session.getState()), [session]);
+  // Route incoming WS call frames (dev.{id}.call) into the session: offers show
+  // the ring, ring updates connect media when answered, ends tear down.
+  useEffect(() => {
+    services.onCallSignal({
+      onOffer: (callerUserId, roomId, ringId, kind) => session.onOffer(callerUserId, roomId, ringId, kind),
+      onRing: (state) => void session.onRing(state),
+      onEnd: (reason) => void session.onRemoteEnd(reason),
+    });
+    return () => services.onCallSignal(null);
+  }, [services, session]);
   // Release the camera + stop sharing when a call ends or the screen goes idle.
   useEffect(() => {
     if (state.phase === "ended" || state.phase === "idle") {

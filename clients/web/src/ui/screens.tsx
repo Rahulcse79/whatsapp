@@ -22,7 +22,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { CallHistoryItem, GroupInfo, GroupMember, Invite, MatchedContact, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -105,7 +105,7 @@ const PRIVACY_OPTIONS = ["everyone", "contacts", "nobody"];
 const fieldLabel: CSSProperties = { display: "block", fontSize: "0.8rem" };
 const fieldWrap: CSSProperties = { display: "block", marginBottom: "0.6rem" };
 
-export function Profile({ onBack }: { onBack: () => void }) {
+export function Profile({ onBack, onSettings }: { onBack: () => void; onSettings: () => void }) {
   const { services } = useServices();
   const [displayName, setDisplayName] = useState("");
   const [username, setUsername] = useState("");
@@ -181,9 +181,14 @@ export function Profile({ onBack }: { onBack: () => void }) {
 
   return (
     <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <button type="button" className="btn small" onClick={onBack}>
+          ‹ Back
+        </button>
+        <button type="button" className="btn small ghost" onClick={onSettings}>
+          ⚙️ Settings & devices
+        </button>
+      </div>
       <h1>Your profile</h1>
       <form onSubmit={save}>
         <label style={fieldWrap}>
@@ -1562,6 +1567,173 @@ function StoryViewerOverlay({
             Close
           </button>
         </div>
+      )}
+    </div>
+  );
+}
+
+/** Settings screen (T5.12): linked-device management (list/rename/revoke),
+ *  notification opt-in, and the account/backup surfaces. Device linking's QR
+ *  scan + signed device-list cert is the crypto-wrapper deviceList seam. */
+export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSignedOut: () => void }) {
+  const { services } = useServices();
+  const [devices, setDevices] = useState<LinkedDevice[]>([]);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [pushOn, setPushOn] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem("wa.push") === "on";
+    } catch {
+      return false;
+    }
+  });
+  const [error, setError] = useState<string | null>(null);
+  const myId = services.myDeviceId();
+
+  const load = useCallback(() => {
+    void services.listDevices().then(setDevices).catch(() => {});
+  }, [services]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function saveName(id: string): Promise<void> {
+    setError(null);
+    try {
+      await services.renameDevice(id, editName.trim());
+      setEditing(null);
+      load();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function revoke(id: string): Promise<void> {
+    const isMe = id === myId;
+    if (!window.confirm(isMe ? "Sign out this device?" : "Revoke this device? It will be signed out.")) return;
+    setError(null);
+    try {
+      await services.revokeDevice(id);
+      if (isMe) {
+        await services.logout();
+        onSignedOut();
+      } else {
+        load();
+      }
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
+
+  async function togglePush(): Promise<void> {
+    setError(null);
+    if (pushOn) {
+      try {
+        localStorage.setItem("wa.push", "off");
+      } catch {
+        /* ignore */
+      }
+      setPushOn(false);
+      return;
+    }
+    try {
+      const sub = await registerWebPush();
+      if (sub) {
+        localStorage.setItem("wa.push", "on");
+        setPushOn(true);
+      } else {
+        setError("Notifications were blocked or aren't supported in this browser.");
+      }
+    } catch {
+      setError("Couldn't enable notifications.");
+    }
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>Settings</h1>
+
+      <h2>Linked devices ({devices.length})</h2>
+      <p className="muted" style={{ fontSize: "0.8rem" }}>
+        Devices signed in to your account. Revoke any you don't recognise.
+      </p>
+      <ul className="list">
+        {devices.map((d) => (
+          <li key={d.id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+            {editing === d.id ? (
+              <>
+                <input className="input" value={editName} onChange={(e) => setEditName(e.target.value)} aria-label="Device name" maxLength={60} style={{ flex: 1 }} />
+                <button className="btn small" onClick={() => void saveName(d.id)}>
+                  Save
+                </button>
+                <button className="btn small ghost" onClick={() => setEditing(null)}>
+                  ✕
+                </button>
+              </>
+            ) : (
+              <>
+                <span style={{ flex: 1 }}>
+                  {d.name || d.platform || "Device"}
+                  {d.id === myId && <span className="muted" style={{ fontSize: "0.75rem" }}> · this device</span>}
+                  {d.isPrimary && <span className="muted" style={{ fontSize: "0.75rem" }}> · primary</span>}
+                  <br />
+                  <span className="muted" style={{ fontSize: "0.72rem" }}>
+                    {d.platform}
+                    {d.lastActiveMs ? ` · active ${formatLastSeen(d.lastActiveMs)}` : ""}
+                  </span>
+                </span>
+                <button
+                  className="btn small ghost"
+                  onClick={() => {
+                    setEditing(d.id);
+                    setEditName(d.name);
+                  }}
+                >
+                  Rename
+                </button>
+                <button className="btn small ghost" onClick={() => void revoke(d.id)}>
+                  {d.id === myId ? "Sign out" : "Revoke"}
+                </button>
+              </>
+            )}
+          </li>
+        ))}
+      </ul>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Link a device</h2>
+      <p className="muted" style={{ fontSize: "0.85rem" }}>
+        On the new device, open WhatsApp V2 → Link a device, then scan its QR here. The primary device signs
+        the new device's key into your <span className="mono">signed device list</span> so all your devices trust
+        it. QR scanning + the device-list signature are wired through <span className="mono">@wa/crypto-wrapper</span>{" "}
+        (deviceList) — the on-device linking seam.
+      </p>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Notifications</h2>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+        <input type="checkbox" checked={pushOn} onChange={() => void togglePush()} />
+        <span>Push notifications on this device</span>
+      </label>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Chat backup</h2>
+      <p className="muted" style={{ fontSize: "0.85rem" }}>
+        End-to-end encrypted backups upload to your own storage, keyed by a password only you hold (Argon2id).
+        Create/restore is wired server-side (<span className="mono">/v1/backups</span>) — the client archive +
+        key-derivation UI is the next step.
+      </p>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Account</h2>
+      <p className="muted" style={{ fontSize: "0.85rem" }}>
+        Export your data or delete your account — the account-lifecycle endpoints aren't exposed yet, so these
+        remain on the roadmap.
+      </p>
+
+      {error && (
+        <p className="error" role="alert" style={{ marginTop: "1rem" }}>
+          {error}
+        </p>
       )}
     </div>
   );

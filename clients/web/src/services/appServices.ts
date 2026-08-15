@@ -124,6 +124,15 @@ export interface StoryContent {
   dataUrl?: string; // image data URL
 }
 
+/** LinkedDevice is one row from GET /v1/devices. */
+export interface LinkedDevice {
+  id: string;
+  isPrimary: boolean;
+  platform: string;
+  name: string;
+  lastActiveMs: number;
+}
+
 /** CallSignalHandler receives the WS call-signaling frames (dev.{id}.call),
  *  forwarded to the CallProvider which drives the CallSession. */
 export interface CallSignalHandler {
@@ -768,6 +777,41 @@ export class AppServices {
     } catch {
       return null;
     }
+  }
+
+  // ── devices / settings (T5.12) ────────────────────────────────────────────
+
+  /** myDeviceId is this session's device id (to mark "This device" in the list). */
+  myDeviceId(): string {
+    return this.sessions.current()?.deviceId ?? "";
+  }
+
+  /** listDevices returns the account's linked devices (primary + linked). */
+  async listDevices(): Promise<LinkedDevice[]> {
+    const res = await this.authedRequest("GET", "/v1/devices");
+    if (!res.ok) return [];
+    const b = (await res.json()) as {
+      devices?: Array<{ id: string; is_primary: boolean; platform: string; name: string; last_active_ms?: number }>;
+    };
+    return (b.devices ?? []).map((d) => ({
+      id: d.id,
+      isPrimary: d.is_primary,
+      platform: d.platform,
+      name: d.name,
+      lastActiveMs: d.last_active_ms ?? 0,
+    }));
+  }
+
+  async renameDevice(deviceId: string, name: string): Promise<void> {
+    const res = await this.authedRequest("PATCH", `/v1/devices/${deviceId}`, { name });
+    if (!res.ok) throw new Error("Couldn't rename that device.");
+  }
+
+  /** revokeDevice unlinks a device (revokes its sessions). Revoking your own
+   *  device signs this session out. */
+  async revokeDevice(deviceId: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/devices/${deviceId}`);
+    if (!res.ok) throw new Error("Couldn't revoke that device.");
   }
 
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */

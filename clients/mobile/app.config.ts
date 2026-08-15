@@ -43,17 +43,24 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     plugins: [
       "expo-router",
       "expo-secure-store",
+      // LiveKit voice/video calls (@livekit/react-native + react-native-webrtc).
+      // The LiveKit plugin configures the native audio session; the webrtc config
+      // plugin adds the CAMERA/RECORD_AUDIO/MODIFY_AUDIO_SETTINGS/BLUETOOTH
+      // permissions and the WebRTC build settings. Both run at prebuild.
+      "@livekit/react-native-expo-plugin",
+      "@config-plugins/react-native-webrtc",
       // Pin the Android Kotlin toolchain: the Compose Compiler (1.5.15) pulled
       // in by the native modules requires Kotlin 1.9.25, but Expo SDK 52
       // defaults to 1.9.24. expo-build-properties writes this into the native
-      // project at prebuild so the release build compiles.
+      // project at prebuild so the release build compiles. minSdkVersion 24 is
+      // react-native-webrtc's floor.
       //
       // usesCleartextTraffic: Android 9+ blocks plaintext http:// by default, so
       // a release APK can't reach a dev backend at http://<lan-ip>:8080. Allow
       // cleartext so the in-app server URL can point at a LAN dev box. Production
       // traffic terminates TLS at the ingress (https://), so this only matters
       // for the http LAN-dev path. (Requires an APK rebuild to take effect.)
-      ["expo-build-properties", { android: { kotlinVersion: "1.9.25", usesCleartextTraffic: true } }],
+      ["expo-build-properties", { android: { kotlinVersion: "1.9.25", usesCleartextTraffic: true, minSdkVersion: 24 } }],
     ],
     experiments: { typedRoutes: false },
   };

@@ -3,14 +3,17 @@
 // connecting/connected bar, and a brief ended notice. Hidden when idle.
 
 import { active, type CallState } from "@wa/call-engine";
+import { RTCView } from "@livekit/react-native-webrtc";
 import { useEffect, useState } from "react";
 import { Modal, Pressable, StyleSheet, Text, View } from "react-native";
 import { useCall } from "./CallContext";
 
 export function CallOverlay() {
-  const { state, camera, screen, effect, accept, decline, hangup, toggleCamera, flipCamera, toggleScreenShare, toggleBlur } =
+  const { state, camera, screen, effect, localStreamURL, remoteStreamURL, accept, decline, hangup, toggleCamera, flipCamera, toggleScreenShare, toggleBlur } =
     useCall();
   const [showEnded, setShowEnded] = useState(false);
+  const [localURL, setLocalURL] = useState<string | null>(null);
+  const [remoteURL, setRemoteURL] = useState<string | null>(null);
   const isVideo = state.kind === "video";
   const inCall = state.phase === "connecting" || state.phase === "connected";
 
@@ -20,6 +23,23 @@ export function CallOverlay() {
     const t = setTimeout(() => setShowEnded(false), 2500);
     return () => clearTimeout(t);
   }, [state.phase, state.endReason]);
+
+  // Remote/local video tracks arrive asynchronously after connect (and toggle
+  // during the call), so poll the transport for their stream URLs while active.
+  useEffect(() => {
+    if (!inCall) {
+      setLocalURL(null);
+      setRemoteURL(null);
+      return;
+    }
+    const tick = (): void => {
+      setLocalURL(localStreamURL());
+      setRemoteURL(remoteStreamURL());
+    };
+    tick();
+    const h = setInterval(tick, 700);
+    return () => clearInterval(h);
+  }, [inCall, localStreamURL, remoteStreamURL]);
 
   const visible = (state.phase !== "idle" && state.phase !== "ended") || showEnded;
   if (!visible) return null;
@@ -32,7 +52,14 @@ export function CallOverlay() {
             <Text style={styles.status}>Call ended{state.endReason ? ` · ${state.endReason}` : ""}</Text>
           ) : (
             <>
-              {isVideo && camera.enabled ? <View style={styles.preview} /> : null}
+              {isVideo && remoteURL ? <RTCView streamURL={remoteURL} style={styles.remote} objectFit="cover" /> : null}
+              {isVideo && camera.enabled ? (
+                localURL ? (
+                  <RTCView streamURL={localURL} style={styles.preview} objectFit="cover" mirror zOrder={1} />
+                ) : (
+                  <View style={styles.preview} />
+                )
+              ) : null}
               <Text style={styles.peer}>{state.peerId?.slice(0, 12) ?? "unknown"}</Text>
               <Text style={styles.status}>{statusLabel(state)}</Text>
               <View style={styles.actions}>
@@ -109,7 +136,8 @@ const styles = StyleSheet.create({
   ghost: { backgroundColor: "#eee" },
   ghostText: { color: "#333", fontSize: 15 },
   btnText: { color: "#fff", fontSize: 15 },
-  // Self-view placeholder; bind <RTCView streamURL={localStreamURL()} /> here once
-  // react-native-webrtc is wired (T2.05 media seam).
+  // Remote camera (the person you're talking to) fills the top of the card;
+  // the local self-view is a small mirrored tile above it.
+  remote: { width: 260, height: 320, borderRadius: 12, backgroundColor: "#000", marginBottom: 12 },
   preview: { width: 120, height: 160, borderRadius: 10, backgroundColor: "#222", marginBottom: 14 },
 });

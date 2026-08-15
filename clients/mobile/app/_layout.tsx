@@ -1,9 +1,15 @@
+import { registerGlobals } from "@livekit/react-native";
 import { Stack } from "expo-router";
 import { StatusBar } from "expo-status-bar";
 import { CallOverlay } from "../src/call/CallOverlay";
 import { CallProvider } from "../src/call/CallContext";
 import { MediaProvider } from "../src/ui/media/MediaContext";
 import { ServicesProvider } from "../src/ui/ServicesContext";
+
+// LiveKit/react-native-webrtc install their WebRTC globals (RTCPeerConnection,
+// mediaDevices, MediaStream, …) here — once, at module load, before any call
+// code runs. Without this the LiveKit Room throws the moment a call connects.
+registerGlobals();
 
 // Root layout: boot services once, then a native stack. Route groups (auth)/
 // (app) are transparent in URLs — screens live at /login, /verify, /chats,

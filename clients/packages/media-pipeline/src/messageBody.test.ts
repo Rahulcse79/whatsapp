@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MediaEnvelope } from "./envelope";
 import type { LinkPreview } from "./linkPreview";
-import { encodeMediaMessage, encodeReaction, encodeTextMessage, parseMediaMessage, parseReaction, parseTextMessage } from "./messageBody";
+import { encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, parseMediaMessage, parsePoll, parseReaction, parseTextMessage } from "./messageBody";
 
 const env: MediaEnvelope = {
   objectKey: "media/x",
@@ -79,5 +79,17 @@ describe("encode/parseReaction (T5.05b)", () => {
     expect(parseReaction("just text")).toBeNull();
     expect(parseReaction(encodeTextMessage("hi"))).toBeNull();
     expect(parseReaction("{not json")).toBeNull();
+  });
+});
+
+describe("encode/parsePoll (T6.02)", () => {
+  it("round-trips a poll body", () => {
+    const body = encodePoll("p1", "Lunch?", ["Pizza", "Sushi"], true);
+    expect(parsePoll(body)).toEqual({ pollId: "p1", question: "Lunch?", options: ["Pizza", "Sushi"], multi: true });
+  });
+  it("defaults multi to false and returns null for non-poll bodies", () => {
+    expect(parsePoll(encodePoll("p2", "Q", ["a", "b"], false))?.multi).toBe(false);
+    expect(parsePoll("just text")).toBeNull();
+    expect(parsePoll(encodeSticker("k", "😀"))).toBeNull();
   });
 });

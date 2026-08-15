@@ -1096,3 +1096,67 @@ body {
 .sticker-cell:hover {
   background: var(--line);
 }
+
+/* ── Polls (T6.02) ────────────────────────────────────────────────────────── */
+.poll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 240px;
+  max-width: 320px;
+}
+.poll-q {
+  font-weight: 600;
+}
+.poll-options {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.poll-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  overflow: hidden;
+  text-align: left;
+}
+.poll-option:disabled {
+  cursor: default;
+}
+.poll-option.mine {
+  border-color: var(--brand);
+}
+.poll-bar {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: color-mix(in srgb, var(--brand) 16%, transparent);
+  transition: width 0.3s ease;
+  z-index: 0;
+}
+.poll-opt-label {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.poll-opt-count {
+  position: relative;
+  z-index: 1;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.poll-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+}

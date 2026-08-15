@@ -104,6 +104,36 @@ export interface StickerRef {
   emoji: string;
 }
 
+/** PollBody is a sent poll's E2EE content: the poll id (server-registered
+ *  lifecycle handle) plus the question and option TEXTS (which the server never
+ *  sees — it stores only the option count + votes by index). */
+export interface PollBody {
+  pollId: string;
+  question: string;
+  options: string[];
+  multi: boolean;
+}
+
+/** encodePoll seals a poll message body. */
+export function encodePoll(pollId: string, question: string, options: string[], multi: boolean): string {
+  return JSON.stringify({ t: "poll", v: 1, id: pollId, q: question, o: options, m: multi });
+}
+
+/** parsePoll reads a poll message body, or null if it isn't one. */
+export function parsePoll(body: string): PollBody | null {
+  if (!body || body.charAt(0) !== "{") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const o = parsed as Record<string, unknown>;
+  if (o.t !== "poll" || typeof o.id !== "string" || typeof o.q !== "string" || !Array.isArray(o.o)) return null;
+  return { pollId: o.id, question: o.q, options: o.o.filter((x): x is string => typeof x === "string"), multi: o.m === true };
+}
+
 /** encodeSticker seals a sticker message body. */
 export function encodeSticker(objectKey: string, emoji: string): string {
   return JSON.stringify({ t: "sticker", v: 1, k: objectKey, e: emoji });

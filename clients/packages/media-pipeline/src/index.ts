@@ -66,6 +66,9 @@ export {
   encodeSticker,
   parseSticker,
   type StickerRef,
+  encodePoll,
+  parsePoll,
+  type PollBody,
   type MediaMessageBody,
   type TextMessageBody,
 } from "./messageBody";

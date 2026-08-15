@@ -17,7 +17,7 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
+import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
@@ -166,6 +166,18 @@ export interface StickerPackInfo {
   author: string;
   animated: boolean;
   stickers?: StickerItem[];
+}
+
+/** PollResults mirrors GET /v1/polls/{id} — the index-based tally the server
+ *  keeps (option TEXTS stay client-side/E2EE). */
+export interface PollResults {
+  pollId: string;
+  closed: boolean;
+  optionCount: number;
+  multi: boolean;
+  totalVoters: number;
+  tallies: number[]; // voters per option index
+  myVotes: number[]; // the caller's chosen indices
 }
 
 /** CallSignalHandler receives the WS call-signaling frames (dev.{id}.call),
@@ -394,6 +406,59 @@ export class AppServices {
     await this.db.enqueueText({ conversationId, text: body, listText: `📎 ${file.name}`, clientRef: newId(), now: Date.now() });
     this.notifyChange();
     await this.ws?.flush();
+  }
+
+  // ── polls (T6.02) ─────────────────────────────────────────────────────────
+
+  /** createPoll registers the poll's lifecycle server-side (option count + multi
+   *  only — E2EE keeps the question/options off the server), then sends the
+   *  sealed poll message carrying poll_id + the question and options. */
+  async createPoll(conversationId: string, question: string, options: string[], multi: boolean): Promise<void> {
+    const res = (await this.authedJson("/v1/polls", {
+      conversation_id: conversationId,
+      option_count: options.length,
+      multi,
+    })) as { poll_id: string };
+    const body = encodePoll(res.poll_id, question, options, multi);
+    await this.db.enqueueText({ conversationId, text: body, listText: `📊 ${question}`, clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** votePoll records my chosen option indices and returns the fresh tally. */
+  async votePoll(pollId: string, indices: number[]): Promise<PollResults> {
+    await this.authedJson(`/v1/polls/${encodeURIComponent(pollId)}/vote`, { option_indices: indices });
+    return this.pollResults(pollId);
+  }
+
+  /** closePoll ends voting (creator-only, enforced server-side). */
+  async closePoll(pollId: string): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/polls/${encodeURIComponent(pollId)}/close`);
+    if (!res.ok) throw new Error("Couldn't close the poll.");
+  }
+
+  /** pollResults fetches the current tally + my selection. */
+  async pollResults(pollId: string): Promise<PollResults> {
+    const res = await this.authedRequest("GET", `/v1/polls/${encodeURIComponent(pollId)}`);
+    if (!res.ok) throw new Error("Couldn't load the poll.");
+    const b = (await res.json()) as {
+      poll_id: string;
+      closed: boolean;
+      option_count: number;
+      multi: boolean;
+      total_voters: number;
+      tallies: number[];
+      my_votes: number[];
+    };
+    return {
+      pollId: b.poll_id,
+      closed: b.closed,
+      optionCount: b.option_count,
+      multi: b.multi,
+      totalVoters: b.total_voters,
+      tallies: b.tallies ?? [],
+      myVotes: b.my_votes ?? [],
+    };
   }
 
   // ── rich composer: GIF proxy + stickers (T6.01) ───────────────────────────

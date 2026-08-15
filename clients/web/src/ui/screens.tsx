@@ -9,10 +9,12 @@ import {
 import {
   classifyMedia,
   parseMediaMessage,
+  parsePoll,
   parseSticker,
   parseTextMessage,
   type LinkPreview,
   type MediaEnvelope,
+  type PollBody,
   type QuotedRef,
 } from "@wa/media-pipeline";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
@@ -26,7 +28,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { CallHistoryItem, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -1960,6 +1962,127 @@ function ForwardPicker({ exclude, onPick, onClose }: { exclude: string; onPick: 
   );
 }
 
+/** PollBubble renders a poll message: options with live tallies + vote toggles,
+ *  and a Close control for the creator. Results (index-based) come from the
+ *  server; option TEXTS are from the decrypted body (E2EE). */
+function PollBubble({ poll, mine }: { poll: PollBody; mine: boolean }) {
+  const { services } = useServices();
+  const [res, setRes] = useState<PollResults | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(() => {
+    void services.pollResults(poll.pollId).then(setRes).catch(() => {});
+  }, [services, poll.pollId]);
+  useEffect(() => {
+    load();
+    return services.onChange(load); // refresh on any store change
+  }, [load, services]);
+
+  const vote = (i: number): void => {
+    if (busy || res?.closed) return;
+    let next: number[];
+    if (poll.multi) {
+      const set = new Set(res?.myVotes ?? []);
+      if (set.has(i)) set.delete(i);
+      else set.add(i);
+      next = [...set];
+      if (next.length === 0) return; // server rejects an empty vote; keep the last
+    } else {
+      next = [i];
+    }
+    setBusy(true);
+    void services
+      .votePoll(poll.pollId, next)
+      .then(setRes)
+      .catch((e) => window.alert(messageOf(e)))
+      .finally(() => setBusy(false));
+  };
+
+  const total = res?.totalVoters ?? 0;
+  return (
+    <div className="poll">
+      <div className="poll-q">📊 {poll.question}</div>
+      <div className="poll-options">
+        {poll.options.map((opt, i) => {
+          const count = res?.tallies[i] ?? 0;
+          const isMine = res?.myVotes.includes(i) ?? false;
+          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+          return (
+            <button key={i} className={`poll-option${isMine ? " mine" : ""}`} disabled={busy || res?.closed} onClick={() => vote(i)}>
+              <span className="poll-bar" style={{ width: `${pct}%` }} aria-hidden />
+              <span className="poll-opt-label">{isMine ? "✓ " : ""}{opt}</span>
+              <span className="poll-opt-count">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="poll-foot">
+        <span className="muted">
+          {total} vote{total === 1 ? "" : "s"}
+          {poll.multi ? " · multiple" : ""}
+          {res?.closed ? " · closed" : ""}
+        </span>
+        {mine && res && !res.closed ? (
+          <button
+            className="btn small ghost"
+            onClick={() => {
+              if (window.confirm("Close this poll? No more votes will be accepted.")) {
+                void services.closePoll(poll.pollId).then(load).catch((e) => window.alert(messageOf(e)));
+              }
+            }}
+          >
+            Close poll
+          </button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+/** PollComposer collects a question + 2–12 options + a multi toggle. */
+function PollComposer({ onCreate, onClose }: { onCreate: (question: string, options: string[], multi: boolean) => void; onClose: () => void }) {
+  const [question, setQuestion] = useState("");
+  const [options, setOptions] = useState<string[]>(["", ""]);
+  const [multi, setMulti] = useState(false);
+  const cleaned = options.map((o) => o.trim()).filter((o) => o !== "");
+  const valid = question.trim() !== "" && cleaned.length >= 2;
+  const setOpt = (i: number, v: string): void => setOptions((os) => os.map((o, j) => (j === i ? v : o)));
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Create poll</strong>
+        <input className="input" placeholder="Ask a question" value={question} autoFocus onChange={(e) => setQuestion(e.target.value)} />
+        {options.map((o, i) => (
+          <div key={i} style={{ display: "flex", gap: 6 }}>
+            <input className="input" placeholder={`Option ${i + 1}`} value={o} onChange={(e) => setOpt(i, e.target.value)} />
+            {options.length > 2 ? (
+              <button className="btn small ghost" aria-label="Remove option" onClick={() => setOptions((os) => os.filter((_, j) => j !== i))}>
+                ×
+              </button>
+            ) : null}
+          </div>
+        ))}
+        {options.length < 12 ? (
+          <button className="btn small ghost" onClick={() => setOptions((os) => [...os, ""])}>
+            ＋ Add option
+          </button>
+        ) : null}
+        <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: "0.9rem" }}>
+          <input type="checkbox" checked={multi} onChange={(e) => setMulti(e.target.checked)} /> Allow multiple answers
+        </label>
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="btn ghost" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="btn" disabled={!valid} onClick={() => onCreate(question.trim(), cleaned, multi)}>
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function Thread({
   conversationId,
   onBack,
@@ -1984,6 +2107,7 @@ export function Thread({
   const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
   const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | null>(null); // composer picker
+  const [showPoll, setShowPoll] = useState(false); // poll-creation modal
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLInputElement>(null);
   const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -2305,6 +2429,15 @@ export function Thread({
           onClose={() => setForwardMsg(null)}
         />
       ) : null}
+      {showPoll ? (
+        <PollComposer
+          onClose={() => setShowPoll(false)}
+          onCreate={(question, options, multi) => {
+            setShowPoll(false);
+            void services.createPoll(conversationId, question, options, multi).catch((e) => window.alert(messageOf(e)));
+          }}
+        />
+      ) : null}
       {replyingTo || editing ? (
         <div className="reply-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border, #e2e2e2)", fontSize: "0.82rem" }}>
           <span style={{ flex: 1, opacity: 0.8 }}>
@@ -2367,6 +2500,9 @@ export function Thread({
             </button>
             <button className="btn small ghost" type="button" aria-label="Sticker" title="Stickers" disabled={!!editing} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))}>
               🏷
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Poll" title="Create a poll" disabled={!!editing} onClick={() => setShowPoll(true)}>
+              📊
             </button>
             <button
               className="btn small ghost"
@@ -2431,6 +2567,10 @@ const DELETE_WINDOW_MS = 48 * 60 * 60 * 1000; // FR-MSG-05
 function snippetOf(m: ThreadMessage): string {
   if (m.deleted) return "deleted message";
   if (parseMediaMessage(m.body)) return "📎 Media";
+  const sticker = parseSticker(m.body);
+  if (sticker) return `${sticker.emoji} Sticker`;
+  const poll = parsePoll(m.body);
+  if (poll) return `📊 ${poll.question}`;
   return parseTextMessage(m.body).text.slice(0, 80);
 }
 
@@ -2454,9 +2594,10 @@ function MessageBubble({
   const [menu, setMenu] = useState(false);
   const media = message.deleted ? null : parseMediaMessage(message.body);
   const sticker = media || message.deleted ? null : parseSticker(message.body);
-  const text = media || sticker || message.deleted ? null : parseTextMessage(message.body);
+  const poll = media || sticker || message.deleted ? null : parsePoll(message.body);
+  const text = media || sticker || poll || message.deleted ? null : parseTextMessage(message.body);
   const age = Date.now() - message.createdAt;
-  const canEdit = message.mine && !message.deleted && !media && !sticker && age < EDIT_WINDOW_MS;
+  const canEdit = message.mine && !message.deleted && !media && !sticker && !poll && age < EDIT_WINDOW_MS;
   const canDeleteAll = message.mine && !message.deleted && age < DELETE_WINDOW_MS;
 
   const run = (fn: (m: ThreadMessage) => void) => () => {
@@ -2531,6 +2672,8 @@ function MessageBubble({
         </>
       ) : sticker ? (
         <span className="sticker-msg" role="img" aria-label="sticker">{sticker.emoji}</span>
+      ) : poll ? (
+        <PollBubble poll={poll} mine={message.mine} />
       ) : (
         <>
           <span>{message.deleted ? <em style={{ opacity: 0.7 }}>This message was deleted</em> : text ? <RichText text={text.text} /> : null}</span>

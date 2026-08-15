@@ -134,6 +134,41 @@ export interface LinkedDevice {
 }
 
 /** ChannelInfo is the client view of a broadcast channel. */
+/** CommunityInfo mirrors GET /v1/communities/{id} (T8.02). */
+export interface CommunityInfo {
+  id: string;
+  name: string;
+  description: string;
+  kind: string; // public | private
+  announcementGroupId: string;
+  memberCount: number;
+  groupCount: number;
+  myRole: string; // owner | admin | member | "" (not a member)
+}
+
+/** CommunitySummary is one discover/search row. */
+export interface CommunitySummary {
+  id: string;
+  name: string;
+  description: string;
+  memberCount: number;
+}
+
+/** CommunityMember is one membership row. */
+export interface CommunityMember {
+  userId: string;
+  role: string;
+}
+
+/** CommunityEvent is one shared-calendar entry. */
+export interface CommunityEvent {
+  id: string;
+  title: string;
+  description: string;
+  startsAtMs: number;
+  createdBy: string;
+}
+
 export interface ChannelInfo {
   id: string;
   handle: string;
@@ -1676,6 +1711,130 @@ export class AppServices {
     const b = (await res.json()) as { payment_ref: string };
     this.notifyChange();
     return b.payment_ref;
+  }
+
+  // ── communities (T8.02) ───────────────────────────────────────────────────
+
+  private toCommunity(c: {
+    id: string;
+    name: string;
+    description?: string;
+    kind: string;
+    announcement_group_id: string;
+    member_count: number;
+    group_count: number;
+    my_role?: string;
+  }): CommunityInfo {
+    return {
+      id: c.id,
+      name: c.name,
+      description: c.description ?? "",
+      kind: c.kind,
+      announcementGroupId: c.announcement_group_id,
+      memberCount: c.member_count,
+      groupCount: c.group_count,
+      myRole: c.my_role ?? "",
+    };
+  }
+
+  private toCommunitySummary(c: { id: string; name: string; description?: string; member_count: number }): CommunitySummary {
+    return { id: c.id, name: c.name, description: c.description ?? "", memberCount: c.member_count };
+  }
+
+  /** createCommunity registers a community (+ its announcement group). Returns id. */
+  async createCommunity(name: string, description: string, kind: "public" | "private"): Promise<string> {
+    const res = await this.authedRequest("POST", "/v1/communities", { name, description, kind });
+    if (!res.ok) throw new Error("Couldn't create the community — check the fields.");
+    const b = (await res.json()) as { id: string };
+    this.notifyChange();
+    return b.id;
+  }
+
+  async getCommunity(id: string): Promise<CommunityInfo> {
+    const res = await this.authedRequest("GET", `/v1/communities/${id}`);
+    if (!res.ok) throw new Error("Couldn't load the community.");
+    return this.toCommunity((await res.json()) as Parameters<AppServices["toCommunity"]>[0]);
+  }
+
+  async discoverCommunities(): Promise<CommunitySummary[]> {
+    const res = await this.authedRequest("GET", "/v1/communities/discover?limit=50");
+    if (!res.ok) return [];
+    const b = (await res.json()) as { communities?: Parameters<AppServices["toCommunitySummary"]>[0][] };
+    return (b.communities ?? []).map((c) => this.toCommunitySummary(c));
+  }
+
+  async searchCommunities(query: string): Promise<CommunitySummary[]> {
+    const res = await this.authedRequest("GET", `/v1/communities/search?q=${encodeURIComponent(query)}`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { communities?: Parameters<AppServices["toCommunitySummary"]>[0][] };
+    return (b.communities ?? []).map((c) => this.toCommunitySummary(c));
+  }
+
+  async joinCommunity(id: string): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/communities/${id}/join`);
+    if (!res.ok) throw new Error("Couldn't join the community.");
+    this.notifyChange();
+  }
+  async leaveCommunity(id: string): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/communities/${id}/leave`);
+    if (!res.ok) throw new Error("Couldn't leave the community.");
+    this.notifyChange();
+  }
+  async deleteCommunity(id: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/communities/${id}`);
+    if (!res.ok) throw new Error("Couldn't delete the community.");
+    this.notifyChange();
+  }
+
+  async communityMembers(id: string): Promise<CommunityMember[]> {
+    const res = await this.authedRequest("GET", `/v1/communities/${id}/members`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { members?: { user_id: string; role: string }[] };
+    return (b.members ?? []).map((m) => ({ userId: m.user_id, role: m.role }));
+  }
+  async setCommunityRole(id: string, userId: string, role: "member" | "admin"): Promise<void> {
+    const res = await this.authedRequest("PUT", `/v1/communities/${id}/members/${userId}/role`, { role });
+    if (!res.ok) throw new Error("Couldn't change the role.");
+    this.notifyChange();
+  }
+  async removeCommunityMember(id: string, userId: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/communities/${id}/members/${userId}`);
+    if (!res.ok) throw new Error("Couldn't remove the member.");
+    this.notifyChange();
+  }
+
+  async communityGroupIds(id: string): Promise<string[]> {
+    const res = await this.authedRequest("GET", `/v1/communities/${id}/groups`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { group_ids?: string[] };
+    return b.group_ids ?? [];
+  }
+  async addCommunityGroup(id: string, groupId: string): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/communities/${id}/groups`, { group_id: groupId });
+    if (!res.ok) throw new Error("Couldn't add the group.");
+    this.notifyChange();
+  }
+  async removeCommunityGroup(id: string, groupId: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/communities/${id}/groups/${groupId}`);
+    if (!res.ok) throw new Error("Couldn't remove the group.");
+    this.notifyChange();
+  }
+
+  async communityEvents(id: string): Promise<CommunityEvent[]> {
+    const res = await this.authedRequest("GET", `/v1/communities/${id}/events`);
+    if (!res.ok) return [];
+    const b = (await res.json()) as { events?: { id: string; title: string; description?: string; starts_at_ms: number; created_by: string }[] };
+    return (b.events ?? []).map((e) => ({ id: e.id, title: e.title, description: e.description ?? "", startsAtMs: e.starts_at_ms, createdBy: e.created_by }));
+  }
+  async createCommunityEvent(id: string, title: string, description: string, startsAtMs: number): Promise<void> {
+    const res = await this.authedRequest("POST", `/v1/communities/${id}/events`, { title, description, starts_at_ms: startsAtMs });
+    if (!res.ok) throw new Error("Couldn't create the event.");
+    this.notifyChange();
+  }
+  async deleteCommunityEvent(id: string, eventId: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/communities/${id}/events/${eventId}`);
+    if (!res.ok) throw new Error("Couldn't delete the event.");
+    this.notifyChange();
   }
 
   /** isPeerTyping — the peer sent a typing signal within the last few seconds. */

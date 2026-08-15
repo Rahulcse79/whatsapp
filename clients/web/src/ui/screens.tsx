@@ -35,7 +35,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -490,6 +490,7 @@ export function ChatList({
   onCalls,
   onStatus,
   onChannels,
+  onCommunities,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -500,6 +501,7 @@ export function ChatList({
   onCalls: () => void;
   onStatus: () => void;
   onChannels: () => void;
+  onCommunities: () => void;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
@@ -611,6 +613,9 @@ export function ChatList({
           </button>
           <button className="btn small ghost" onClick={onChannels} aria-label="Channels">
             📢 Channels
+          </button>
+          <button className="btn small ghost" onClick={onCommunities} aria-label="Communities">
+            🏘️ Communities
           </button>
           <button className="btn small ghost" onClick={onStatus} aria-label="Status updates">
             ⭕ Status
@@ -2624,6 +2629,310 @@ function PollComposer({ onCreate, onClose }: { onCreate: (question: string, opti
         </div>
       </div>
     </div>
+  );
+}
+
+/** Communities screen (T8.02): discover/search public communities, or create one. */
+export function Communities({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () => void }) {
+  const { services } = useServices();
+  const [tab, setTab] = useState<"discover" | "create">("discover");
+  const [query, setQuery] = useState("");
+  const [discover, setDiscover] = useState<CommunitySummary[]>([]);
+  const [results, setResults] = useState<CommunitySummary[]>([]);
+  const [name, setName] = useState("");
+  const [description, setDescription] = useState("");
+  const [kind, setKind] = useState<"public" | "private">("public");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    services.discoverCommunities().then((c) => alive && setDiscover(c)).catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [services]);
+
+  useEffect(() => {
+    if (query.trim().length < 2) {
+      setResults([]);
+      return;
+    }
+    let alive = true;
+    const h = setTimeout(() => services.searchCommunities(query).then((r) => alive && setResults(r)).catch(() => {}), 200);
+    return () => {
+      alive = false;
+      clearTimeout(h);
+    };
+  }, [query, services]);
+
+  async function create(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      onOpen(await services.createCommunity(name.trim(), description.trim(), kind));
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>Communities</h1>
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem" }}>
+        <button className={tab === "discover" ? "btn small" : "btn small ghost"} onClick={() => setTab("discover")}>
+          Discover
+        </button>
+        <button className={tab === "create" ? "btn small" : "btn small ghost"} onClick={() => setTab("create")}>
+          ＋ Create
+        </button>
+      </div>
+
+      {tab === "discover" ? (
+        <>
+          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search communities by name…" aria-label="Search communities" />
+          {query.trim().length >= 2 ? (
+            results.length === 0 ? (
+              <p className="muted">No communities found.</p>
+            ) : (
+              <ul className="list">{results.map((c) => communityRow(c, onOpen))}</ul>
+            )
+          ) : (
+            <>
+              <h2 style={{ marginTop: "1rem" }}>Popular</h2>
+              {discover.length === 0 ? <p className="muted">No communities yet — create the first one.</p> : <ul className="list">{discover.map((c) => communityRow(c, onOpen))}</ul>}
+            </>
+          )}
+        </>
+      ) : (
+        <>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>Name</span>
+            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Community" maxLength={80} />
+          </label>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>Description</span>
+            <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's it about?" maxLength={500} />
+          </label>
+          <label style={fieldWrap}>
+            <span className="muted" style={fieldLabel}>Visibility</span>
+            <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "public" | "private")}>
+              <option value="public">Public — anyone can find &amp; join</option>
+              <option value="private">Private — invite-only</option>
+            </select>
+          </label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button className="btn" onClick={() => void create()} disabled={busy || !name.trim()}>
+            {busy ? "Creating…" : "Create community"}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+function communityRow(c: CommunitySummary, onOpen: (id: string) => void): ReactNode {
+  return (
+    <li key={c.id} className="row" role="button" tabIndex={0} onClick={() => onOpen(c.id)} onKeyDown={onActivate(() => onOpen(c.id))}>
+      <div className="row-title">🏘️ {c.name}</div>
+      <div className="row-sub">
+        {c.memberCount} member{c.memberCount === 1 ? "" : "s"}
+        {c.description ? ` · ${c.description}` : ""}
+      </div>
+    </li>
+  );
+}
+
+/** CommunityScreen (T8.02): a community's home — announcements, grouped groups,
+ *  shared calendar, members/roles, and admin moderation. */
+export function CommunityScreen({ communityId, onBack, onOpenGroup }: { communityId: string; onBack: () => void; onOpenGroup: (groupId: string) => void }) {
+  const { services } = useServices();
+  const [community, setCommunity] = useState<CommunityInfo | null>(null);
+  const [groupIds, setGroupIds] = useState<string[]>([]);
+  const [events, setEvents] = useState<CommunityEvent[]>([]);
+  const [members, setMembers] = useState<CommunityMember[]>([]);
+  const [evTitle, setEvTitle] = useState("");
+  const [evWhen, setEvWhen] = useState("");
+  const [addGroupOpen, setAddGroupOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    void services.getCommunity(communityId).then(setCommunity).catch(() => {});
+    void services.communityGroupIds(communityId).then((ids) => {
+      setGroupIds(ids);
+      for (const id of ids) void services.loadGroup(id).catch(() => {}); // resolve names
+    }).catch(() => {});
+    void services.communityEvents(communityId).then(setEvents).catch(() => {});
+    void services.communityMembers(communityId).then(setMembers).catch(() => {});
+  }, [services, communityId]);
+  useEffect(() => {
+    load();
+    return services.onChange(load);
+  }, [load, services]);
+
+  if (!community) return <p className="muted center">Loading…</p>;
+  const isAdmin = community.myRole === "owner" || community.myRole === "admin";
+  const isOwner = community.myRole === "owner";
+  const isMember = community.myRole !== "";
+
+  const guard = (fn: () => Promise<void>) => (): void => {
+    setError(null);
+    void fn().catch((e) => setError(messageOf(e)));
+  };
+
+  async function createEvent(): Promise<void> {
+    const title = evTitle.trim();
+    const ms = evWhen ? new Date(evWhen).getTime() : 0;
+    if (!title || !ms) return;
+    await services.createCommunityEvent(communityId, title, "", ms);
+    setEvTitle("");
+    setEvWhen("");
+  }
+
+  return (
+    <div className="card">
+      <button type="button" className="btn small" onClick={onBack}>
+        ‹ Back
+      </button>
+      <h1>🏘️ {community.name}</h1>
+      <p className="muted" style={{ marginTop: "-0.4rem" }}>
+        {community.kind} · {community.memberCount} member{community.memberCount === 1 ? "" : "s"} · {community.groupCount} group{community.groupCount === 1 ? "" : "s"}
+        {community.myRole ? ` · you: ${community.myRole}` : ""}
+      </p>
+      {community.description ? <p>{community.description}</p> : null}
+      {error && <p className="error" role="alert">{error}</p>}
+
+      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
+        {!isMember ? (
+          <button className="btn small" onClick={guard(() => services.joinCommunity(communityId))}>Join</button>
+        ) : !isOwner ? (
+          <button className="btn small ghost" onClick={guard(() => services.leaveCommunity(communityId))}>Leave</button>
+        ) : null}
+        {isOwner ? (
+          <button className="btn small danger" onClick={() => { if (window.confirm("Delete this community? This can't be undone.")) guard(() => services.deleteCommunity(communityId).then(onBack))(); }}>
+            🗑 Delete
+          </button>
+        ) : null}
+      </div>
+
+      <h2 style={{ marginTop: "1rem" }}>📢 Announcements</h2>
+      <button className="btn small ghost" onClick={() => onOpenGroup(community.announcementGroupId)}>
+        Open announcement group ›
+      </button>
+
+      <h2 style={{ marginTop: "1.2rem" }}>Groups ({groupIds.length})</h2>
+      {groupIds.length === 0 ? <p className="muted" style={{ fontSize: "0.85rem" }}>No groups linked yet.</p> : null}
+      <ul className="list">
+        {groupIds.map((gid) => (
+          <li key={gid} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div className="row-title" style={{ flex: 1, cursor: "pointer" }} role="button" tabIndex={0} onClick={() => onOpenGroup(gid)} onKeyDown={onActivate(() => onOpenGroup(gid))}>
+              👥 {services.groupNameOf(gid) || gid.slice(0, 12)}
+            </div>
+            {isAdmin ? (
+              <button className="btn small ghost" aria-label="Unlink group" onClick={guard(() => services.removeCommunityGroup(communityId, gid))}>
+                Remove
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {isAdmin ? (
+        <>
+          <button className="btn small ghost" onClick={() => setAddGroupOpen((v) => !v)}>＋ Add a group</button>
+          {addGroupOpen ? (
+            <GroupLinkPicker
+              excludeIds={groupIds}
+              onPick={(gid) => {
+                setAddGroupOpen(false);
+                guard(() => services.addCommunityGroup(communityId, gid))();
+              }}
+            />
+          ) : null}
+        </>
+      ) : null}
+
+      <h2 style={{ marginTop: "1.2rem" }}>📅 Events</h2>
+      {events.length === 0 ? <p className="muted" style={{ fontSize: "0.85rem" }}>No upcoming events.</p> : null}
+      <ul className="list">
+        {events.map((e) => (
+          <li key={e.id} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div className="row-title">{e.title}</div>
+              <div className="row-sub">{new Date(e.startsAtMs).toLocaleString()}</div>
+            </div>
+            {isAdmin ? (
+              <button className="btn small ghost" aria-label="Delete event" onClick={guard(() => services.deleteCommunityEvent(communityId, e.id))}>
+                🗑
+              </button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {isAdmin ? (
+        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+          <input className="input" placeholder="Event title" value={evTitle} onChange={(e) => setEvTitle(e.target.value)} />
+          <input className="input" type="datetime-local" value={evWhen} style={{ maxWidth: 210 }} onChange={(e) => setEvWhen(e.target.value)} />
+          <button className="btn small" disabled={!evTitle.trim() || !evWhen} onClick={() => void createEvent()}>Add</button>
+        </div>
+      ) : null}
+
+      {isMember ? (
+        <>
+          <h2 style={{ marginTop: "1.2rem" }}>Members ({members.length})</h2>
+          <ul className="list">
+            {members.map((m) => (
+              <li key={m.userId} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="row-title">{services.nameForUser(m.userId)}</div>
+                  <div className="row-sub">{m.role}</div>
+                </div>
+                {isOwner && m.role !== "owner" ? (
+                  <button
+                    className="btn small ghost"
+                    onClick={guard(() => services.setCommunityRole(communityId, m.userId, m.role === "admin" ? "member" : "admin"))}
+                  >
+                    {m.role === "admin" ? "Demote" : "Make admin"}
+                  </button>
+                ) : null}
+                {isAdmin && m.role !== "owner" ? (
+                  <button className="btn small ghost" aria-label="Remove member" onClick={guard(() => services.removeCommunityMember(communityId, m.userId))}>
+                    Remove
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** GroupLinkPicker lists the user's group conversations to link into a community. */
+function GroupLinkPicker({ excludeIds, onPick }: { excludeIds: string[]; onPick: (groupId: string) => void }) {
+  const { services } = useServices();
+  const [items, setItems] = useState<ChatSummary[]>([]);
+  useEffect(() => {
+    void services.conversations().then((cs) => {
+      setItems(cs);
+      for (const c of cs) services.ensureConversationKind(c.conversationId);
+    }).catch(() => {});
+  }, [services]);
+  const groups = items.filter((c) => services.groupNameOf(c.conversationId) && !excludeIds.includes(c.conversationId));
+  if (groups.length === 0) return <p className="muted" style={{ fontSize: "0.85rem" }}>No groups of yours to add.</p>;
+  return (
+    <ul className="list" style={{ maxHeight: "30vh" }}>
+      {groups.map((c) => (
+        <li key={c.conversationId} className="row" role="button" tabIndex={0} onClick={() => onPick(c.conversationId)} onKeyDown={onActivate(() => onPick(c.conversationId))}>
+          <div className="row-title">👥 {services.groupNameOf(c.conversationId)}</div>
+        </li>
+      ))}
+    </ul>
   );
 }
 

@@ -3,7 +3,7 @@ import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import type { NotificationEntry } from "./services/appServices";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { CallHistory, ChannelScreen, Channels, ChatList, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
+import { CallHistory, ChannelScreen, Channels, ChatList, Communities, CommunityScreen, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
 /** NotificationToasts shows a transient banner for each in-app notification
@@ -52,6 +52,8 @@ type Nav =
   | { name: "groupInfo"; conversationId: string }
   | { name: "channels" }
   | { name: "channel"; channelId: string }
+  | { name: "communities" }
+  | { name: "community"; communityId: string }
   | { name: "thread"; conversationId: string; focusMsgUuid?: string };
 
 function Router() {
@@ -77,6 +79,7 @@ function Router() {
         onCalls={() => setNav({ name: "calls" })}
         onStatus={() => setNav({ name: "status" })}
         onChannels={() => setNav({ name: "channels" })}
+        onCommunities={() => setNav({ name: "communities" })}
       />
     );
   }
@@ -94,6 +97,18 @@ function Router() {
   }
   if (nav.name === "channel") {
     return <ChannelScreen channelId={nav.channelId} onBack={() => setNav({ name: "channels" })} />;
+  }
+  if (nav.name === "communities") {
+    return <Communities onOpen={(communityId) => setNav({ name: "community", communityId })} onBack={() => setNav({ name: "chats" })} />;
+  }
+  if (nav.name === "community") {
+    return (
+      <CommunityScreen
+        communityId={nav.communityId}
+        onBack={() => setNav({ name: "communities" })}
+        onOpenGroup={(conversationId) => setNav({ name: "thread", conversationId })}
+      />
+    );
   }
   if (nav.name === "calls") {
     return <CallHistory onBack={() => setNav({ name: "chats" })} />;

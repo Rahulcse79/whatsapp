@@ -17,7 +17,7 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeTextMessage, generateLinkPreview, type QuotedRef } from "@wa/media-pipeline";
+import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeTextMessage, generateLinkPreview, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
@@ -174,6 +174,13 @@ export class AppServices {
   private readonly toastListeners = new Set<(n: NotificationEntry) => void>();
   private readonly typingByConv = new Map<string, number>(); // conversationId → typing-expiry ts
   private readonly presenceByUser = new Map<string, { online: boolean; lastSeenMs: number }>();
+  // ── chat conveniences (T5.15, client-local) ──
+  private readonly favoriteConvs = new Set<string>(); // pinned/favorite chats (localStorage)
+  private readonly archivedConvs = new Set<string>(); // archived chats (localStorage)
+  private readonly wallpaperByConv = new Map<string, string>(); // conversationId → wallpaper key
+  private readonly draftByConv = new Map<string, string>(); // conversationId → composer draft
+  // undo-send: a just-sent message is held for a short window before dispatch.
+  private pendingSend: { conversationId: string; text: string; reply?: QuotedRef; timer: ReturnType<typeof setTimeout> } | null = null;
 
   /** onChange fires whenever the local store changes (inbound messages, send
    *  acks, or a fresh send). Screens re-fetch on it so the open thread and the
@@ -192,6 +199,7 @@ export class AppServices {
     const worker = new Worker(new URL("../worker/db.worker.ts", import.meta.url), { type: "module" });
     this.db = createDbClient(worker);
     this.loadMuteState();
+    this.loadChatPrefs();
   }
 
   private loadMuteState(): void {
@@ -201,6 +209,36 @@ export class AppServices {
       this.globalMuted = localStorage.getItem("wa.mute.global") === "1";
     } catch {
       /* no persisted prefs — defaults (unmuted) */
+    }
+  }
+
+  private loadChatPrefs(): void {
+    try {
+      const fav = localStorage.getItem("wa.fav.convs");
+      if (fav) for (const id of JSON.parse(fav) as string[]) this.favoriteConvs.add(id);
+      const arch = localStorage.getItem("wa.archive.convs");
+      if (arch) for (const id of JSON.parse(arch) as string[]) this.archivedConvs.add(id);
+      const wp = localStorage.getItem("wa.wallpaper");
+      if (wp) for (const [id, key] of Object.entries(JSON.parse(wp) as Record<string, string>)) this.wallpaperByConv.set(id, key);
+      const dr = localStorage.getItem("wa.drafts");
+      if (dr) for (const [id, text] of Object.entries(JSON.parse(dr) as Record<string, string>)) this.draftByConv.set(id, text);
+    } catch {
+      /* no persisted prefs — defaults */
+    }
+  }
+
+  private persistSet(key: string, set: Set<string>): void {
+    try {
+      localStorage.setItem(key, JSON.stringify([...set]));
+    } catch {
+      /* ignore */
+    }
+  }
+  private persistMap(key: string, map: Map<string, string>): void {
+    try {
+      localStorage.setItem(key, JSON.stringify(Object.fromEntries(map)));
+    } catch {
+      /* ignore */
     }
   }
 
@@ -911,6 +949,98 @@ export class AppServices {
       /* ignore */
     }
     this.notifyChange();
+  }
+
+  // ── chat conveniences (T5.15) ─────────────────────────────────────────────
+
+  isFavorite(conversationId: string): boolean {
+    return this.favoriteConvs.has(conversationId);
+  }
+  toggleFavorite(conversationId: string): void {
+    if (this.favoriteConvs.has(conversationId)) this.favoriteConvs.delete(conversationId);
+    else this.favoriteConvs.add(conversationId);
+    this.persistSet("wa.fav.convs", this.favoriteConvs);
+    this.notifyChange();
+  }
+
+  isArchived(conversationId: string): boolean {
+    return this.archivedConvs.has(conversationId);
+  }
+  toggleArchive(conversationId: string): void {
+    if (this.archivedConvs.has(conversationId)) this.archivedConvs.delete(conversationId);
+    else this.archivedConvs.add(conversationId);
+    this.persistSet("wa.archive.convs", this.archivedConvs);
+    this.notifyChange();
+  }
+
+  /** chatWallpaper returns the per-chat wallpaper key (a preset name), or null. */
+  chatWallpaper(conversationId: string): string | null {
+    return this.wallpaperByConv.get(conversationId) ?? null;
+  }
+  setChatWallpaper(conversationId: string, key: string | null): void {
+    if (key) this.wallpaperByConv.set(conversationId, key);
+    else this.wallpaperByConv.delete(conversationId);
+    this.persistMap("wa.wallpaper", this.wallpaperByConv);
+    this.notifyChange();
+  }
+
+  /** draft returns the persisted composer draft for a conversation. */
+  draft(conversationId: string): string {
+    return this.draftByConv.get(conversationId) ?? "";
+  }
+  setDraft(conversationId: string, text: string): void {
+    if (text) this.draftByConv.set(conversationId, text);
+    else this.draftByConv.delete(conversationId);
+    this.persistMap("wa.drafts", this.draftByConv);
+  }
+
+  /** exportChat renders a conversation's decrypted messages as plain text for a
+   *  local download ("[time] Me/Peer: message"). Media/overlay rows are labelled. */
+  async exportChat(conversationId: string): Promise<string> {
+    const msgs = await this.thread(conversationId);
+    const title = this.groupOf(conversationId)?.name ?? this.profileCache.get(this.peerByConv.get(conversationId) ?? "")?.displayName ?? conversationId;
+    const lines = [`WhatsApp V2 — chat export: ${title}`, `Exported ${new Date().toISOString()}`, ""];
+    for (const m of msgs) {
+      const when = new Date(m.createdAt).toLocaleString();
+      const who = m.mine ? "Me" : title;
+      const text = m.deleted ? "(deleted)" : parseTextMessage(m.body).text || "(media)";
+      lines.push(`[${when}] ${who}: ${text}`);
+    }
+    return lines.join("\n");
+  }
+
+  // ── undo-send (T5.15): a sent message is buffered for `windowMs`; the UI shows
+  // an Undo bar. If not undone, it dispatches through the normal send path. Only
+  // one message is buffered — starting another (or navigating) flushes the prior.
+  sendTextWithUndo(conversationId: string, text: string, reply?: QuotedRef, windowMs = 5000): void {
+    this.flushPendingSend();
+    const timer = setTimeout(() => {
+      this.pendingSend = null;
+      void this.sendText(conversationId, text, reply);
+      this.notifyChange();
+    }, windowMs);
+    this.pendingSend = { conversationId, text, reply, timer };
+    this.notifyChange();
+  }
+  hasPendingSend(conversationId?: string): boolean {
+    return this.pendingSend !== null && (conversationId === undefined || this.pendingSend.conversationId === conversationId);
+  }
+  /** undoSend cancels the buffered message and returns its text (to restore to
+   *  the composer), or null if nothing was pending. */
+  undoSend(): string | null {
+    if (!this.pendingSend) return null;
+    clearTimeout(this.pendingSend.timer);
+    const { text } = this.pendingSend;
+    this.pendingSend = null;
+    this.notifyChange();
+    return text;
+  }
+  private flushPendingSend(): void {
+    if (!this.pendingSend) return;
+    clearTimeout(this.pendingSend.timer);
+    const { conversationId, text, reply } = this.pendingSend;
+    this.pendingSend = null;
+    void this.sendText(conversationId, text, reply);
   }
 
   /** onToast subscribes to in-app notification toasts (returns an unsubscribe). */

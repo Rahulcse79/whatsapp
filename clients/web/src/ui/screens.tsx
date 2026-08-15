@@ -16,6 +16,7 @@ import {
 } from "@wa/media-pipeline";
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
+import { getTheme, setTheme, type ThemeChoice } from "../theme";
 import { messageOf } from "./errors";
 import { useCall } from "../call/CallContext";
 import { DownloadsPanel } from "./media/DownloadsPanel";
@@ -488,6 +489,7 @@ export function ChatList({
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -514,6 +516,70 @@ export function ChatList({
       clearInterval(handle);
     };
   }, [services]);
+
+  const renderRow = (c: ChatSummary): ReactNode => {
+    const id = c.conversationId;
+    const unread = services.unreadCount(id);
+    const muted = services.isMuted(id);
+    const fav = services.isFavorite(id);
+    const archived = services.isArchived(id);
+    const stop = (fn: () => void) => (e: { stopPropagation: () => void }) => {
+      e.stopPropagation();
+      fn();
+    };
+    return (
+      <li
+        key={id}
+        className="row"
+        role="button"
+        tabIndex={0}
+        onClick={() => onOpen(id)}
+        onKeyDown={onActivate(() => onOpen(id))}
+        style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
+      >
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div className="row-title">
+            {fav && <span title="Favorite" style={{ marginRight: 4 }}>⭐</span>}
+            {services.groupNameOf(id) ? `👥 ${services.groupNameOf(id)}` : services.peerNameOf(id) || c.title}
+            {muted && <span title="Muted" style={{ marginLeft: 6, opacity: 0.6 }}>🔇</span>}
+          </div>
+          <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
+        </div>
+        {unread > 0 && (
+          <span
+            aria-label={`${unread} unread`}
+            style={{
+              background: muted ? "#9aa0a6" : "#25D366",
+              color: "#fff",
+              borderRadius: 999,
+              minWidth: 20,
+              height: 20,
+              padding: "0 6px",
+              fontSize: "0.72rem",
+              fontWeight: 700,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            {unread > 99 ? "99+" : unread}
+          </span>
+        )}
+        <span className="row-actions">
+          <button className={`icon-btn${fav ? " on" : ""}`} title={fav ? "Unfavorite" : "Favorite"} aria-label="Toggle favorite" onClick={stop(() => services.toggleFavorite(id))}>
+            {fav ? "★" : "☆"}
+          </button>
+          <button className={`icon-btn${archived ? " on" : ""}`} title={archived ? "Unarchive" : "Archive"} aria-label="Toggle archive" onClick={stop(() => services.toggleArchive(id))}>
+            🗄
+          </button>
+        </span>
+      </li>
+    );
+  };
+
+  const favorites = items.filter((c) => services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
+  const archived = items.filter((c) => services.isArchived(c.conversationId));
+  const normal = items.filter((c) => !services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
 
   return (
     <div className="pane">
@@ -547,49 +613,17 @@ export function ChatList({
         <p className="muted center">No conversations yet. Start one with ＋ New.</p>
       ) : (
         <ul className="list">
-          {items.map((c) => {
-            const unread = services.unreadCount(c.conversationId);
-            const muted = services.isMuted(c.conversationId);
-            return (
-              <li
-                key={c.conversationId}
-                className="row"
-                role="button"
-                tabIndex={0}
-                onClick={() => onOpen(c.conversationId)}
-                onKeyDown={onActivate(() => onOpen(c.conversationId))}
-                style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
-              >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="row-title">
-                    {services.groupNameOf(c.conversationId) ? `👥 ${services.groupNameOf(c.conversationId)}` : services.peerNameOf(c.conversationId) || c.title}
-                    {muted && <span title="Muted" style={{ marginLeft: 6, opacity: 0.6 }}>🔇</span>}
-                  </div>
-                  <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
-                </div>
-                {unread > 0 && (
-                  <span
-                    aria-label={`${unread} unread`}
-                    style={{
-                      background: muted ? "#9aa0a6" : "#25D366",
-                      color: "#fff",
-                      borderRadius: 999,
-                      minWidth: 20,
-                      height: 20,
-                      padding: "0 6px",
-                      fontSize: "0.72rem",
-                      fontWeight: 700,
-                      display: "inline-flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                    }}
-                  >
-                    {unread > 99 ? "99+" : unread}
-                  </span>
-                )}
-              </li>
-            );
-          })}
+          {favorites.length > 0 && <li className="list-section">Favorites</li>}
+          {favorites.map(renderRow)}
+          {favorites.length > 0 && normal.length > 0 && <li className="list-section">Chats</li>}
+          {normal.map(renderRow)}
+          {archived.length > 0 && (
+            <li className="list-section" role="button" tabIndex={0} onClick={() => setShowArchived((v) => !v)} onKeyDown={onActivate(() => setShowArchived((v) => !v))}>
+              <span>🗄 Archived ({archived.length})</span>
+              <span>{showArchived ? "▲" : "▼"}</span>
+            </li>
+          )}
+          {showArchived && archived.map(renderRow)}
         </ul>
       )}
     </div>
@@ -1616,6 +1650,7 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
     }
   });
   const [globalMute, setGlobalMute] = useState<boolean>(() => services.isGlobalMute());
+  const [theme, setThemeState] = useState<ThemeChoice>(() => getTheme());
   const [notifs, setNotifs] = useState<NotificationEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
   const myId = services.myDeviceId();
@@ -1687,7 +1722,27 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
       </button>
       <h1>Settings</h1>
 
-      <h2>Linked devices ({devices.length})</h2>
+      <h2>Appearance</h2>
+      <label className="row-flags" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+        <span>Theme</span>
+        <span className="segmented">
+          {(["system", "light", "dark"] as ThemeChoice[]).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={theme === t ? "active" : ""}
+              onClick={() => {
+                setTheme(t);
+                setThemeState(t);
+              }}
+            >
+              {t === "system" ? "System" : t === "light" ? "Light" : "Dark"}
+            </button>
+          ))}
+        </span>
+      </label>
+
+      <h2 style={{ marginTop: "1.5rem" }}>Linked devices ({devices.length})</h2>
       <p className="muted" style={{ fontSize: "0.8rem" }}>
         Devices signed in to your account. Revoke any you don't recognise.
       </p>
@@ -1815,6 +1870,50 @@ function highlightSnippet(snippet: string): ReactNode {
   return parts;
 }
 
+// Chat wallpaper presets (T5.15) — CSS backgrounds keyed by name; persisted
+// per-chat on-device. "none" clears back to the themed default.
+const WALLPAPERS: Record<string, string> = {
+  sage: "linear-gradient(160deg, #dfe9e3, #f6f9f7)",
+  dusk: "linear-gradient(160deg, #2b2f43, #4b5178)",
+  sand: "linear-gradient(160deg, #f3e9d8, #fbf6ec)",
+  ocean: "linear-gradient(160deg, #cfeef2, #eafbfd)",
+  rose: "linear-gradient(160deg, #f6dfe6, #fdf1f5)",
+  charcoal: "linear-gradient(160deg, #1b232a, #2a343d)",
+};
+
+/** WallpaperSheet lets the user pick a per-chat wallpaper (or clear it). */
+function WallpaperSheet({ current, onPick, onClose }: { current: string | null; onPick: (key: string | null) => void; onClose: () => void }) {
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Chat wallpaper</strong>
+        <div className="wallpaper-grid">
+          <button
+            className={`wallpaper-swatch${current === null ? " selected" : ""}`}
+            title="Default"
+            aria-label="Default wallpaper"
+            style={{ background: "var(--surface)" }}
+            onClick={() => onPick(null)}
+          />
+          {Object.entries(WALLPAPERS).map(([key, bg]) => (
+            <button
+              key={key}
+              className={`wallpaper-swatch${current === key ? " selected" : ""}`}
+              title={key}
+              aria-label={`${key} wallpaper`}
+              style={{ background: bg }}
+              onClick={() => onPick(key)}
+            />
+          ))}
+        </div>
+        <button className="btn ghost" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Thread({
   conversationId,
   onBack,
@@ -1834,7 +1933,11 @@ export function Thread({
   const [replyingTo, setReplyingTo] = useState<QuotedRef | null>(null);
   const [editing, setEditing] = useState<string | null>(null); // msgUuid being edited
   const [sendingMedia, setSendingMedia] = useState(false);
+  const [wallpaper, setWallpaperState] = useState<string | null>(() => services.chatWallpaper(conversationId));
+  const [showWallpaper, setShowWallpaper] = useState(false);
+  const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
   const fileRef = useRef<HTMLInputElement>(null);
+  const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const lastReadRef = useRef(0);
   const subscribedRef = useRef(false);
@@ -1845,6 +1948,8 @@ export function Thread({
     subscribedRef.current = false;
     services.setActiveConversation(conversationId); // clears unread + suppresses toasts here
     setMuted(services.isMuted(conversationId));
+    setDraft(services.draft(conversationId)); // restore the persisted composer draft
+    setWallpaperState(services.chatWallpaper(conversationId));
     setGroup(services.groupOf(conversationId) ?? null);
     // Classify the conversation: a group (name + settings for the header/composer)
     // or a 1:1 (peer presence). loadGroup 404s on direct chats → null.
@@ -1902,6 +2007,7 @@ export function Thread({
 
   function onDraftChange(v: string): void {
     setDraft(v);
+    services.setDraft(conversationId, v); // persist per-chat draft (T5.15)
     const now = Date.now();
     if (v && now - lastTypingRef.current > 3000) {
       lastTypingRef.current = now;
@@ -1914,19 +2020,53 @@ export function Thread({
     const text = draft.trim();
     if (!text) return;
     setDraft("");
+    services.setDraft(conversationId, ""); // clear the persisted draft
     lastTypingRef.current = 0;
     services.sendTyping(conversationId, false); // stop the typing indicator on send
     if (editing) {
       const target = editing;
       setEditing(null);
       await services.editMessage(conversationId, target, text);
+      setMessages(await services.thread(conversationId));
     } else {
       const reply = replyingTo ?? undefined;
       setReplyingTo(null);
-      await services.sendText(conversationId, text, reply);
+      // Undo-send: hold the message for a short window; the Undo bar can cancel it.
+      services.sendTextWithUndo(conversationId, text, reply);
     }
-    const next = await services.thread(conversationId);
-    setMessages(next);
+  }
+
+  function undoSend(): void {
+    const text = services.undoSend();
+    if (text !== null) {
+      setDraft(text); // restore to the composer so the user can edit or discard
+      services.setDraft(conversationId, text);
+    }
+  }
+
+  // Jump-to-original: scroll a message into view and flash it (T5.15).
+  function jumpTo(msgUuid: string): void {
+    const el = bubbleRefs.current[msgUuid];
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    setFlashId(msgUuid);
+    setTimeout(() => setFlashId((c) => (c === msgUuid ? null : c)), 1500);
+  }
+
+  async function exportChat(): Promise<void> {
+    const text = await services.exportChat(conversationId);
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `chat-${conversationId.slice(0, 8)}.txt`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function pickWallpaper(key: string | null): void {
+    services.setChatWallpaper(conversationId, key);
+    setWallpaperState(key);
+    setShowWallpaper(false);
   }
 
   async function onPickFile(e: ChangeEvent<HTMLInputElement>): Promise<void> {
@@ -2009,6 +2149,12 @@ export function Thread({
         >
           <span aria-hidden>{muted ? "🔇" : "🔔"}</span>
         </button>
+        <button className="btn small ghost" title="Chat wallpaper" aria-label="Chat wallpaper" onClick={() => setShowWallpaper(true)}>
+          <span aria-hidden>🎨</span>
+        </button>
+        <button className="btn small ghost" title="Export chat" aria-label="Export chat" onClick={() => void exportChat()}>
+          <span aria-hidden>⬇</span>
+        </button>
         {group ? (
           <button className="btn small ghost" title="Group info" aria-label="Group info" onClick={() => onGroupInfo(conversationId)}>
             <span aria-hidden>ℹ️</span>
@@ -2036,7 +2182,7 @@ export function Thread({
           </>
         )}
       </div>
-      <div className="messages">
+      <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
         {messages.map((m) => (
           <MessageBubble
@@ -2044,10 +2190,26 @@ export function Thread({
             message={m}
             actions={actions}
             onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })}
+            bubbleRef={(el) => {
+              bubbleRefs.current[m.msgUuid] = el;
+            }}
+            flash={flashId === m.msgUuid}
+            onJump={jumpTo}
           />
         ))}
       </div>
       <DownloadsPanel />
+      {services.hasPendingSend(conversationId) ? (
+        <div className="undo-bar" role="status">
+          <span>Sending…</span>
+          <button type="button" onClick={undoSend}>
+            Undo
+          </button>
+        </div>
+      ) : null}
+      {showWallpaper ? (
+        <WallpaperSheet current={wallpaper} onPick={pickWallpaper} onClose={() => setShowWallpaper(false)} />
+      ) : null}
       {replyingTo || editing ? (
         <div className="reply-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border, #e2e2e2)", fontSize: "0.82rem" }}>
           <span style={{ flex: 1, opacity: 0.8 }}>
@@ -2144,10 +2306,16 @@ function MessageBubble({
   message,
   actions,
   onOpen,
+  bubbleRef,
+  flash,
+  onJump,
 }: {
   message: ThreadMessage;
   actions: MessageActions;
   onOpen: (env: MediaEnvelope) => void;
+  bubbleRef?: (el: HTMLDivElement | null) => void;
+  flash?: boolean;
+  onJump?: (msgUuid: string) => void;
 }) {
   const [menu, setMenu] = useState(false);
   const media = message.deleted ? null : parseMediaMessage(message.body);
@@ -2162,7 +2330,7 @@ function MessageBubble({
   };
 
   return (
-    <div className={message.mine ? "bubble mine" : "bubble theirs"} style={{ position: "relative" }}>
+    <div ref={bubbleRef} className={`bubble ${message.mine ? "mine" : "theirs"}${flash ? " jump-flash" : ""}`} style={{ position: "relative" }}>
       {message.starred ? <span title="Starred" style={{ position: "absolute", top: -8, left: -6 }}>⭐</span> : null}
       {message.pinned ? <span title="Pinned" style={{ position: "absolute", top: -8, right: 14 }}>📌</span> : null}
       {!message.deleted ? (
@@ -2188,7 +2356,15 @@ function MessageBubble({
       ) : null}
 
       {text?.reply ? (
-        <div className="reply-quote" style={{ borderLeft: "3px solid #128C7E", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,0.06)", borderRadius: 4, fontSize: "0.8rem", opacity: 0.85 }}>
+        <div
+          className="reply-quote"
+          role="button"
+          tabIndex={0}
+          title="Jump to original message"
+          onClick={() => text.reply && onJump?.(text.reply.msgUuid)}
+          onKeyDown={onActivate(() => text.reply && onJump?.(text.reply.msgUuid))}
+          style={{ borderLeft: "3px solid #128C7E", padding: "2px 8px", margin: "0 0 4px", background: "rgba(0,0,0,0.06)", borderRadius: 4, fontSize: "0.8rem", opacity: 0.85 }}
+        >
           {text.reply.snippet}
         </div>
       ) : null}

@@ -5,8 +5,26 @@
   --theirs: #f0f0f0;
   --line: #e2e2e2;
   --muted: #777;
+  --bg: #f7f7f7; /* page behind the app column */
+  --panel: #fff; /* app column, cards, sheets, inputs */
+  --surface: #fafafa; /* secondary surfaces (message pane, list hovers) */
+  --text: #111;
   color-scheme: light;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Dark palette (T5.15). Applied when the resolved theme is dark; theme.ts stamps
+   <html data-theme="dark"> for both an explicit choice and system-follows-OS. */
+:root[data-theme="dark"] {
+  --mine: #005c4b;
+  --theirs: #202c33;
+  --line: #2a3942;
+  --muted: #8696a0;
+  --bg: #0b141a;
+  --panel: #111b21;
+  --surface: #1a2830;
+  --text: #e9edef;
+  color-scheme: dark;
 }
 
 * {
@@ -15,8 +33,8 @@
 
 body {
   margin: 0;
-  background: #f7f7f7;
-  color: #111;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .app {
@@ -25,7 +43,7 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #fff;
+  background: var(--panel);
 }
 
 .topbar {
@@ -75,11 +93,13 @@ body {
 }
 
 .input {
-  border: 1px solid #ccc;
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px 14px;
   font-size: 16px;
   width: 100%;
+  background: var(--panel);
+  color: var(--text);
 }
 
 .input.code {
@@ -153,7 +173,7 @@ body {
 }
 
 .row:hover {
-  background: #fafafa;
+  background: var(--surface);
 }
 
 .row-title {
@@ -176,6 +196,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  background: var(--surface);
+  background-size: cover;
+  background-position: center;
 }
 
 .bubble {
@@ -390,7 +413,7 @@ body {
 .downloads {
   border-top: 1px solid var(--line);
   padding: 6px 10px;
-  background: #fafafa;
+  background: var(--surface);
   max-height: 130px;
   overflow-y: auto;
 }
@@ -533,7 +556,7 @@ body {
 }
 
 .call-card {
-  background: #fff;
+  background: var(--panel);
   border-radius: 16px;
   padding: 28px 32px;
   min-width: 260px;
@@ -757,4 +780,133 @@ body {
 @keyframes toast-in {
   from { transform: translateX(20px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }
+}
+
+/* ── Chat conveniences (T5.15) ────────────────────────────────────────────── */
+
+/* Chat-list section headers (Favorites / Archived) + collapsible archive. */
+.list-section {
+  padding: 8px 18px 4px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Per-row quick actions (favorite ⭐ / archive 🗄 / mute) revealed on the row. */
+.row-actions {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+}
+.row-actions .icon-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  opacity: 0.55;
+  padding: 2px;
+}
+.row-actions .icon-btn.on {
+  opacity: 1;
+}
+.row-flags {
+  display: inline-flex;
+  gap: 4px;
+  font-size: 12px;
+}
+
+/* Undo-send bar: shown for the grace window after hitting send. */
+.undo-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--brand-dark);
+  color: #fff;
+  font-size: 14px;
+}
+.undo-bar button {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 5px 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* Jump-to-original: brief highlight pulse on the scrolled-to message. */
+.bubble.jump-flash {
+  animation: jump-flash 1.4s ease-out;
+}
+@keyframes jump-flash {
+  0% { box-shadow: 0 0 0 3px var(--brand); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.reply-quote {
+  cursor: pointer;
+}
+
+/* Wallpaper / theme picker sheet (radio grid of preset swatches). */
+.wallpaper-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+}
+.wallpaper-swatch {
+  aspect-ratio: 1;
+  border-radius: 10px;
+  border: 2px solid transparent;
+  cursor: pointer;
+}
+.wallpaper-swatch.selected {
+  border-color: var(--brand);
+}
+
+/* Segmented control (theme: System / Light / Dark). */
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.segmented button {
+  background: var(--panel);
+  color: var(--text);
+  border: none;
+  padding: 8px 14px;
+  font-size: 14px;
+  cursor: pointer;
+}
+.segmented button.active {
+  background: var(--brand);
+  color: #fff;
+}
+
+/* Modal sheet used by the wallpaper picker. */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.5);
+  display: grid;
+  place-items: center;
+}
+.sheet {
+  background: var(--panel);
+  color: var(--text);
+  border-radius: 16px;
+  padding: 20px;
+  width: min(360px, 90vw);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
 }

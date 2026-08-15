@@ -96,6 +96,34 @@ export interface ReactionBody {
   op: "add" | "remove";
 }
 
+/** StickerRef is a sent sticker: a public (non-E2EE) pack asset key + its emoji.
+ *  Clients render the image from object_key when a public sticker-asset path
+ *  exists, else fall back to the emoji glyph. */
+export interface StickerRef {
+  objectKey: string;
+  emoji: string;
+}
+
+/** encodeSticker seals a sticker message body. */
+export function encodeSticker(objectKey: string, emoji: string): string {
+  return JSON.stringify({ t: "sticker", v: 1, k: objectKey, e: emoji });
+}
+
+/** parseSticker reads a sticker message body, or null if it isn't one. */
+export function parseSticker(body: string): StickerRef | null {
+  if (!body || body.charAt(0) !== "{") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const o = parsed as Record<string, unknown>;
+  if (o.t !== "sticker" || typeof o.e !== "string") return null;
+  return { objectKey: typeof o.k === "string" ? o.k : "", emoji: o.e };
+}
+
 /** encodeReaction seals a reaction overlay's content (emoji + add/remove). */
 export function encodeReaction(emoji: string, op: "add" | "remove"): string {
   return JSON.stringify({ t: "react", v: 1, emoji, op });

@@ -17,7 +17,7 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeReaction, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
+import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
@@ -141,6 +141,31 @@ export interface NotificationEntry {
   title: string;
   preview: string;
   ts: number;
+}
+
+/** GifResult mirrors the IP-hiding GIF proxy (GET /v1/media/gif/search). */
+export interface GifResult {
+  id: string;
+  url: string;
+  previewUrl: string;
+  width: number;
+  height: number;
+}
+
+/** A sticker within a pack (object_key is a public, non-E2EE asset). */
+export interface StickerItem {
+  id: string;
+  emoji: string;
+  objectKey: string;
+}
+
+/** A sticker pack from the catalog (stickers present on the detail fetch). */
+export interface StickerPackInfo {
+  id: string;
+  title: string;
+  author: string;
+  animated: boolean;
+  stickers?: StickerItem[];
 }
 
 /** CallSignalHandler receives the WS call-signaling frames (dev.{id}.call),
@@ -367,6 +392,67 @@ export class AppServices {
     const envelope = await this.mediaPipeline().prepare({ bytes, mime: file.type || "application/octet-stream" });
     const body = encodeMediaMessage([envelope], caption);
     await this.db.enqueueText({ conversationId, text: body, listText: `📎 ${file.name}`, clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  // ── rich composer: GIF proxy + stickers (T6.01) ───────────────────────────
+
+  private async mediaGet(path: string): Promise<Response> {
+    const go = (): Promise<Response> =>
+      fetch(`${config.mediaBaseUrl}${path}`, { headers: { authorization: `Bearer ${this.sessions.current()?.accessJwt ?? ""}` } });
+    let res = await go();
+    if (res.status === 401) {
+      await this.refreshToken();
+      res = await go();
+    }
+    return res;
+  }
+
+  /** searchGifs queries the server-side IP-hiding GIF proxy (Tenor). Returns []
+   *  when the feature is disabled (no server Tenor key) or on any error, so the
+   *  picker degrades gracefully. */
+  async searchGifs(query: string): Promise<GifResult[]> {
+    try {
+      const res = await this.mediaGet(`/v1/media/gif/search?q=${encodeURIComponent(query)}&limit=24`);
+      if (!res.ok) return [];
+      const body = (await res.json()) as { results?: { id: string; url: string; preview_url: string; width: number; height: number }[] };
+      return (body.results ?? []).map((r) => ({ id: r.id, url: r.url, previewUrl: r.preview_url, width: r.width, height: r.height }));
+    } catch {
+      return [];
+    }
+  }
+
+  /** sendGif fetches the chosen GIF and sends it as an ordinary E2EE media
+   *  message (encrypted + uploaded via the pipeline — the file key never leaves
+   *  the client), so the SFU/CDN never sees who received it. */
+  async sendGif(conversationId: string, gif: GifResult): Promise<void> {
+    const resp = await fetch(gif.url);
+    if (!resp.ok) throw new Error("Couldn't fetch the GIF.");
+    const file = new File([await resp.blob()], "gif.gif", { type: "image/gif" });
+    await this.sendMedia(conversationId, file);
+  }
+
+  /** stickerPacks lists the sticker catalog (T6.01). */
+  async stickerPacks(): Promise<StickerPackInfo[]> {
+    const res = await this.mediaGet("/v1/media/stickers/packs");
+    if (!res.ok) return [];
+    const body = (await res.json()) as { packs?: StickerPackInfo[] };
+    return body.packs ?? [];
+  }
+
+  /** stickerPack fetches one pack's stickers (T6.01). */
+  async stickerPack(id: string): Promise<StickerPackInfo | null> {
+    const res = await this.mediaGet(`/v1/media/stickers/packs/${encodeURIComponent(id)}`);
+    if (!res.ok) return null;
+    return (await res.json()) as StickerPackInfo;
+  }
+
+  /** sendSticker sends a sticker message (public pack asset key + emoji). The
+   *  recipient renders the image from the key, or the emoji glyph as a fallback. */
+  async sendSticker(conversationId: string, sticker: StickerItem): Promise<void> {
+    const body = encodeSticker(sticker.objectKey, sticker.emoji);
+    await this.db.enqueueText({ conversationId, text: body, listText: `${sticker.emoji} Sticker`, clientRef: newId(), now: Date.now() });
     this.notifyChange();
     await this.ws?.flush();
   }

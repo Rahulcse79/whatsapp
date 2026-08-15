@@ -63,9 +63,13 @@ export {
   type ReactionBody,
   parseMediaMessage,
   parseTextMessage,
+  encodeSticker,
+  parseSticker,
+  type StickerRef,
   type MediaMessageBody,
   type TextMessageBody,
 } from "./messageBody";
+export { tokenizeRich, type RichToken } from "./richText";
 export {
   detectFirstUrl,
   generateLinkPreview,

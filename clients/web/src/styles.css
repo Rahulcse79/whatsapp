@@ -962,3 +962,137 @@ body {
   color: var(--muted);
   font-weight: 600;
 }
+
+/* ── Rich composer (T6.01): formatting, stickers, pickers ─────────────────── */
+
+.rich-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.9em;
+  background: rgba(127, 127, 127, 0.18);
+  padding: 0 4px;
+  border-radius: 4px;
+}
+.rich-pre {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85em;
+  background: rgba(127, 127, 127, 0.18);
+  padding: 8px 10px;
+  border-radius: 8px;
+  margin: 4px 0;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+.rich-link {
+  color: #1a73e8;
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+:root[data-theme="dark"] .rich-link {
+  color: #8ab4f8;
+}
+
+/* A sent sticker renders large (emoji fallback until a public asset path lands). */
+.sticker-msg {
+  font-size: 56px;
+  line-height: 1.1;
+}
+
+/* Composer wrapper anchors the picker popovers above the composer row. */
+.composer-wrap {
+  position: relative;
+}
+
+.picker-pop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 8px;
+  right: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 -6px 24px rgba(0, 0, 0, 0.22);
+  z-index: 40;
+}
+.picker-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--line);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  background: var(--panel);
+}
+.picker-head .input {
+  flex: 1;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 2px;
+  padding: 8px;
+}
+.emoji-cell {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 22px;
+  padding: 4px;
+  border-radius: 8px;
+}
+.emoji-cell:hover {
+  background: var(--surface);
+}
+
+.gif-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 4px;
+  padding: 8px;
+}
+.gif-cell {
+  border: none;
+  padding: 0;
+  background: var(--surface);
+  border-radius: 8px;
+  overflow: hidden;
+  cursor: pointer;
+  aspect-ratio: 1;
+}
+.gif-cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.sticker-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 6px 8px;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--line);
+}
+.sticker-tabs .btn.on {
+  background: var(--surface);
+}
+.sticker-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  padding: 8px;
+}
+.sticker-cell {
+  background: var(--surface);
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 34px;
+  padding: 8px 0;
+}
+.sticker-cell:hover {
+  background: var(--line);
+}

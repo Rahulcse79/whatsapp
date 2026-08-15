@@ -9,6 +9,7 @@ import {
 import {
   classifyMedia,
   parseMediaMessage,
+  parseSticker,
   parseTextMessage,
   type LinkPreview,
   type MediaEnvelope,
@@ -17,6 +18,8 @@ import {
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { getTheme, setTheme, type ThemeChoice } from "../theme";
+import { RichText } from "./RichText";
+import { EmojiPicker, GifPicker, StickerPicker } from "./composerPickers";
 import { messageOf } from "./errors";
 import { useCall } from "../call/CallContext";
 import { DownloadsPanel } from "./media/DownloadsPanel";
@@ -1980,7 +1983,9 @@ export function Thread({
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
+  const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | null>(null); // composer picker
   const fileRef = useRef<HTMLInputElement>(null);
+  const composerRef = useRef<HTMLInputElement>(null);
   const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const lastReadRef = useRef(0);
@@ -2111,6 +2116,37 @@ export function Thread({
     services.setChatWallpaper(conversationId, key);
     setWallpaperState(key);
     setShowWallpaper(false);
+  }
+
+  // Composer helpers (T6.01): insert at the cursor + wrap the selection with a
+  // markdown marker (*bold*, _italic_), restoring focus/caret after the update.
+  function insertAtCursor(insert: string): void {
+    const el = composerRef.current;
+    const start = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? draft.length;
+    const next = draft.slice(0, start) + insert + draft.slice(end);
+    onDraftChange(next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = start + insert.length;
+      el?.setSelectionRange(pos, pos);
+    });
+  }
+  function wrapSelection(marker: string): void {
+    const el = composerRef.current;
+    const start = el?.selectionStart ?? draft.length;
+    const end = el?.selectionEnd ?? draft.length;
+    if (start === end) {
+      insertAtCursor(marker + marker);
+      requestAnimationFrame(() => el?.setSelectionRange(start + marker.length, start + marker.length));
+      return;
+    }
+    const next = draft.slice(0, start) + marker + draft.slice(start, end) + marker + draft.slice(end);
+    onDraftChange(next);
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(start + marker.length, end + marker.length);
+    });
   }
 
   async function onPickFile(e: ChangeEvent<HTMLInputElement>): Promise<void> {
@@ -2295,29 +2331,66 @@ export function Thread({
           </span>
         </div>
       ) : (
-        <form className="composer" onSubmit={send}>
-          <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-hidden />
-          <button
-            className="btn small ghost"
-            type="button"
-            aria-label="Attach file"
-            title="Attach a photo, video, or document"
-            disabled={sendingMedia || !!editing}
-            onClick={() => fileRef.current?.click()}
-          >
-            {sendingMedia ? "…" : "📎"}
-          </button>
-          <input
-            className="input"
-            value={draft}
-            onChange={(e) => onDraftChange(e.target.value)}
-            placeholder={editing ? "Edit message" : sendingMedia ? "Uploading…" : "Message"}
-            aria-label="Type a message"
-          />
-          <button className="btn" type="submit">
-            {editing ? "Save" : "Send"}
-          </button>
-        </form>
+        <div className="composer-wrap">
+          {picker === "emoji" ? <EmojiPicker onPick={(e) => insertAtCursor(e)} onClose={() => setPicker(null)} /> : null}
+          {picker === "gif" ? (
+            <GifPicker
+              onPick={(g) => {
+                setPicker(null);
+                void services.sendGif(conversationId, g).catch((err) => window.alert(messageOf(err)));
+              }}
+              onClose={() => setPicker(null)}
+            />
+          ) : null}
+          {picker === "sticker" ? (
+            <StickerPicker
+              onPick={(s) => {
+                setPicker(null);
+                void services.sendSticker(conversationId, s);
+              }}
+              onClose={() => setPicker(null)}
+            />
+          ) : null}
+          <form className="composer" onSubmit={send}>
+            <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-hidden />
+            <button className="btn small ghost" type="button" aria-label="Bold" title="Bold (*text*)" disabled={!!editing} onClick={() => wrapSelection("*")}>
+              <b>B</b>
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Italic" title="Italic (_text_)" disabled={!!editing} onClick={() => wrapSelection("_")}>
+              <i>I</i>
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Emoji" title="Emoji" onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
+              😊
+            </button>
+            <button className="btn small ghost" type="button" aria-label="GIF" title="GIF search" disabled={!!editing} onClick={() => setPicker((p) => (p === "gif" ? null : "gif"))}>
+              GIF
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Sticker" title="Stickers" disabled={!!editing} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))}>
+              🏷
+            </button>
+            <button
+              className="btn small ghost"
+              type="button"
+              aria-label="Attach file"
+              title="Attach a photo, video, or document"
+              disabled={sendingMedia || !!editing}
+              onClick={() => fileRef.current?.click()}
+            >
+              {sendingMedia ? "…" : "📎"}
+            </button>
+            <input
+              ref={composerRef}
+              className="input"
+              value={draft}
+              onChange={(e) => onDraftChange(e.target.value)}
+              placeholder={editing ? "Edit message" : sendingMedia ? "Uploading…" : "Message"}
+              aria-label="Type a message"
+            />
+            <button className="btn" type="submit">
+              {editing ? "Save" : "Send"}
+            </button>
+          </form>
+        </div>
       )}
       {gallery ? <Gallery items={gallery.items} startKey={gallery.startKey} onClose={() => setGallery(null)} /> : null}
     </div>
@@ -2380,9 +2453,10 @@ function MessageBubble({
 }) {
   const [menu, setMenu] = useState(false);
   const media = message.deleted ? null : parseMediaMessage(message.body);
-  const text = media || message.deleted ? null : parseTextMessage(message.body);
+  const sticker = media || message.deleted ? null : parseSticker(message.body);
+  const text = media || sticker || message.deleted ? null : parseTextMessage(message.body);
   const age = Date.now() - message.createdAt;
-  const canEdit = message.mine && !message.deleted && !media && age < EDIT_WINDOW_MS;
+  const canEdit = message.mine && !message.deleted && !media && !sticker && age < EDIT_WINDOW_MS;
   const canDeleteAll = message.mine && !message.deleted && age < DELETE_WINDOW_MS;
 
   const run = (fn: (m: ThreadMessage) => void) => () => {
@@ -2455,9 +2529,11 @@ function MessageBubble({
           </div>
           {media.caption ? <span className="bubble-caption">{media.caption}</span> : null}
         </>
+      ) : sticker ? (
+        <span className="sticker-msg" role="img" aria-label="sticker">{sticker.emoji}</span>
       ) : (
         <>
-          <span>{message.deleted ? <em style={{ opacity: 0.7 }}>This message was deleted</em> : text?.text}</span>
+          <span>{message.deleted ? <em style={{ opacity: 0.7 }}>This message was deleted</em> : text ? <RichText text={text.text} /> : null}</span>
           {message.edited && !message.deleted ? <span style={{ fontSize: "0.68rem", opacity: 0.6, marginLeft: 4 }}>(edited)</span> : null}
           {text?.linkPreview ? <LinkPreviewCard preview={text.linkPreview} /> : null}
         </>

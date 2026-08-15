@@ -15,4 +15,10 @@ config.resolver.nodeModulesPaths = [
 ];
 config.resolver.disableHierarchicalLookup = true;
 
+// Honor package.json "exports" subpaths — @wa/proto-types' generated code imports
+// "@bufbuild/protobuf/codegenv2", an exports-only subpath that Metro can't
+// resolve otherwise (Expo SDK 52's Metro leaves this opt-in; default in later
+// SDKs). Without it the release JS bundle fails "could not be found".
+config.resolver.unstable_enablePackageExports = true;
+
 module.exports = config;

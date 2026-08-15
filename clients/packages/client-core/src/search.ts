@@ -26,6 +26,45 @@ export interface SearchOptions {
   conversationId?: string;
   /** Cap the number of hits (default DEFAULT_SEARCH_LIMIT). */
   limit?: number;
+  // ── advanced filters (T6.05) ──
+  /** By user: true = only my messages, false = only others', undefined = anyone. */
+  fromMe?: boolean;
+  /** By date: only messages at/after this epoch-ms. */
+  after?: number;
+  /** By date: only messages at/before this epoch-ms. */
+  before?: number;
+  /** By file: only media (attachment) messages. */
+  mediaOnly?: boolean;
+  /** By hashtag: only messages whose body contains #<tag> (case-insensitive). */
+  hashtag?: string;
+}
+
+/** bodyHasHashtag reports whether a decrypted body contains the #tag as a whole
+ *  hashtag token (case-insensitive), e.g. hashtag "trip" matches "#trip!" but
+ *  not "#trips" or "trip". */
+export function bodyHasHashtag(body: string, tag: string): boolean {
+  const t = tag.replace(/^#/, "").toLowerCase();
+  if (!t) return false;
+  const lower = body.toLowerCase();
+  let from = 0;
+  for (;;) {
+    const i = lower.indexOf("#" + t, from);
+    if (i === -1) return false;
+    const after = lower[i + 1 + t.length];
+    // whole-token: the char after the tag must not continue the word
+    if (after === undefined || !/[\p{L}\p{N}_]/u.test(after)) return true;
+    from = i + 1;
+  }
+}
+
+/** extractHashtags pulls #tags out of raw query text (lowercased, deduped). */
+export function extractHashtags(raw: string): string[] {
+  const out = new Set<string>();
+  for (const m of raw.matchAll(/#([\p{L}\p{N}_]+)/gu)) {
+    const g = m[1];
+    if (g) out.add(g.toLowerCase());
+  }
+  return [...out];
 }
 
 export const DEFAULT_SEARCH_LIMIT = 50;

@@ -1484,8 +1484,28 @@ export class AppServices {
   }
 
   /** Full-text search over the local decrypted store (runs in the DB worker). */
-  search(query: string, opts?: { conversationId?: string; limit?: number }): Promise<SearchHit[]> {
-    return this.db.search({ query, conversationId: opts?.conversationId, limit: opts?.limit });
+  search(
+    query: string,
+    opts?: {
+      conversationId?: string;
+      limit?: number;
+      fromMe?: boolean;
+      after?: number;
+      before?: number;
+      mediaOnly?: boolean;
+      hashtag?: string;
+    },
+  ): Promise<SearchHit[]> {
+    return this.db.search({
+      query,
+      conversationId: opts?.conversationId,
+      limit: opts?.limit,
+      fromMe: opts?.fromMe,
+      after: opts?.after,
+      before: opts?.before,
+      mediaOnly: opts?.mediaOnly,
+      hashtag: opts?.hashtag,
+    });
   }
 
   async logout(): Promise<void> {

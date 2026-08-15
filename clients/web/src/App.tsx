@@ -42,7 +42,7 @@ type Nav =
   | { name: "verify"; challengeId: string; phone: string }
   | { name: "chats" }
   | { name: "newChat" }
-  | { name: "search" }
+  | { name: "search"; conversationId?: string; conversationTitle?: string }
   | { name: "calls" }
   | { name: "status" }
   | { name: "profile" }
@@ -50,10 +50,10 @@ type Nav =
   | { name: "contacts" }
   | { name: "createGroup" }
   | { name: "groupInfo"; conversationId: string }
-  | { name: "thread"; conversationId: string };
+  | { name: "thread"; conversationId: string; focusMsgUuid?: string };
 
 function Router() {
-  const { authed } = useServices();
+  const { authed, services } = useServices();
   const [nav, setNav] = useState<Nav>(() => (authed ? { name: "chats" } : { name: "login" }));
 
   const body = ((): JSX.Element => {
@@ -123,10 +123,13 @@ function Router() {
     );
   }
   if (nav.name === "search") {
+    const scope = nav.conversationId;
     return (
       <Search
-        onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
-        onBack={() => setNav({ name: "chats" })}
+        conversationId={scope}
+        conversationTitle={nav.conversationTitle}
+        onOpen={(conversationId, focusMsgUuid) => setNav({ name: "thread", conversationId, focusMsgUuid })}
+        onBack={() => (scope ? setNav({ name: "thread", conversationId: scope }) : setNav({ name: "chats" }))}
       />
     );
   }
@@ -134,8 +137,16 @@ function Router() {
   return (
     <Thread
       conversationId={nav.conversationId}
+      focusMsgUuid={nav.focusMsgUuid}
       onBack={() => setNav({ name: "chats" })}
       onGroupInfo={(conversationId) => setNav({ name: "groupInfo", conversationId })}
+      onSearchInChat={(conversationId) =>
+        setNav({
+          name: "search",
+          conversationId,
+          conversationTitle: services.groupNameOf(conversationId) || services.peerNameOf(conversationId) || undefined,
+        })
+      }
     />
   );
   })();

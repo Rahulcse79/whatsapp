@@ -1,5 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { SNIPPET_CLOSE, SNIPPET_OPEN, matchMemory, toFtsQuery, tokenize } from "./search";
+import { SNIPPET_CLOSE, SNIPPET_OPEN, bodyHasHashtag, extractHashtags, matchMemory, toFtsQuery, tokenize } from "./search";
+
+describe("bodyHasHashtag", () => {
+  it("matches whole hashtags case-insensitively", () => {
+    expect(bodyHasHashtag("let's go #Trip!", "trip")).toBe(true);
+    expect(bodyHasHashtag("a #trip and #beach", "beach")).toBe(true);
+    expect(bodyHasHashtag("#trips are fun", "trip")).toBe(false); // not a whole token
+    expect(bodyHasHashtag("just the word trip", "trip")).toBe(false); // needs the '#'
+    expect(bodyHasHashtag("nothing", "")).toBe(false);
+  });
+});
+
+describe("extractHashtags", () => {
+  it("pulls deduped lowercase tags from raw query text", () => {
+    expect(extractHashtags("beach #Summer #summer #Trip")).toEqual(["summer", "trip"]);
+    expect(extractHashtags("no tags here")).toEqual([]);
+  });
+});
 
 const wrap = (s: string): string => `${SNIPPET_OPEN}${s}${SNIPPET_CLOSE}`;
 

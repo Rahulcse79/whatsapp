@@ -13,13 +13,14 @@ import {
   type OutgoingDraft,
   type ThreadMessage,
 } from "./db/messageStore";
-import { DEFAULT_SEARCH_LIMIT, matchMemory, tokenize, type SearchHit, type SearchOptions } from "./search";
+import { bodyHasHashtag, DEFAULT_SEARCH_LIMIT, matchMemory, tokenize, type SearchHit, type SearchOptions } from "./search";
 
 interface MsgRow {
   msgUuid: string;
   conversationId: string;
   seq: number;
   body: string;
+  kind: MsgKind;
   deleted: boolean;
   edited?: boolean;
   mine: boolean;
@@ -119,6 +120,7 @@ export class MemoryMessageRepo implements MessageRepo {
           conversationId: ins.conversationId,
           seq: ins.seq,
           body,
+          kind: ins.kind,
           deleted: false,
           mine: false,
           state: "received",
@@ -183,6 +185,7 @@ export class MemoryMessageRepo implements MessageRepo {
       conversationId: d.conversationId,
       seq: 0,
       body: d.plaintext,
+      kind,
       deleted: false,
       mine: true,
       state: "sending",
@@ -295,27 +298,46 @@ export class MemoryMessageRepo implements MessageRepo {
 
   /** search mirrors MessageStore.search over the in-memory rows with the shared
    *  prefix-token match/score (same semantics as the FTS5 path), ranked best
-   *  first and excluding tombstoned messages. */
+   *  first and excluding tombstoned messages. T6.05 adds by-user/date/file/
+   *  hashtag filters; a filter-only search (no text) is allowed when a hashtag
+   *  or media filter is set. */
   search(query: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
     const tokens = tokenize(query);
-    if (tokens.length === 0) return Promise.resolve([]);
+    const hasText = tokens.length > 0;
+    if (!hasText && !opts.hashtag && !opts.mediaOnly) return Promise.resolve([]);
     const limit = opts.limit ?? DEFAULT_SEARCH_LIMIT;
 
     const scored: { hit: SearchHit; score: number }[] = [];
     for (const m of this.messages.values()) {
       if (m.deleted) continue;
       if (opts.conversationId && m.conversationId !== opts.conversationId) continue;
-      const res = matchMemory(m.body, tokens);
-      if (!res.matched) continue;
+      if (opts.fromMe !== undefined && m.mine !== opts.fromMe) continue;
+      if (opts.after !== undefined && m.createdAt < opts.after) continue;
+      if (opts.before !== undefined && m.createdAt > opts.before) continue;
+      if (opts.mediaOnly && m.kind !== MsgKind.MEDIA) continue;
+      if (opts.hashtag && !bodyHasHashtag(m.body, opts.hashtag)) continue;
+
+      let score: number;
+      let snippet: string;
+      if (hasText) {
+        const res = matchMemory(m.body, tokens);
+        if (!res.matched) continue;
+        score = res.score;
+        snippet = res.snippet;
+      } else {
+        // filter-only (e.g. "all media" / "#tag") — no term to score/highlight.
+        score = 1;
+        snippet = m.body.length > 90 ? m.body.slice(0, 90) + "…" : m.body;
+      }
       scored.push({
-        score: res.score,
+        score,
         hit: {
           msgUuid: m.msgUuid,
           conversationId: m.conversationId,
           conversationTitle: this.convs.get(m.conversationId)?.title || m.conversationId,
           seq: m.seq,
           body: m.body,
-          snippet: res.snippet,
+          snippet,
           mine: m.mine,
           createdAt: m.createdAt,
         },

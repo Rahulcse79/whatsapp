@@ -133,6 +133,29 @@ describe("MemoryMessageRepo", () => {
     expect(await repo.search("lunch", { limit: 1 })).toHaveLength(1);
   });
 
+  it("filters search by sender, date, media, and hashtag (T6.05)", async () => {
+    const repo = new MemoryMessageRepo();
+    // Mine: text with a hashtag, recent.
+    await repo.enqueueOutgoing({ clientRef: "mine1", conversationId: "c1", plaintext: "beach trip #summer plan", payload: new Uint8Array(), now: 1000 });
+    // Theirs: plain text, old.
+    await repo.persistInboxBatch(batch([inbound(1, { msgUuid: "theirs1" })]), new Map([["theirs1", "beach trip photos coming"]]));
+    // Theirs: a MEDIA message, old.
+    await repo.persistInboxBatch(batch([inbound(2, { msgUuid: "media1", kind: MsgKind.MEDIA })]), new Map([["media1", "beach sunset image"]]));
+
+    // By user.
+    expect((await repo.search("beach", { fromMe: true })).map((h) => h.msgUuid)).toEqual(["mine1"]);
+    expect((await repo.search("beach", { fromMe: false })).map((h) => h.msgUuid).sort()).toEqual(["media1", "theirs1"]);
+    // By file (even alongside a text term); and filter-only (no term).
+    expect((await repo.search("beach", { mediaOnly: true })).map((h) => h.msgUuid)).toEqual(["media1"]);
+    expect((await repo.search("", { mediaOnly: true })).map((h) => h.msgUuid)).toEqual(["media1"]);
+    // By hashtag (filter-only) — only my message carries #summer.
+    expect((await repo.search("", { hashtag: "summer" })).map((h) => h.msgUuid)).toEqual(["mine1"]);
+    // By date — inbound createdAt is seq*10 (10, 20); mine is 1000.
+    expect((await repo.search("beach", { after: 500 })).map((h) => h.msgUuid)).toEqual(["mine1"]);
+    // A date/sender filter with no term/hashtag/media yields nothing (no store dump).
+    expect(await repo.search("", { after: 0 })).toEqual([]);
+  });
+
   it("does not return tombstoned messages from search", async () => {
     const repo = new MemoryMessageRepo();
     // An incoming message whose body an overlay deletes.

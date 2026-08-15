@@ -123,7 +123,15 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
   thread: (arg) => repo.thread(arg as string),
   search: (arg) => {
     const input = arg as SearchInput;
-    return repo.search(input.query, { conversationId: input.conversationId, limit: input.limit });
+    return repo.search(input.query, {
+      conversationId: input.conversationId,
+      limit: input.limit,
+      fromMe: input.fromMe,
+      after: input.after,
+      before: input.before,
+      mediaOnly: input.mediaOnly,
+      hashtag: input.hashtag,
+    });
   },
 };
 

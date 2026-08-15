@@ -48,6 +48,12 @@ export interface SearchInput {
   query: string;
   conversationId?: string;
   limit?: number;
+  // advanced filters (T6.05)
+  fromMe?: boolean;
+  after?: number;
+  before?: number;
+  mediaOnly?: boolean;
+  hashtag?: string;
 }
 
 /** The data + crypto surface the worker exposes to the main thread. */

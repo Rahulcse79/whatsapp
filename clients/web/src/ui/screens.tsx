@@ -1,6 +1,7 @@
 import {
   SNIPPET_CLOSE,
   SNIPPET_OPEN,
+  extractHashtags,
   isValidPhone,
   type ChatSummary,
   type SearchHit,
@@ -643,23 +644,68 @@ export function ChatList({
 
 /** Search screen: debounced full-text search over the local decrypted store
  *  (ADR-005). A result opens its conversation. */
-export function Search({ onOpen, onBack }: { onOpen: (id: string) => void; onBack: () => void }) {
+function sinceMs(when: "any" | "today" | "7d" | "30d"): number | undefined {
+  const now = Date.now();
+  switch (when) {
+    case "today": {
+      const d = new Date();
+      d.setHours(0, 0, 0, 0);
+      return d.getTime();
+    }
+    case "7d":
+      return now - 7 * 86400_000;
+    case "30d":
+      return now - 30 * 86400_000;
+    default:
+      return undefined;
+  }
+}
+
+export function Search({
+  onOpen,
+  onBack,
+  conversationId,
+  conversationTitle,
+}: {
+  onOpen: (conversationId: string, msgUuid?: string) => void;
+  onBack: () => void;
+  conversationId?: string;
+  conversationTitle?: string;
+}) {
   const { services } = useServices();
   const [query, setQuery] = useState("");
+  const [from, setFrom] = useState<"any" | "me" | "others">("any");
+  const [when, setWhen] = useState<"any" | "today" | "7d" | "30d">("any");
+  const [type, setType] = useState<"all" | "media">("all");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searched, setSearched] = useState(false);
 
   useEffect(() => {
-    const q = query.trim();
-    if (!q) {
+    const raw = query.trim();
+    const hashtags = extractHashtags(raw);
+    const text = raw.replace(/#[\p{L}\p{N}_]+/gu, "").trim();
+    const mediaOnly = type === "media";
+    // Need a term, a hashtag, or the media filter — a date/sender filter alone
+    // would dump the whole store, so we don't run it.
+    if (!text && hashtags.length === 0 && !mediaOnly) {
       setHits([]);
+      setSearched(false);
       return;
     }
     let alive = true;
     const handle = setTimeout(() => {
       services
-        .search(q)
+        .search(text, {
+          conversationId,
+          fromMe: from === "any" ? undefined : from === "me",
+          after: sinceMs(when),
+          mediaOnly,
+          hashtag: hashtags[0],
+        })
         .then((r) => {
-          if (alive) setHits(r);
+          if (!alive) return;
+          setHits(r);
+          setSearched(true);
         })
         .catch(() => {});
     }, 150); // debounce keystrokes
@@ -667,7 +713,7 @@ export function Search({ onOpen, onBack }: { onOpen: (id: string) => void; onBac
       alive = false;
       clearTimeout(handle);
     };
-  }, [query, services]);
+  }, [query, from, when, type, conversationId, services]);
 
   return (
     <div className="pane">
@@ -680,12 +726,39 @@ export function Search({ onOpen, onBack }: { onOpen: (id: string) => void; onBac
           type="search"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search messages"
+          placeholder={conversationTitle ? `Search in ${conversationTitle}` : "Search messages (try #hashtag)"}
           aria-label="Search messages"
           autoFocus
         />
       </div>
-      {query.trim() && hits.length === 0 ? <p className="muted center">No matches.</p> : null}
+      <div className="search-filters" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", padding: "0.4rem 0.6rem", alignItems: "center" }}>
+        {conversationTitle && <span className="muted" style={{ fontSize: "0.78rem" }}>in {conversationTitle} ·</span>}
+        <label className="muted" style={{ fontSize: "0.78rem" }}>
+          From{" "}
+          <select value={from} onChange={(e) => setFrom(e.target.value as typeof from)}>
+            <option value="any">anyone</option>
+            <option value="me">me</option>
+            <option value="others">others</option>
+          </select>
+        </label>
+        <label className="muted" style={{ fontSize: "0.78rem" }}>
+          When{" "}
+          <select value={when} onChange={(e) => setWhen(e.target.value as typeof when)}>
+            <option value="any">any time</option>
+            <option value="today">today</option>
+            <option value="7d">last 7 days</option>
+            <option value="30d">last 30 days</option>
+          </select>
+        </label>
+        <label className="muted" style={{ fontSize: "0.78rem" }}>
+          Type{" "}
+          <select value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+            <option value="all">all</option>
+            <option value="media">files &amp; media</option>
+          </select>
+        </label>
+      </div>
+      {searched && hits.length === 0 ? <p className="muted center">No matches.</p> : null}
       <ul className="list">
         {hits.map((h) => (
           <li
@@ -693,10 +766,13 @@ export function Search({ onOpen, onBack }: { onOpen: (id: string) => void; onBac
             className="row"
             role="button"
             tabIndex={0}
-            onClick={() => onOpen(h.conversationId)}
-            onKeyDown={onActivate(() => onOpen(h.conversationId))}
+            onClick={() => onOpen(h.conversationId, h.msgUuid)}
+            onKeyDown={onActivate(() => onOpen(h.conversationId, h.msgUuid))}
           >
-            <div className="row-title">{h.conversationTitle}</div>
+            <div className="row-title">
+              {services.groupNameOf(h.conversationId) ? `👥 ${services.groupNameOf(h.conversationId)}` : services.peerNameOf(h.conversationId) || h.conversationTitle}
+              <span className="muted" style={{ fontWeight: 400, fontSize: "0.72rem" }}> · {new Date(h.createdAt).toLocaleDateString()}</span>
+            </div>
             <div className="row-sub">{highlightSnippet(h.snippet)}</div>
           </li>
         ))}
@@ -2411,10 +2487,14 @@ export function Thread({
   conversationId,
   onBack,
   onGroupInfo,
+  onSearchInChat,
+  focusMsgUuid,
 }: {
   conversationId: string;
   onBack: () => void;
   onGroupInfo: (id: string) => void;
+  onSearchInChat?: (id: string) => void;
+  focusMsgUuid?: string;
 }) {
   const { services } = useServices();
   const call = useCall();
@@ -2429,6 +2509,7 @@ export function Thread({
   const [wallpaper, setWallpaperState] = useState<string | null>(() => services.chatWallpaper(conversationId));
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
+  const focusedRef = useRef<string | null>(null); // search jump-to-result (once per target)
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
   const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | null>(null); // composer picker
   const [showPoll, setShowPoll] = useState(false); // poll-creation modal
@@ -2553,6 +2634,17 @@ export function Thread({
     setFlashId(msgUuid);
     setTimeout(() => setFlashId((c) => (c === msgUuid ? null : c)), 1500);
   }
+
+  // Jump-to-search-result (T6.05): once the focused message is rendered, scroll
+  // to + flash it, once per target so it doesn't re-jump on every refresh.
+  useEffect(() => {
+    if (!focusMsgUuid || focusedRef.current === focusMsgUuid) return;
+    if (bubbleRefs.current[focusMsgUuid]) {
+      focusedRef.current = focusMsgUuid;
+      jumpTo(focusMsgUuid);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusMsgUuid, messages]);
 
   async function exportChat(): Promise<void> {
     const text = await services.exportChat(conversationId);
@@ -2679,6 +2771,11 @@ export function Thread({
             </span>
           ) : null}
         </div>
+        {onSearchInChat && (
+          <button className="btn small ghost" title="Search in this chat" aria-label="Search in this chat" onClick={() => onSearchInChat(conversationId)}>
+            <span aria-hidden>🔍</span>
+          </button>
+        )}
         <button
           className="btn small ghost"
           title={muted ? "Unmute notifications" : "Mute notifications"}

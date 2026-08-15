@@ -86,13 +86,15 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
     // it. The overlay's clientRef becomes its own msgUuid on the wire; the
     // recipient keys the decrypted edit text by it (planInboxBatch → OverlayApply).
     const payload = await seal(input.conversationId, input.kind === "delete" ? "" : input.text);
+    const overlayKind =
+      input.kind === "delete" ? MsgKind.OVERLAY_DELETE : input.kind === "react" ? MsgKind.REACTION : MsgKind.OVERLAY_EDIT;
     await repo.enqueueOutgoing({
       clientRef: input.clientRef,
       conversationId: input.conversationId,
       plaintext: input.text,
       payload,
       now: input.now,
-      kind: input.kind === "delete" ? MsgKind.OVERLAY_DELETE : MsgKind.OVERLAY_EDIT,
+      kind: overlayKind,
       overlayTarget: input.targetMsgUuid,
     });
   },

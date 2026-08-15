@@ -17,7 +17,7 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeTextMessage, generateLinkPreview, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
+import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodeReaction, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
@@ -396,6 +396,35 @@ export class AppServices {
    *  the recipient's bubble becomes "This message was deleted". */
   async deleteForEveryone(conversationId: string, msgUuid: string): Promise<void> {
     await this.db.enqueueOverlay({ conversationId, targetMsgUuid: msgUuid, kind: "delete", text: "", clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** react toggles my emoji reaction on a message via a REACTION overlay (T5.05b).
+   *  The caller passes op (add/remove) from the emoji's current mine-state; both
+   *  ends fold it into the target's tally. */
+  async react(conversationId: string, msgUuid: string, emoji: string, op: "add" | "remove"): Promise<void> {
+    const body = encodeReaction(emoji, op);
+    await this.db.enqueueOverlay({ conversationId, targetMsgUuid: msgUuid, kind: "react", text: body, clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** forwardMessage re-sends a message's content to another conversation (T5.05b).
+   *  Text (with any link preview) and media (the same uploaded object, re-sealed
+   *  under the target conversation's key) are supported; the reply quote is dropped. */
+  async forwardMessage(sourceConversationId: string, msgUuid: string, targetConversationId: string): Promise<void> {
+    const src = (await this.db.thread(sourceConversationId)).find((m) => m.msgUuid === msgUuid);
+    if (!src || src.deleted) return;
+    const media = parseMediaMessage(src.body);
+    if (media) {
+      const body = encodeMediaMessage(media.attachments, media.caption);
+      await this.db.enqueueText({ conversationId: targetConversationId, text: body, listText: media.caption || "📎 Media", clientRef: newId(), now: Date.now() });
+    } else {
+      const text = parseTextMessage(src.body).text;
+      const body = encodeTextMessage(text);
+      await this.db.enqueueText({ conversationId: targetConversationId, text: body, listText: text, clientRef: newId(), now: Date.now() });
+    }
     this.notifyChange();
     await this.ws?.flush();
   }

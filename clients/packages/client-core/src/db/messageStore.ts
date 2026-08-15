@@ -93,6 +93,14 @@ export interface ChatSummary {
   updatedAt: number;
 }
 
+/** A reaction tally for one emoji on a message: how many reacted, and whether
+ *  I'm one of them (drives the highlighted/toggle state). */
+export interface ReactionSummary {
+  emoji: string;
+  count: number;
+  mine: boolean;
+}
+
 export interface ThreadMessage {
   msgUuid: string;
   seq: number;
@@ -103,6 +111,7 @@ export interface ThreadMessage {
   edited: boolean;
   pinned: boolean;
   starred: boolean;
+  reactions: ReactionSummary[];
   createdAt: number;
 }
 
@@ -269,6 +278,7 @@ export class MessageStore implements MessageRepo {
       state: String(r.state),
       pinned: Number(r.pinned) === 1,
       starred: Number(r.starred) === 1,
+      reactions: [], // reactions ride the memory path (web); the db path lands with mobile T5.01
       createdAt: Number(r.created_at),
     }));
   }

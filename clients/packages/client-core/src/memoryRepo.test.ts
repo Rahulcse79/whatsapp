@@ -160,4 +160,55 @@ describe("MemoryMessageRepo", () => {
     expect((await read())?.pinned).toBe(false);
     expect((await read())?.starred).toBe(true); // star unaffected
   });
+
+  it("folds an inbound peer REACTION into the target's tally (T5.05b)", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.persistInboxBatch(batch([inbound(1)]), new Map([["m1", "hi"]]));
+    await repo.persistInboxBatch(
+      batch([inbound(2, { kind: MsgKind.REACTION, overlayTarget: "m1", msgUuid: "r1" })]),
+      new Map([["r1", JSON.stringify({ t: "react", emoji: "👍", op: "add" })]]),
+    );
+    const m = (await repo.thread("c1")).find((x) => x.msgUuid === "m1");
+    expect(m?.reactions).toEqual([{ emoji: "👍", count: 1, mine: false }]);
+  });
+
+  it("applies my outgoing REACTION optimistically (mine+count), no new bubble, and toggles off", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.enqueueOutgoing({ clientRef: "m1", conversationId: "c1", plaintext: "hi", payload: new Uint8Array(), now: 1 });
+    const react = (op: "add" | "remove", ref: string) =>
+      repo.enqueueOutgoing({
+        clientRef: ref,
+        conversationId: "c1",
+        plaintext: JSON.stringify({ t: "react", emoji: "❤️", op }),
+        payload: new Uint8Array(),
+        now: 2,
+        kind: MsgKind.REACTION,
+        overlayTarget: "m1",
+      });
+    await react("add", "r1");
+    expect((await repo.thread("c1")).find((x) => x.msgUuid === "m1")?.reactions).toEqual([{ emoji: "❤️", count: 1, mine: true }]);
+    expect((await repo.thread("c1")).map((x) => x.msgUuid)).toEqual(["m1"]); // overlay is not its own bubble
+    await react("remove", "r2");
+    expect((await repo.thread("c1")).find((x) => x.msgUuid === "m1")?.reactions).toEqual([]); // dropped at zero
+  });
+
+  it("aggregates my + a peer's reaction on the same emoji into one count", async () => {
+    const repo = new MemoryMessageRepo();
+    await repo.enqueueOutgoing({ clientRef: "m1", conversationId: "c1", plaintext: "hi", payload: new Uint8Array(), now: 1 });
+    await repo.enqueueOutgoing({
+      clientRef: "r1",
+      conversationId: "c1",
+      plaintext: JSON.stringify({ t: "react", emoji: "🙏", op: "add" }),
+      payload: new Uint8Array(),
+      now: 2,
+      kind: MsgKind.REACTION,
+      overlayTarget: "m1",
+    });
+    await repo.persistInboxBatch(
+      batch([inbound(3, { kind: MsgKind.REACTION, overlayTarget: "m1", msgUuid: "r2" })]),
+      new Map([["r2", JSON.stringify({ t: "react", emoji: "🙏", op: "add" })]]),
+    );
+    const m = (await repo.thread("c1")).find((x) => x.msgUuid === "m1");
+    expect(m?.reactions).toEqual([{ emoji: "🙏", count: 2, mine: true }]);
+  });
 });

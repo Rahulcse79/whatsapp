@@ -910,3 +910,55 @@ body {
   flex-direction: column;
   gap: 14px;
 }
+
+/* ── Reactions + forward (T5.05b) ─────────────────────────────────────────── */
+
+/* Emoji quick-pick row at the top of the message menu. */
+.react-row {
+  display: flex;
+  gap: 2px;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--line);
+}
+.react-pick {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 18px;
+  padding: 2px 4px;
+  border-radius: 6px;
+  line-height: 1;
+}
+.react-pick:hover,
+.react-pick.on {
+  background: var(--surface);
+}
+
+/* Reaction chips under a bubble. */
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.reaction-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 1px 7px;
+  font-size: 13px;
+  cursor: pointer;
+  line-height: 1.4;
+}
+.reaction-chip.mine {
+  border-color: var(--brand);
+  background: color-mix(in srgb, var(--brand) 14%, var(--panel));
+}
+.reaction-count {
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 600;
+}

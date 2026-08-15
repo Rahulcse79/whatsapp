@@ -32,7 +32,7 @@ export interface MarkSentInput {
 export interface EnqueueOverlayInput {
   conversationId: string;
   targetMsgUuid: string;
-  kind: "edit" | "delete";
+  kind: "edit" | "delete" | "react";
   text: string;
   clientRef: string;
   now: number;

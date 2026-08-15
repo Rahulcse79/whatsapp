@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MediaEnvelope } from "./envelope";
 import type { LinkPreview } from "./linkPreview";
-import { encodeMediaMessage, encodeTextMessage, parseMediaMessage, parseTextMessage } from "./messageBody";
+import { encodeMediaMessage, encodeReaction, encodeTextMessage, parseMediaMessage, parseReaction, parseTextMessage } from "./messageBody";
 
 const env: MediaEnvelope = {
   objectKey: "media/x",
@@ -62,5 +62,22 @@ describe("encode/parseTextMessage (link previews, FR-MSG-08)", () => {
     // A media body is not a text body — parseMediaMessage handles it; here it reads as its raw JSON text.
     const media = encodeMediaMessage([env]);
     expect(parseTextMessage(media)).toEqual({ text: media });
+  });
+});
+
+describe("encode/parseReaction (T5.05b)", () => {
+  it("round-trips an add reaction", () => {
+    expect(parseReaction(encodeReaction("👍", "add"))).toEqual({ emoji: "👍", op: "add" });
+  });
+  it("round-trips a remove reaction", () => {
+    expect(parseReaction(encodeReaction("❤️", "remove"))).toEqual({ emoji: "❤️", op: "remove" });
+  });
+  it("defaults an unknown op to add", () => {
+    expect(parseReaction(JSON.stringify({ t: "react", emoji: "😮", op: "bogus" }))).toEqual({ emoji: "😮", op: "add" });
+  });
+  it("returns null for non-reaction bodies", () => {
+    expect(parseReaction("just text")).toBeNull();
+    expect(parseReaction(encodeTextMessage("hi"))).toBeNull();
+    expect(parseReaction("{not json")).toBeNull();
   });
 });

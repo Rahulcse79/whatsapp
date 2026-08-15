@@ -1870,6 +1870,9 @@ function highlightSnippet(snippet: string): ReactNode {
   return parts;
 }
 
+// Quick emoji reactions offered in the message menu (T5.05b).
+const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
 // Chat wallpaper presets (T5.15) — CSS backgrounds keyed by name; persisted
 // per-chat on-device. "none" clears back to the themed default.
 const WALLPAPERS: Record<string, string> = {
@@ -1914,6 +1917,46 @@ function WallpaperSheet({ current, onPick, onClose }: { current: string | null; 
   );
 }
 
+/** ForwardPicker lists the user's other conversations to forward a message into. */
+function ForwardPicker({ exclude, onPick, onClose }: { exclude: string; onPick: (conversationId: string) => void; onClose: () => void }) {
+  const { services } = useServices();
+  const [items, setItems] = useState<ChatSummary[]>([]);
+  useEffect(() => {
+    void services.conversations().then(setItems).catch(() => {});
+  }, [services]);
+  const targets = items.filter((c) => c.conversationId !== exclude);
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Forward to…</strong>
+        {targets.length === 0 ? (
+          <p className="muted">No other conversations.</p>
+        ) : (
+          <ul className="list" style={{ maxHeight: "50vh" }}>
+            {targets.map((c) => (
+              <li
+                key={c.conversationId}
+                className="row"
+                role="button"
+                tabIndex={0}
+                onClick={() => onPick(c.conversationId)}
+                onKeyDown={onActivate(() => onPick(c.conversationId))}
+              >
+                <div className="row-title">
+                  {services.groupNameOf(c.conversationId) ? `👥 ${services.groupNameOf(c.conversationId)}` : services.peerNameOf(c.conversationId) || c.title}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+        <button className="btn ghost" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Thread({
   conversationId,
   onBack,
@@ -1936,6 +1979,7 @@ export function Thread({
   const [wallpaper, setWallpaperState] = useState<string | null>(() => services.chatWallpaper(conversationId));
   const [showWallpaper, setShowWallpaper] = useState(false);
   const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
+  const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
   const fileRef = useRef<HTMLInputElement>(null);
   const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -2100,6 +2144,11 @@ export function Thread({
     deleteForMe: (m) => void services.deleteForMe(m.msgUuid),
     togglePin: (m) => void services.togglePin(m.msgUuid, !m.pinned),
     toggleStar: (m) => void services.toggleStar(m.msgUuid, !m.starred),
+    react: (m, emoji) => {
+      const mine = m.reactions.some((r) => r.emoji === emoji && r.mine);
+      void services.react(conversationId, m.msgUuid, emoji, mine ? "remove" : "add");
+    },
+    forward: (m) => setForwardMsg(m),
   };
 
   // Every image/video in the thread, so the lightbox can page across them.
@@ -2210,6 +2259,16 @@ export function Thread({
       {showWallpaper ? (
         <WallpaperSheet current={wallpaper} onPick={pickWallpaper} onClose={() => setShowWallpaper(false)} />
       ) : null}
+      {forwardMsg ? (
+        <ForwardPicker
+          exclude={conversationId}
+          onPick={(target) => {
+            void services.forwardMessage(conversationId, forwardMsg.msgUuid, target);
+            setForwardMsg(null);
+          }}
+          onClose={() => setForwardMsg(null)}
+        />
+      ) : null}
       {replyingTo || editing ? (
         <div className="reply-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border, #e2e2e2)", fontSize: "0.82rem" }}>
           <span style={{ flex: 1, opacity: 0.8 }}>
@@ -2288,6 +2347,8 @@ interface MessageActions {
   deleteForMe(m: ThreadMessage): void;
   togglePin(m: ThreadMessage): void;
   toggleStar(m: ThreadMessage): void;
+  react(m: ThreadMessage, emoji: string): void;
+  forward(m: ThreadMessage): void;
 }
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000; // FR-MSG-06
@@ -2345,7 +2406,23 @@ function MessageBubble({
       ) : null}
       {menu ? (
         <div className="msg-menu" style={{ position: "absolute", top: 20, right: 2, zIndex: 5, background: "var(--panel, #fff)", border: "1px solid var(--border, #ccc)", borderRadius: 8, boxShadow: "0 4px 16px rgba(0,0,0,0.18)", display: "flex", flexDirection: "column", minWidth: 150 }}>
+          <div className="react-row">
+            {QUICK_REACTIONS.map((emoji) => (
+              <button
+                key={emoji}
+                className={`react-pick${message.reactions.some((r) => r.emoji === emoji && r.mine) ? " on" : ""}`}
+                aria-label={`React ${emoji}`}
+                onClick={() => {
+                  setMenu(false);
+                  actions.react(message, emoji);
+                }}
+              >
+                {emoji}
+              </button>
+            ))}
+          </div>
           <button className="menu-item" onClick={run(actions.reply)}>↩ Reply</button>
+          <button className="menu-item" onClick={run(actions.forward)}>↪ Forward</button>
           {text ? <button className="menu-item" onClick={run(actions.copy)}>⧉ Copy</button> : null}
           <button className="menu-item" onClick={run(actions.toggleStar)}>{message.starred ? "☆ Unstar" : "⭐ Star"}</button>
           <button className="menu-item" onClick={run(actions.togglePin)}>{message.pinned ? "📌 Unpin" : "📌 Pin"}</button>
@@ -2385,6 +2462,21 @@ function MessageBubble({
           {text?.linkPreview ? <LinkPreviewCard preview={text.linkPreview} /> : null}
         </>
       )}
+      {message.reactions.length > 0 ? (
+        <div className="reactions">
+          {message.reactions.map((r) => (
+            <button
+              key={r.emoji}
+              className={`reaction-chip${r.mine ? " mine" : ""}`}
+              title={r.mine ? "Remove your reaction" : "React"}
+              onClick={() => actions.react(message, r.emoji)}
+            >
+              <span>{r.emoji}</span>
+              {r.count > 1 ? <span className="reaction-count">{r.count}</span> : null}
+            </button>
+          ))}
+        </div>
+      ) : null}
       {message.mine ? <StatusTicks state={message.state} /> : null}
     </div>
   );

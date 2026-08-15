@@ -26,8 +26,46 @@ interface MsgRow {
   state: string;
   pinned?: boolean;
   starred?: boolean;
+  reactions?: Map<string, { count: number; mine: boolean }>; // emoji → tally
   acceptedAt: number;
   createdAt: number;
+}
+
+/** applyReaction folds one reaction overlay into a message's tally. `mine`
+ *  distinguishes my own reaction (tracked so it toggles + highlights) from a
+ *  peer's (a bare count). Removing to zero drops the emoji. */
+function applyReaction(row: MsgRow, emoji: string, op: "add" | "remove", mine: boolean): void {
+  if (!row.reactions) row.reactions = new Map();
+  const cur = row.reactions.get(emoji) ?? { count: 0, mine: false };
+  if (op === "add") {
+    if (mine) {
+      if (!cur.mine) { cur.mine = true; cur.count += 1; } // my re-add is idempotent
+    } else {
+      cur.count += 1;
+    }
+  } else {
+    if (mine) {
+      if (cur.mine) { cur.mine = false; cur.count = Math.max(0, cur.count - 1); }
+    } else {
+      cur.count = Math.max(0, cur.count - 1);
+    }
+  }
+  if (cur.count <= 0) row.reactions.delete(emoji);
+  else row.reactions.set(emoji, cur);
+}
+
+/** parseReactionBody reads a decrypted REACTION overlay body ({t:"react",emoji,op}).
+ *  Kept local so client-core stays free of @wa/media-pipeline (which owns the
+ *  canonical encoder used on the send/seal side). */
+function parseReactionBody(body: string | undefined): { emoji: string; op: "add" | "remove" } | null {
+  if (!body || body.charAt(0) !== "{") return null;
+  try {
+    const o = JSON.parse(body) as Record<string, unknown>;
+    if (o.t !== "react" || typeof o.emoji !== "string") return null;
+    return { emoji: o.emoji, op: o.op === "remove" ? "remove" : "add" };
+  } catch {
+    return null;
+  }
 }
 
 interface ConvRow {
@@ -102,6 +140,9 @@ export class MemoryMessageRepo implements MessageRepo {
           m.body = newBody;
           m.edited = true;
         }
+      } else if (ov.kind === MsgKind.REACTION && !m.deleted) {
+        const r = parseReactionBody(bodies?.get(ov.msgUuid)); // inbound → peer reaction
+        if (r) applyReaction(m, r.emoji, r.op, false);
       }
     }
     return Promise.resolve(plan.watermark);
@@ -110,17 +151,20 @@ export class MemoryMessageRepo implements MessageRepo {
   enqueueOutgoing(d: OutgoingDraft): Promise<void> {
     const kind = d.kind ?? MsgKind.TEXT;
 
-    // Overlay sends (edit/delete) target an existing message — apply optimistically
-    // to the local bubble, and queue the overlay; never create a new bubble.
-    if (kind === MsgKind.OVERLAY_EDIT || kind === MsgKind.OVERLAY_DELETE) {
+    // Overlay sends (edit/delete/react) target an existing message — apply
+    // optimistically to the local bubble, and queue the overlay; never a new bubble.
+    if (kind === MsgKind.OVERLAY_EDIT || kind === MsgKind.OVERLAY_DELETE || kind === MsgKind.REACTION) {
       const target = this.messages.get(d.overlayTarget ?? "");
       if (target && !target.deleted) {
         if (kind === MsgKind.OVERLAY_DELETE) {
           target.deleted = true;
           target.body = "";
-        } else {
+        } else if (kind === MsgKind.OVERLAY_EDIT) {
           target.body = d.plaintext;
           target.edited = true;
+        } else {
+          const r = parseReactionBody(d.plaintext); // my own reaction
+          if (r) applyReaction(target, r.emoji, r.op, true);
         }
       }
       this.outbox.push({
@@ -229,6 +273,9 @@ export class MemoryMessageRepo implements MessageRepo {
         edited: m.edited ?? false,
         pinned: m.pinned ?? false,
         starred: m.starred ?? false,
+        reactions: m.reactions
+          ? [...m.reactions.entries()].map(([emoji, r]) => ({ emoji, count: r.count, mine: r.mine }))
+          : [],
         createdAt: m.createdAt,
       }));
     return Promise.resolve(rows);

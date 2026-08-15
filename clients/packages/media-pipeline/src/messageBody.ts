@@ -89,6 +89,34 @@ export function parseTextMessage(body: string): TextMessageBody {
   return out;
 }
 
+/** ReactionBody is the sealed content of a REACTION overlay: the emoji plus
+ *  whether it adds or removes the reactor's reaction on the target message. */
+export interface ReactionBody {
+  emoji: string;
+  op: "add" | "remove";
+}
+
+/** encodeReaction seals a reaction overlay's content (emoji + add/remove). */
+export function encodeReaction(emoji: string, op: "add" | "remove"): string {
+  return JSON.stringify({ t: "react", v: 1, emoji, op });
+}
+
+/** parseReaction reads a decrypted reaction overlay body, or null if malformed. */
+export function parseReaction(body: string): ReactionBody | null {
+  if (!body || body.charAt(0) !== "{") return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== "object" || parsed === null) return null;
+  const obj = parsed as Record<string, unknown>;
+  if (obj.t !== "react" || typeof obj.emoji !== "string") return null;
+  const op = obj.op === "remove" ? "remove" : "add";
+  return { emoji: obj.emoji, op };
+}
+
 function isLinkPreview(v: unknown): v is LinkPreview {
   if (typeof v !== "object" || v === null) return false;
   const p = v as Record<string, unknown>;

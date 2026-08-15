@@ -57,6 +57,8 @@ import (
 	pttadapters "github.com/whatsapp-v2/server/internal/ptt/adapters"
 	"github.com/whatsapp-v2/server/internal/stories"
 	storiesadapters "github.com/whatsapp-v2/server/internal/stories/adapters"
+	"github.com/whatsapp-v2/server/internal/webinar"
+	webinaradapters "github.com/whatsapp-v2/server/internal/webinar/adapters"
 )
 
 // Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
@@ -264,6 +266,9 @@ func main() {
 	// Communities roof over groups; the announcement group is minted through the
 	// groups service via a thin GroupCreator adapter (keeps communities decoupled).
 	communitiesSvc := communities.NewService(communitiesadapters.NewStore(pool), announcementGroupCreator{groups: groupsSvc})
+	// Webinar/live mode: role-scoped LiveKit tokens (host/speaker publish;
+	// attendees subscribe-only) via the same minter as calls/ptt.
+	webinarSvc := webinar.NewService(webinaradapters.NewStore(pool), webinarMinter{m: calls.NewTokenMinter(liveKitKey, liveKitSecret)})
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -417,6 +422,7 @@ func main() {
 	polls.Routes(mux, pollsSvc, issuer)             // /v1/polls create/vote/close/results (T6.02)
 	channels.Routes(mux, channelsSvc, issuer)       // /v1/channels broadcast: CRUD/follow/posts/react/comment (T7.01)
 	communities.Routes(mux, communitiesSvc, issuer) // /v1/communities: groups-roof + roles/events/discovery (T8.01)
+	webinar.Routes(mux, webinarSvc, issuer)         // /v1/webinars: live 1-to-many, waiting room, raise-hand, Q&A (T9.02)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {
@@ -529,6 +535,15 @@ func devCORS(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// webinarMinter adapts the LiveKit token minter to webinar.Minter: a 1-hour
+// join token whose publish grant is role-scoped (host/speaker publish; attendees
+// subscribe-only), which is what enforces the 1-to-many webinar shape (T9.02).
+type webinarMinter struct{ m *calls.TokenMinter }
+
+func (p webinarMinter) MintJoin(room, identity string, canPublish bool) (string, error) {
+	return p.m.Mint(calls.JoinGrant{Identity: identity, Room: room, CanPublish: canPublish, CanSubscribe: true}, time.Hour, time.Now())
 }
 
 // announcementGroupCreator adapts the groups service to communities.GroupCreator

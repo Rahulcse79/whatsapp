@@ -97,3 +97,5 @@ export {
 } from "./audioProcessing";
 export { PipController, type PipPort } from "./pictureInPicture";
 export { SpatialAudioController, panForTile, type SpatialPanner } from "./spatialAudio";
+export { CaptionController, type CaptionLine, type SttEngine } from "./captions";
+export { TranslationController, type Translator } from "./translation";

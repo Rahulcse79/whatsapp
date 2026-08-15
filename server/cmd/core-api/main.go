@@ -26,6 +26,8 @@ import (
 	"github.com/whatsapp-v2/server/internal/auth/domain"
 	"github.com/whatsapp-v2/server/internal/calls"
 	callsadapters "github.com/whatsapp-v2/server/internal/calls/adapters"
+	"github.com/whatsapp-v2/server/internal/channels"
+	channelsadapters "github.com/whatsapp-v2/server/internal/channels/adapters"
 	"github.com/whatsapp-v2/server/internal/chat"
 	chatadapters "github.com/whatsapp-v2/server/internal/chat/adapters"
 	"github.com/whatsapp-v2/server/internal/contacts"
@@ -256,7 +258,27 @@ func main() {
 	// + metadata only.
 	storiesSvc := stories.NewService(storiesadapters.NewStore(pool), storiesadapters.NewAudience(pool))
 	pollsSvc := polls.NewService(pollsadapters.NewStore(pool))
+	channelsSvc := channels.NewService(channelsadapters.NewStore(pool), channelsadapters.NewNATSBroadcaster(nc, log), log)
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
+	// Scheduled-post sweep: flip due channel posts to published and broadcast
+	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
+	// costs a duplicate best-effort nudge, never a double publish.
+	go func() {
+		t := time.NewTicker(15 * time.Second)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n, err := channelsSvc.PublishDue(ctx); err != nil {
+					log.Warn("channels: publish-due sweep failed", "err", err)
+				} else if n > 0 {
+					log.Info("channels: published scheduled posts", "count", n)
+				}
+			}
+		}
+	}()
 	// 24 h hard-expiry purge (MinIO ILM is the media backstop). Hourly, a plain
 	// DELETE, so overlap across pods is harmless.
 	go func() {
@@ -387,9 +409,10 @@ func main() {
 	calls.Routes(mux, callsSvc, issuer, callsWebhook)
 	ptt.Routes(mux, pttSvc, pttMinter, issuer)
 	stories.Routes(mux, storiesSvc, issuer)
-	polls.Routes(mux, pollsSvc, issuer)     // /v1/polls create/vote/close/results (T6.02)
-	chat.Routes(mux, chatStore, issuer)     // POST /v1/conversations/direct (start a 1:1)
-	profile.Routes(mux, profileSvc, issuer) // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
+	polls.Routes(mux, pollsSvc, issuer)       // /v1/polls create/vote/close/results (T6.02)
+	channels.Routes(mux, channelsSvc, issuer) // /v1/channels broadcast: CRUD/follow/posts/react/comment (T7.01)
+	chat.Routes(mux, chatStore, issuer)       // POST /v1/conversations/direct (start a 1:1)
+	profile.Routes(mux, profileSvc, issuer)   // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {
 		admin.Routes(mux, adminSvc)
 		admin.FlagRoutes(mux, adminSvc, adminFlags)

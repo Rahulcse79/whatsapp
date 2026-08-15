@@ -1160,3 +1160,74 @@ body {
   gap: 8px;
   font-size: 12px;
 }
+
+/* ── Location + contact cards (T6.03) ─────────────────────────────────────── */
+.loc-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+  color: var(--text);
+  text-decoration: none;
+}
+.loc-card.live {
+  justify-content: space-between;
+}
+.loc-inner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+  color: inherit;
+  flex: 1;
+}
+.loc-pin {
+  font-size: 26px;
+}
+.loc-body {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.loc-title {
+  font-weight: 600;
+}
+.loc-coord {
+  font-size: 12px;
+}
+.loc-open {
+  font-size: 12px;
+  color: var(--brand);
+}
+
+.contact-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 220px;
+  max-width: 300px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--panel);
+}
+.contact-avatar {
+  font-size: 28px;
+}
+.contact-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+.contact-name {
+  font-weight: 600;
+}
+.contact-phone {
+  font-size: 12px;
+}

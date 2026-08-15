@@ -17,7 +17,7 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { MediaPipeline, ResumableUploader, encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
+import { MediaPipeline, ResumableUploader, encodeContactCard, encodeLiveLocation, encodeLocation, encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
@@ -406,6 +406,68 @@ export class AppServices {
     await this.db.enqueueText({ conversationId, text: body, listText: `📎 ${file.name}`, clientRef: newId(), now: Date.now() });
     this.notifyChange();
     await this.ws?.flush();
+  }
+
+  // ── location + contact sharing (T6.03) ────────────────────────────────────
+
+  private readonly liveShares = new Map<string, ReturnType<typeof setInterval>>();
+
+  /** sendLocation shares a one-off place as an E2EE message. */
+  async sendLocation(conversationId: string, lat: number, lng: number, label?: string): Promise<void> {
+    const body = encodeLocation(lat, lng, label);
+    await this.db.enqueueText({ conversationId, text: body, listText: "📍 Location", clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** sendContactCard shares a contact (name + optional phone/userId) as a card. */
+  async sendContactCard(conversationId: string, name: string, phone: string, userId?: string): Promise<void> {
+    const body = encodeContactCard(name, phone, userId);
+    await this.db.enqueueText({ conversationId, text: body, listText: `👤 ${name}`, clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** startLiveLocation begins a time-boxed live share: it sends one sample now,
+   *  then every 15s until `durationMs` elapses, each riding the ordinary E2EE
+   *  message relay (recipients render the latest sample per share as one live
+   *  pin). `position` yields the current coordinates. Returns the share id. */
+  startLiveLocation(conversationId: string, durationMs: number, position: () => Promise<{ lat: number; lng: number }>): string {
+    const shareId = newId();
+    const untilMs = Date.now() + durationMs;
+    let seq = 0;
+    const send = async (): Promise<void> => {
+      if (Date.now() > untilMs) {
+        this.stopLiveLocation(shareId);
+        return;
+      }
+      try {
+        const { lat, lng } = await position();
+        const body = encodeLiveLocation(shareId, lat, lng, untilMs, seq++);
+        await this.db.enqueueText({ conversationId, text: body, listText: "📍 Live location", clientRef: newId(), now: Date.now() });
+        this.notifyChange();
+        await this.ws?.flush();
+      } catch {
+        /* a dropped sample is fine — the next tick retries */
+      }
+    };
+    void send();
+    this.liveShares.set(shareId, setInterval(() => void send(), 15_000));
+    return shareId;
+  }
+
+  /** stopLiveLocation ends a live share early (also fires at expiry). */
+  stopLiveLocation(shareId: string): void {
+    const t = this.liveShares.get(shareId);
+    if (t) {
+      clearInterval(t);
+      this.liveShares.delete(shareId);
+    }
+  }
+
+  /** isLiveSharing reports whether a live share is still ticking on this device. */
+  isLiveSharing(shareId: string): boolean {
+    return this.liveShares.has(shareId);
   }
 
   // ── polls (T6.02) ─────────────────────────────────────────────────────────

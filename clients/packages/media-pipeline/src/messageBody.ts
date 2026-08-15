@@ -104,6 +104,81 @@ export interface StickerRef {
   emoji: string;
 }
 
+/** LocationBody is a one-off shared place (E2EE). */
+export interface LocationBody {
+  lat: number;
+  lng: number;
+  label?: string;
+}
+
+/** encodeLocation seals a static-location message body. */
+export function encodeLocation(lat: number, lng: number, label?: string): string {
+  const b: { t: "loc"; v: 1; lat: number; lng: number; label?: string } = { t: "loc", v: 1, lat, lng };
+  if (label) b.label = label;
+  return JSON.stringify(b);
+}
+
+/** parseLocation reads a static-location body, or null. */
+export function parseLocation(body: string): LocationBody | null {
+  const o = tryJSON(body);
+  if (!o || o.t !== "loc" || typeof o.lat !== "number" || typeof o.lng !== "number") return null;
+  return { lat: o.lat, lng: o.lng, label: typeof o.label === "string" ? o.label : undefined };
+}
+
+/** LiveLocationBody is one position sample of a time-boxed live share. Samples
+ *  share a `shareId`; the client renders the latest per share as one live pin,
+ *  ending at `untilMs`. Updates ride the ordinary E2EE message relay. */
+export interface LiveLocationBody {
+  shareId: string;
+  lat: number;
+  lng: number;
+  untilMs: number;
+  seq: number;
+}
+
+/** encodeLiveLocation seals one live-location sample. */
+export function encodeLiveLocation(shareId: string, lat: number, lng: number, untilMs: number, seq: number): string {
+  return JSON.stringify({ t: "live", v: 1, sid: shareId, lat, lng, until: untilMs, seq });
+}
+
+/** parseLiveLocation reads a live-location sample, or null. */
+export function parseLiveLocation(body: string): LiveLocationBody | null {
+  const o = tryJSON(body);
+  if (!o || o.t !== "live" || typeof o.sid !== "string" || typeof o.lat !== "number" || typeof o.lng !== "number") return null;
+  return { shareId: o.sid, lat: o.lat, lng: o.lng, untilMs: typeof o.until === "number" ? o.until : 0, seq: typeof o.seq === "number" ? o.seq : 0 };
+}
+
+/** ContactCardBody is a shared contact (E2EE). */
+export interface ContactCardBody {
+  name: string;
+  phone: string;
+  userId?: string;
+}
+
+/** encodeContactCard seals a contact-card message body. */
+export function encodeContactCard(name: string, phone: string, userId?: string): string {
+  const b: { t: "contact"; v: 1; name: string; phone: string; uid?: string } = { t: "contact", v: 1, name, phone };
+  if (userId) b.uid = userId;
+  return JSON.stringify(b);
+}
+
+/** parseContactCard reads a contact-card body, or null. */
+export function parseContactCard(body: string): ContactCardBody | null {
+  const o = tryJSON(body);
+  if (!o || o.t !== "contact" || typeof o.name !== "string" || typeof o.phone !== "string") return null;
+  return { name: o.name, phone: o.phone, userId: typeof o.uid === "string" ? o.uid : undefined };
+}
+
+function tryJSON(body: string): Record<string, unknown> | null {
+  if (!body || body.charAt(0) !== "{") return null;
+  try {
+    const p = JSON.parse(body);
+    return typeof p === "object" && p !== null ? (p as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** PollBody is a sent poll's E2EE content: the poll id (server-registered
  *  lifecycle handle) plus the question and option TEXTS (which the server never
  *  sees — it stores only the option count + votes by index). */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MediaEnvelope } from "./envelope";
 import type { LinkPreview } from "./linkPreview";
-import { encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, parseMediaMessage, parsePoll, parseReaction, parseTextMessage } from "./messageBody";
+import { encodeContactCard, encodeLiveLocation, encodeLocation, encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, parseContactCard, parseLiveLocation, parseLocation, parseMediaMessage, parsePoll, parseReaction, parseTextMessage } from "./messageBody";
 
 const env: MediaEnvelope = {
   objectKey: "media/x",
@@ -91,5 +91,23 @@ describe("encode/parsePoll (T6.02)", () => {
     expect(parsePoll(encodePoll("p2", "Q", ["a", "b"], false))?.multi).toBe(false);
     expect(parsePoll("just text")).toBeNull();
     expect(parsePoll(encodeSticker("k", "😀"))).toBeNull();
+  });
+});
+
+describe("location + contact + live-location codecs (T6.03)", () => {
+  it("round-trips a static location", () => {
+    expect(parseLocation(encodeLocation(37.42, -122.08, "HQ"))).toEqual({ lat: 37.42, lng: -122.08, label: "HQ" });
+    expect(parseLocation(encodeLocation(1, 2))?.label).toBeUndefined();
+  });
+  it("round-trips a live-location sample", () => {
+    expect(parseLiveLocation(encodeLiveLocation("s1", 10, 20, 999, 3))).toEqual({ shareId: "s1", lat: 10, lng: 20, untilMs: 999, seq: 3 });
+  });
+  it("round-trips a contact card", () => {
+    expect(parseContactCard(encodeContactCard("Rahul", "+15551234567", "u1"))).toEqual({ name: "Rahul", phone: "+15551234567", userId: "u1" });
+  });
+  it("rejects the wrong type for each parser", () => {
+    expect(parseLocation(encodeContactCard("a", "b"))).toBeNull();
+    expect(parseContactCard(encodeLocation(1, 2))).toBeNull();
+    expect(parseLiveLocation("plain text")).toBeNull();
   });
 });

@@ -8,11 +8,17 @@ import {
 } from "@wa/client-core";
 import {
   classifyMedia,
+  parseContactCard,
+  parseLiveLocation,
+  parseLocation,
   parseMediaMessage,
   parsePoll,
   parseSticker,
   parseTextMessage,
+  type ContactCardBody,
   type LinkPreview,
+  type LiveLocationBody,
+  type LocationBody,
   type MediaEnvelope,
   type PollBody,
   type QuotedRef,
@@ -2083,6 +2089,181 @@ function PollComposer({ onCreate, onClose }: { onCreate: (question: string, opti
   );
 }
 
+// currentPosition resolves the device's coordinates via the browser Geolocation
+// API (prompts for permission; only used when the user shares location).
+function currentPosition(): Promise<{ lat: number; lng: number }> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Geolocation isn't available in this browser."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ lat: p.coords.latitude, lng: p.coords.longitude }),
+      (e) => reject(new Error(e.message || "Location permission denied.")),
+      { enableHighAccuracy: true, timeout: 10_000 },
+    );
+  });
+}
+
+// mapsHref builds an "open in maps" link for a coordinate (OpenStreetMap — no
+// key, no client-side tile fetch that would leak location to a tile server).
+function mapsHref(lat: number, lng: number): string {
+  return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lng}#map=16/${lat}/${lng}`;
+}
+function fmtCoord(lat: number, lng: number): string {
+  return `${lat.toFixed(5)}, ${lng.toFixed(5)}`;
+}
+
+/** LocationCard renders a one-off shared place. */
+function LocationCard({ loc }: { loc: LocationBody }) {
+  return (
+    <a className="loc-card" href={mapsHref(loc.lat, loc.lng)} target="_blank" rel="noopener noreferrer">
+      <span className="loc-pin" aria-hidden>📍</span>
+      <span className="loc-body">
+        <span className="loc-title">{loc.label || "Location"}</span>
+        <span className="loc-coord mono">{fmtCoord(loc.lat, loc.lng)}</span>
+        <span className="loc-open">Open in maps ↗</span>
+      </span>
+    </a>
+  );
+}
+
+/** LiveLocationBubble renders the latest sample of a live share, with a live/
+ *  ended state. The sender sees a Stop control while their share is ticking. */
+function LiveLocationBubble({ live, mine }: { live: LiveLocationBody; mine: boolean }) {
+  const { services } = useServices();
+  const [, force] = useState(0);
+  const ended = Date.now() > live.untilMs;
+  useEffect(() => {
+    if (ended) return;
+    const h = setInterval(() => force((n) => n + 1), 30_000); // refresh the "ends in" label
+    return () => clearInterval(h);
+  }, [ended]);
+  const sharing = mine && services.isLiveSharing(live.shareId);
+  return (
+    <div className="loc-card live">
+      <a className="loc-inner" href={mapsHref(live.lat, live.lng)} target="_blank" rel="noopener noreferrer">
+        <span className="loc-pin" aria-hidden>{ended ? "📍" : "🛰️"}</span>
+        <span className="loc-body">
+          <span className="loc-title">{ended ? "Live location ended" : "Live location"}</span>
+          <span className="loc-coord mono">{fmtCoord(live.lat, live.lng)}</span>
+          <span className="loc-open">
+            {ended ? "Open last spot ↗" : `Live until ${new Date(live.untilMs).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} ↗`}
+          </span>
+        </span>
+      </a>
+      {sharing ? (
+        <button
+          className="btn small danger"
+          onClick={() => {
+            services.stopLiveLocation(live.shareId);
+            force((n) => n + 1);
+          }}
+        >
+          Stop
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** ContactCardBubble renders a shared contact with a Message action. */
+function ContactCardBubble({ card }: { card: ContactCardBody }) {
+  const { services } = useServices();
+  return (
+    <div className="contact-card">
+      <span className="contact-avatar" aria-hidden>👤</span>
+      <span className="contact-body">
+        <span className="contact-name">{card.name}</span>
+        {card.phone ? <span className="contact-phone mono">{card.phone}</span> : null}
+      </span>
+      {card.userId ? (
+        <button className="btn small" onClick={() => void services.openDirectWithUser(card.userId!).catch(() => {})}>
+          Message
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+/** LocationSheet shares the device's current place, or starts a time-boxed live
+ *  share (15 min / 1 hour). */
+function LocationSheet({ conversationId, onClose }: { conversationId: string; onClose: () => void }) {
+  const { services } = useServices();
+  const [pos, setPos] = useState<{ lat: number; lng: number } | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  useEffect(() => {
+    currentPosition().then(setPos).catch((e: Error) => setErr(e.message));
+  }, []);
+  const startLive = (mins: number): void => {
+    services.startLiveLocation(conversationId, mins * 60_000, currentPosition);
+    onClose();
+  };
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Share location</strong>
+        {err ? <p className="muted">Couldn't get your location: {err}</p> : pos ? <p className="mono">{fmtCoord(pos.lat, pos.lng)}</p> : <p className="muted">Locating…</p>}
+        <button className="btn" disabled={!pos} onClick={() => { if (pos) { void services.sendLocation(conversationId, pos.lat, pos.lng); onClose(); } }}>
+          Send current location
+        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="btn ghost" style={{ flex: 1 }} disabled={!pos} onClick={() => startLive(15)}>
+            Live · 15 min
+          </button>
+          <button className="btn ghost" style={{ flex: 1 }} disabled={!pos} onClick={() => startLive(60)}>
+            Live · 1 hour
+          </button>
+        </div>
+        <button className="btn ghost" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** ContactPicker shares one of your direct-chat peers as a contact card. Phone
+ *  numbers aren't held client-side (privacy), so the card carries name + userId
+ *  (its Message button opens a chat); a phone is a later refinement. */
+function ContactPicker({ conversationId, onClose }: { conversationId: string; onClose: () => void }) {
+  const { services } = useServices();
+  const [items, setItems] = useState<ChatSummary[]>([]);
+  useEffect(() => {
+    void services.conversations().then(setItems).catch(() => {});
+  }, [services]);
+  const peers = items
+    .map((c) => ({ userId: services.peerOf(c.conversationId), name: services.peerNameOf(c.conversationId) }))
+    .filter((p): p is { userId: string; name: string } => !!p.userId && !!p.name);
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Share a contact</strong>
+        {peers.length === 0 ? (
+          <p className="muted">No contacts to share yet.</p>
+        ) : (
+          <ul className="list" style={{ maxHeight: "50vh" }}>
+            {peers.map((p) => {
+              const share = (): void => {
+                void services.sendContactCard(conversationId, p.name, "", p.userId);
+                onClose();
+              };
+              return (
+                <li key={p.userId} className="row" role="button" tabIndex={0} onClick={share} onKeyDown={onActivate(share)}>
+                  <div className="row-title">👤 {p.name}</div>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+        <button className="btn ghost" onClick={onClose}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Thread({
   conversationId,
   onBack,
@@ -2108,6 +2289,8 @@ export function Thread({
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
   const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | null>(null); // composer picker
   const [showPoll, setShowPoll] = useState(false); // poll-creation modal
+  const [showLocation, setShowLocation] = useState(false); // location-share sheet
+  const [showContact, setShowContact] = useState(false); // contact-share picker
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLInputElement>(null);
   const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -2313,10 +2496,14 @@ export function Thread({
 
   // Every image/video in the thread, so the lightbox can page across them.
   const visuals: MediaEnvelope[] = [];
+  // Latest live-location sample per share, so the thread shows one moving pin.
+  const liveLatest = new Map<string, string>();
   for (const m of messages) {
     if (m.deleted) continue;
     const media = parseMediaMessage(m.body);
     if (media) for (const a of media.attachments) if (isVisual(a)) visuals.push(a);
+    const lv = parseLiveLocation(m.body);
+    if (lv) liveLatest.set(lv.shareId, m.msgUuid);
   }
 
   return (
@@ -2393,19 +2580,24 @@ export function Thread({
       </div>
       <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
-        {messages.map((m) => (
-          <MessageBubble
-            key={m.msgUuid}
-            message={m}
-            actions={actions}
-            onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })}
-            bubbleRef={(el) => {
-              bubbleRefs.current[m.msgUuid] = el;
-            }}
-            flash={flashId === m.msgUuid}
-            onJump={jumpTo}
-          />
-        ))}
+        {messages.map((m) => {
+          // Collapse a live-location share to its latest sample (one moving pin).
+          const lv = parseLiveLocation(m.body);
+          if (lv && liveLatest.get(lv.shareId) !== m.msgUuid) return null;
+          return (
+            <MessageBubble
+              key={m.msgUuid}
+              message={m}
+              actions={actions}
+              onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })}
+              bubbleRef={(el) => {
+                bubbleRefs.current[m.msgUuid] = el;
+              }}
+              flash={flashId === m.msgUuid}
+              onJump={jumpTo}
+            />
+          );
+        })}
       </div>
       <DownloadsPanel />
       {services.hasPendingSend(conversationId) ? (
@@ -2438,6 +2630,8 @@ export function Thread({
           }}
         />
       ) : null}
+      {showLocation ? <LocationSheet conversationId={conversationId} onClose={() => setShowLocation(false)} /> : null}
+      {showContact ? <ContactPicker conversationId={conversationId} onClose={() => setShowContact(false)} /> : null}
       {replyingTo || editing ? (
         <div className="reply-bar" style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 10px", borderTop: "1px solid var(--border, #e2e2e2)", fontSize: "0.82rem" }}>
           <span style={{ flex: 1, opacity: 0.8 }}>
@@ -2503,6 +2697,12 @@ export function Thread({
             </button>
             <button className="btn small ghost" type="button" aria-label="Poll" title="Create a poll" disabled={!!editing} onClick={() => setShowPoll(true)}>
               📊
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Location" title="Share location" disabled={!!editing} onClick={() => setShowLocation(true)}>
+              📍
+            </button>
+            <button className="btn small ghost" type="button" aria-label="Contact" title="Share a contact" disabled={!!editing} onClick={() => setShowContact(true)}>
+              👤
             </button>
             <button
               className="btn small ghost"
@@ -2595,9 +2795,13 @@ function MessageBubble({
   const media = message.deleted ? null : parseMediaMessage(message.body);
   const sticker = media || message.deleted ? null : parseSticker(message.body);
   const poll = media || sticker || message.deleted ? null : parsePoll(message.body);
-  const text = media || sticker || poll || message.deleted ? null : parseTextMessage(message.body);
+  const location = media || sticker || poll || message.deleted ? null : parseLocation(message.body);
+  const live = media || sticker || poll || location || message.deleted ? null : parseLiveLocation(message.body);
+  const contact = media || sticker || poll || location || live || message.deleted ? null : parseContactCard(message.body);
+  const special = !!(media || sticker || poll || location || live || contact);
+  const text = special || message.deleted ? null : parseTextMessage(message.body);
   const age = Date.now() - message.createdAt;
-  const canEdit = message.mine && !message.deleted && !media && !sticker && !poll && age < EDIT_WINDOW_MS;
+  const canEdit = message.mine && !message.deleted && !special && age < EDIT_WINDOW_MS;
   const canDeleteAll = message.mine && !message.deleted && age < DELETE_WINDOW_MS;
 
   const run = (fn: (m: ThreadMessage) => void) => () => {
@@ -2674,6 +2878,12 @@ function MessageBubble({
         <span className="sticker-msg" role="img" aria-label="sticker">{sticker.emoji}</span>
       ) : poll ? (
         <PollBubble poll={poll} mine={message.mine} />
+      ) : location ? (
+        <LocationCard loc={location} />
+      ) : live ? (
+        <LiveLocationBubble live={live} mine={message.mine} />
+      ) : contact ? (
+        <ContactCardBubble card={contact} />
       ) : (
         <>
           <span>{message.deleted ? <em style={{ opacity: 0.7 }}>This message was deleted</em> : text ? <RichText text={text.text} /> : null}</span>

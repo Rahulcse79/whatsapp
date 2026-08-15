@@ -22,7 +22,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
-import type { GroupInfo, GroupMember, Invite, MatchedContact, UserRef } from "../services/appServices";
+import type { CallHistoryItem, GroupInfo, GroupMember, Invite, MatchedContact, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -408,6 +408,60 @@ export function Verify({
   );
 }
 
+/** CallHistory lists recent calls (FR-CALL-06, metadata only). Placing a call
+ *  happens from a thread; this is the read-only log. */
+export function CallHistory({ onBack }: { onBack: () => void }) {
+  const { services } = useServices();
+  const [calls, setCalls] = useState<CallHistoryItem[]>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    services
+      .callHistory()
+      .then((c) => {
+        if (!alive) return;
+        setCalls(c);
+        for (const call of c) for (const p of call.participants) void services.loadUserProfile(p);
+      })
+      .catch(() => setError("Couldn't load call history."));
+    return () => {
+      alive = false;
+    };
+  }, [services]);
+
+  return (
+    <div className="pane">
+      <div className="pane-head">
+        <button className="btn small ghost" onClick={onBack}>
+          ‹ Back
+        </button>
+        <span>Calls</span>
+        <span />
+      </div>
+      <div className="messages">
+        {error ? <p className="muted center">{error}</p> : null}
+        {!error && calls.length === 0 ? <p className="muted center">No calls yet.</p> : null}
+        {calls.map((c) => (
+          <div
+            key={c.id}
+            style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border, #eee)" }}
+          >
+            <span aria-hidden>{c.kind === 2 ? "📹" : "📞"}</span>
+            <span className="mono" style={{ flex: 1 }}>
+              {(c.participants[0] ?? c.initiator).slice(0, 12)}
+            </span>
+            <span style={{ opacity: 0.7, fontSize: "0.78rem" }}>
+              {c.outcome}
+              {c.startedAt ? ` · ${new Date(c.startedAt).toLocaleString()}` : ""}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function ChatList({
   onOpen,
   onNew,
@@ -415,6 +469,7 @@ export function ChatList({
   onProfile,
   onContacts,
   onNewGroup,
+  onCalls,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -422,6 +477,7 @@ export function ChatList({
   onProfile: () => void;
   onContacts: () => void;
   onNewGroup: () => void;
+  onCalls: () => void;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
@@ -462,6 +518,9 @@ export function ChatList({
           </button>
           <button className="btn small ghost" onClick={onContacts} aria-label="Contacts">
             👥 Contacts
+          </button>
+          <button className="btn small ghost" onClick={onCalls} aria-label="Call history">
+            📞 Calls
           </button>
           <button className="btn small ghost" onClick={onSearch} aria-label="Search messages">
             🔍 Search

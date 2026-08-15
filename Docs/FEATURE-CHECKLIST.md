@@ -103,7 +103,7 @@ of the screens (media send, groups, calls, stories, settings) are the open work.
 | FR-CALL-03 | Ring state machine (45 s timeout) | ✅ | ✅ | ✅ |
 | FR-CALL-04 | Mute/speaker/BT/camera-switch/screen-share/blur | ✅ | ✅ | 🔶 |
 | FR-CALL-05 | Adaptive quality; video→audio downgrade; ICE restart | ✅ | ✅ | 🔶 |
-| FR-CALL-06 | Call history (90 d); missed-call notifications | ✅ | ✅ | 🔶 |
+| FR-CALL-06 | Call history (90 d); missed-call notifications | ✅ | ✅ | ✅ |
 | FR-CALL-07 | Client-side recording w/ consent signaling | ✅ | ✅ | ⬜ |
 
 ## PTT — Push-to-Talk

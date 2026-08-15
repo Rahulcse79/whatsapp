@@ -36,6 +36,18 @@ export interface MyProfile extends PublicProfile {
   privacy: Record<string, string>;
 }
 
+/** CallHistoryItem is one metadata-only call record (FR-CALL-06). */
+export interface CallHistoryItem {
+  id: string;
+  roomId: string;
+  kind: number; // 1 voice · 2 video (wire enum)
+  initiator: string;
+  participants: string[];
+  startedAt?: string;
+  endedAt?: string;
+  outcome: string;
+}
+
 /** UserRef is a metadata-only user reference (search hit / favorite). */
 export interface UserRef {
   userId: string;
@@ -357,6 +369,34 @@ export class AppServices {
     });
     if (res.status === 409) throw new Error("That username is already taken.");
     if (!res.ok) throw new Error("Couldn't save your profile — check the fields and try again.");
+  }
+
+  /** callHistory loads recent call records (metadata only, 90-day window). */
+  async callHistory(limit = 50): Promise<CallHistoryItem[]> {
+    const res = await this.authedRequest("GET", `/v1/calls/history?limit=${limit}`);
+    if (!res.ok) throw new Error("Couldn't load call history.");
+    const body = (await res.json()) as {
+      calls?: Array<{
+        id: string;
+        room_id: string;
+        kind: number;
+        initiator: string;
+        participants?: string[];
+        started_at?: string;
+        ended_at?: string;
+        outcome: string;
+      }>;
+    };
+    return (body.calls ?? []).map((c) => ({
+      id: c.id,
+      roomId: c.room_id,
+      kind: c.kind,
+      initiator: c.initiator,
+      participants: c.participants ?? [],
+      startedAt: c.started_at,
+      endedAt: c.ended_at,
+      outcome: c.outcome,
+    }));
   }
 
   /** loadUserProfile fetches (and caches) a user's public profile; re-renders

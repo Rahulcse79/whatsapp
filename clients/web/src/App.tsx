@@ -2,7 +2,7 @@ import { useState } from "react";
 import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { ChatList, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Thread, Verify } from "./ui/screens";
+import { CallHistory, ChatList, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Thread, Verify } from "./ui/screens";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
 type Nav =
@@ -11,6 +11,7 @@ type Nav =
   | { name: "chats" }
   | { name: "newChat" }
   | { name: "search" }
+  | { name: "calls" }
   | { name: "profile" }
   | { name: "contacts" }
   | { name: "createGroup" }
@@ -36,11 +37,15 @@ function Router() {
         onProfile={() => setNav({ name: "profile" })}
         onContacts={() => setNav({ name: "contacts" })}
         onNewGroup={() => setNav({ name: "createGroup" })}
+        onCalls={() => setNav({ name: "calls" })}
       />
     );
   }
   if (nav.name === "profile") {
     return <Profile onBack={() => setNav({ name: "chats" })} />;
+  }
+  if (nav.name === "calls") {
+    return <CallHistory onBack={() => setNav({ name: "chats" })} />;
   }
   if (nav.name === "createGroup") {
     return (

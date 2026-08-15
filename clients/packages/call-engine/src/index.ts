@@ -89,3 +89,11 @@ export {
   type ScreenShareState,
   type ScreenSource,
 } from "./screenShare";
+export {
+  AudioProcessingController,
+  defaultAudioProcessing,
+  type AudioProcessingState,
+  type AudioConstrainer,
+} from "./audioProcessing";
+export { PipController, type PipPort } from "./pictureInPicture";
+export { SpatialAudioController, panForTile, type SpatialPanner } from "./spatialAudio";

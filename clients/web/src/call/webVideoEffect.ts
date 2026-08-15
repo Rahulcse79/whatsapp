@@ -10,8 +10,10 @@ import type { BackgroundEffect, VideoProcessor } from "@wa/call-engine";
  *  WebGL / WASM + MediaStreamTrackProcessor). Injected so the model bundle is
  *  loaded only when blur is enabled, and so no frame leaves the device. */
 export interface SegmentationBlur {
-  /** Begin processing `source`; returns the blurred output track. */
-  start(source: MediaStreamTrack): MediaStreamTrack;
+  /** Begin processing `source`; returns the effected output track. With
+   *  opts.backgroundImage the background is REPLACED by that image (virtual
+   *  background, T9.01); otherwise it is blurred. */
+  start(source: MediaStreamTrack, opts?: { backgroundImage?: string }): MediaStreamTrack;
   /** Tear the pipeline down and free the model. */
   stop(): void;
 }
@@ -31,10 +33,12 @@ export function createWebVideoProcessor(
   let processed: MediaStreamTrack | null = null;
 
   return {
-    apply(effect: BackgroundEffect) {
+    apply(effect: BackgroundEffect, opts?: { backgroundImage?: string }) {
       const src = sourceTrack();
-      if (!src || effect !== "blur") return Promise.resolve();
-      processed = blur.start(src);
+      if (!src || effect === "none") return Promise.resolve();
+      // blur + background share the segmentation pipeline; background passes the
+      // replacement image through to the processor.
+      processed = blur.start(src, effect === "background" ? { backgroundImage: opts?.backgroundImage } : undefined);
       swap(processed);
       return Promise.resolve();
     },

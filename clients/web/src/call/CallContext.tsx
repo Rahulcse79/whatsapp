@@ -57,6 +57,9 @@ export interface CallApi {
   flipCamera(): Promise<void>;
   toggleScreenShare(): Promise<void>;
   toggleBlur(): Promise<void>;
+  /** Apply a virtual-background image, or clear back to the raw camera (T9.01). */
+  setBackground(imageUrl: string): Promise<void>;
+  clearEffect(): Promise<void>;
   /** Signaling hooks the WS layer calls when call frames arrive. */
   onOffer(peerId: string, roomId: string, ringId: string, kind: CallKind): void;
   onRing(signal: RingSignal): Promise<void>;
@@ -136,6 +139,8 @@ export function CallProvider({ children }: { children: ReactNode }) {
     flipCamera: () => controller.flip(),
     toggleScreenShare: () => screenCtrl.toggle(),
     toggleBlur: () => effectCtrl.toggleBlur(),
+    setBackground: (imageUrl) => effectCtrl.setBackground(imageUrl),
+    clearEffect: () => effectCtrl.setEffect("none"),
     onOffer: (peerId, roomId, ringId, kind) => session.onOffer(peerId, roomId, ringId, kind),
     onRing: (signal) => session.onRing(signal),
     onRemoteEnd: (reason) => session.onRemoteEnd(reason),

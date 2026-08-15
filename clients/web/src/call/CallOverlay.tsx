@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { useCall } from "./CallContext";
 
 export function CallOverlay() {
-  const { state, camera, screen, effect, localVideo, accept, decline, hangup, toggleCamera, flipCamera, toggleScreenShare, toggleBlur } =
+  const { state, camera, screen, effect, localVideo, accept, decline, hangup, toggleCamera, flipCamera, toggleScreenShare, toggleBlur, setBackground, clearEffect } =
     useCall();
 
   if (state.phase === "idle") return null;
@@ -46,6 +46,16 @@ export function CallOverlay() {
                       </button>
                       <button className="btn ghost" onClick={() => void toggleBlur()}>
                         {effect.effect === "blur" ? "Unblur" : "Blur"}
+                      </button>
+                      <button
+                        className="btn ghost"
+                        onClick={() =>
+                          effect.effect === "background"
+                            ? void clearEffect()
+                            : void setBackground("preset:office")
+                        }
+                      >
+                        {effect.effect === "background" ? "No background" : "Background"}
                       </button>
                     </>
                   ) : null}

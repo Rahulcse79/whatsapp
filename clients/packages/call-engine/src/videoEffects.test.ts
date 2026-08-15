@@ -3,8 +3,8 @@ import { EffectController, type BackgroundEffect, type VideoProcessor } from "./
 
 class FakeProcessor implements VideoProcessor {
   log: string[] = [];
-  apply(effect: BackgroundEffect): Promise<void> {
-    this.log.push(`apply:${effect}`);
+  apply(effect: BackgroundEffect, opts?: { backgroundImage?: string }): Promise<void> {
+    this.log.push(opts?.backgroundImage ? `apply:${effect}:${opts.backgroundImage}` : `apply:${effect}`);
     return Promise.resolve();
   }
   clear(): Promise<void> {
@@ -51,5 +51,16 @@ describe("EffectController", () => {
     await c.toggleBlur();
     await c.toggleBlur();
     expect(seen).toEqual(["blur", "none"]);
+  });
+
+  it("applies a virtual background image and re-applies on image change (T9.01)", async () => {
+    const p = new FakeProcessor();
+    const c = new EffectController(p);
+    await c.setBackground("img://beach");
+    expect(c.getState()).toEqual({ effect: "background", backgroundImage: "img://beach" });
+    await c.setBackground("img://beach"); // idempotent (same image)
+    await c.setBackground("img://office"); // different image → re-apply
+    await c.setEffect("none");
+    expect(p.log).toEqual(["apply:background:img://beach", "apply:background:img://office", "clear"]);
   });
 });

@@ -66,6 +66,19 @@ jobs:
           echo "node-linker=hoisted" >> .npmrc
           pnpm install --no-frozen-lockfile
 
+      # @wa/proto-types' generated code (src/gen) is gitignored (same policy as
+      # the Go gen), so the mobile app that imports it for the binary WS codec
+      # would fail the release JS bundle with "Unable to resolve module
+      # ./gen/.../frames_pb.js". Generate it before prebuild, exactly like the
+      # `clients (ts)` CI job does.
+      - uses: bufbuild/buf-action@v1
+        with:
+          setup_only: true
+
+      - name: Generate protobuf code (TS)
+        working-directory: server/proto
+        run: buf generate
+
       - name: Generate native Android project (Expo prebuild)
         working-directory: clients/mobile
         env:

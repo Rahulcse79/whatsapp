@@ -145,10 +145,10 @@ of the screens (media send, groups, calls, stories, settings) are the open work.
 
 | ID | Feature | D | S | C |
 |---|---|:-:|:-:|:-:|
-| FR-ADMIN-01 | OIDC-SSO + 2FA admin, RBAC, IP allowlist | ✅ | ✅ | ⬜ |
-| FR-ADMIN-02 | Metadata search; report queue; warn/suspend/ban | ✅ | ✅ | ⬜ |
-| FR-ADMIN-03 | Immutable audit_log on every action | ✅ | ✅ | — |
-| FR-ADMIN-04 | Feature-flag mgmt; config; aggregate dashboards | ✅ | ✅ | ⬜ |
+| FR-ADMIN-01 | OIDC-SSO + 2FA admin, RBAC, IP allowlist (2FA/allowlist at edge) | ✅ | ✅ | ✅ |
+| FR-ADMIN-02 | Metadata search; report queue; warn/suspend/ban | ✅ | ✅ | ✅ |
+| FR-ADMIN-03 | Immutable audit_log on every action (SPA has a viewer) | ✅ | ✅ | ✅ |
+| FR-ADMIN-04 | Feature-flag mgmt; config; aggregate dashboards (dashboards deferred) | ✅ | ✅ | 🔶 |
 | FR-ADMIN-05 | Reports attach ciphertext only with consent | ✅ | ✅ | — |
 
 > ADMIN "C" = a separate internal React SPA over the existing admin REST API — not built yet.

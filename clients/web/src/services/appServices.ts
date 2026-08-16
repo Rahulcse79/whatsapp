@@ -288,6 +288,7 @@ export class AppServices {
   private ws: WsClient | null = null;
   private cursorMirror: ConversationCursor[] = [];
   private readonly changeListeners = new Set<() => void>();
+  private readonly authListeners = new Set<(authed: boolean) => void>(); // session gained/lost
   private readonly peerByConv = new Map<string, string>(); // conversationId → peer userId
   private readonly profileCache = new Map<string, PublicProfile>(); // userId → public profile
   private callHandler: CallSignalHandler | null = null; // set by CallProvider
@@ -326,6 +327,18 @@ export class AppServices {
   }
   private notifyChange(): void {
     for (const cb of this.changeListeners) cb();
+  }
+
+  /** onAuthChange fires when the session is gained (login) or lost (logout /
+   *  failed refresh). The UI uses it to route to the chat list or the login
+   *  screen — so an expired session bounces to login instead of leaving the user
+   *  stuck on cryptic 401s. Returns an unsubscribe. */
+  onAuthChange(cb: (authed: boolean) => void): () => void {
+    this.authListeners.add(cb);
+    return () => this.authListeners.delete(cb);
+  }
+  private notifyAuth(authed: boolean): void {
+    for (const cb of this.authListeners) cb(authed);
   }
 
   private constructor() {
@@ -397,6 +410,7 @@ export class AppServices {
   async completeLogin(s: VerifiedSession): Promise<void> {
     await this.sessions.save({ accessJwt: s.accessJwt, refreshToken: s.refreshToken, deviceId: s.deviceId });
     this.startRealtime();
+    this.notifyAuth(true);
   }
 
   startRealtime(): void {
@@ -1917,6 +1931,7 @@ export class AppServices {
     this.ws?.stop();
     this.ws = null;
     await this.sessions.clear();
+    this.notifyAuth(false); // route the UI to login (covers a failed-refresh logout)
   }
 
   private mergeCursors(watermark: ConversationCursor[]): void {

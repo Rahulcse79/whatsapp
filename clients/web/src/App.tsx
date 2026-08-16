@@ -60,6 +60,12 @@ function Router() {
   const { authed, services } = useServices();
   const [nav, setNav] = useState<Nav>(() => (authed ? { name: "chats" } : { name: "login" }));
 
+  // A lost session (logout or a failed token refresh) bounces to login, so an
+  // expired session doesn't strand the user on cryptic 401s (e.g. media uploads).
+  useEffect(() => {
+    if (!authed) setNav({ name: "login" });
+  }, [authed]);
+
   const body = ((): JSX.Element => {
   if (nav.name === "login") {
     return <Login onRequested={(challengeId, phone) => setNav({ name: "verify", challengeId, phone })} />;

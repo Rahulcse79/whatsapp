@@ -16,10 +16,15 @@ export function ServicesProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     let alive = true;
+    let unsub: (() => void) | undefined;
     AppServices.create()
       .then((s) => {
         if (!alive) return;
         setServices(s);
+        // Route on session gain/loss: a failed token refresh logs out and fires
+        // this, so an expired session bounces to login instead of leaving the
+        // user stuck on cryptic 401s (e.g. media uploads).
+        unsub = s.onAuthChange(setAuthed);
         if (s.hasSession()) {
           s.startRealtime();
           setAuthed(true);
@@ -30,6 +35,7 @@ export function ServicesProvider({ children }: { children: ReactNode }) {
       });
     return () => {
       alive = false;
+      unsub?.();
     };
   }, []);
 

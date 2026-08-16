@@ -24,6 +24,8 @@ import (
 	"github.com/whatsapp-v2/server/internal/auth"
 	authadapters "github.com/whatsapp-v2/server/internal/auth/adapters"
 	"github.com/whatsapp-v2/server/internal/auth/domain"
+	"github.com/whatsapp-v2/server/internal/breakout"
+	breakoutadapters "github.com/whatsapp-v2/server/internal/breakout/adapters"
 	"github.com/whatsapp-v2/server/internal/calls"
 	callsadapters "github.com/whatsapp-v2/server/internal/calls/adapters"
 	"github.com/whatsapp-v2/server/internal/channels"
@@ -269,6 +271,10 @@ func main() {
 	// Webinar/live mode: role-scoped LiveKit tokens (host/speaker publish;
 	// attendees subscribe-only) via the same minter as calls/ptt.
 	webinarSvc := webinar.NewService(webinaradapters.NewStore(pool), webinarMinter{m: calls.NewTokenMinter(liveKitKey, liveKitSecret)})
+	// Advanced live sessions (T9.03): breakout rooms + streaming egress + recording
+	// consent. Reuses the calls token minter (per-room join tokens); egress rides a
+	// no-op driver in dev (the real LiveKit egress API is the seam).
+	breakoutSvc := breakout.NewService(breakoutadapters.NewStore(pool), breakoutMinter{m: calls.NewTokenMinter(liveKitKey, liveKitSecret)}, breakoutadapters.NoopEgress{})
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -423,6 +429,7 @@ func main() {
 	channels.Routes(mux, channelsSvc, issuer)       // /v1/channels broadcast: CRUD/follow/posts/react/comment (T7.01)
 	communities.Routes(mux, communitiesSvc, issuer) // /v1/communities: groups-roof + roles/events/discovery (T8.01)
 	webinar.Routes(mux, webinarSvc, issuer)         // /v1/webinars: live 1-to-many, waiting room, raise-hand, Q&A (T9.02)
+	breakout.Routes(mux, breakoutSvc, issuer)       // /v1/live: breakout rooms + streaming egress + recording consent (T9.03)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {
@@ -543,6 +550,14 @@ func devCORS(next http.Handler) http.Handler {
 type webinarMinter struct{ m *calls.TokenMinter }
 
 func (p webinarMinter) MintJoin(room, identity string, canPublish bool) (string, error) {
+	return p.m.Mint(calls.JoinGrant{Identity: identity, Room: room, CanPublish: canPublish, CanSubscribe: true}, time.Hour, time.Now())
+}
+
+// breakoutMinter adapts the LiveKit token minter to breakout.Minter: a 1-hour
+// join token for a breakout/main room (participants publish + subscribe) (T9.03).
+type breakoutMinter struct{ m *calls.TokenMinter }
+
+func (p breakoutMinter) MintJoin(room, identity string, canPublish bool) (string, error) {
 	return p.m.Mint(calls.JoinGrant{Identity: identity, Room: room, CanPublish: canPublish, CanSubscribe: true}, time.Hour, time.Now())
 }
 

@@ -99,3 +99,26 @@ export { PipController, type PipPort } from "./pictureInPicture";
 export { SpatialAudioController, panForTile, type SpatialPanner } from "./spatialAudio";
 export { CaptionController, type CaptionLine, type SttEngine } from "./captions";
 export { TranslationController, type Translator } from "./translation";
+export { BreakoutController, type BreakoutState, type RoomAssignment, type RoomJoiner } from "./breakoutRooms";
+export {
+  RecordingController,
+  type Recorder,
+  type RecordingState,
+  type SessionRecordingState,
+} from "./recording";
+export {
+  MultiCameraController,
+  type CameraEnumerator,
+  type CameraInfo,
+  type MultiCameraState,
+  type SecondaryCamera,
+} from "./multiCamera";
+export {
+  profileForBudget,
+  VideoProfileController,
+  VIDEO_PROFILES,
+  type VideoConstrainer,
+  type VideoProfile,
+  type VideoProfileId,
+  type VideoProfileState,
+} from "./videoProfile";

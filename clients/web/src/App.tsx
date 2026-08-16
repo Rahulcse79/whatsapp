@@ -56,6 +56,20 @@ type Nav =
   | { name: "community"; communityId: string }
   | { name: "thread"; conversationId: string; focusMsgUuid?: string };
 
+/** Welcome fills the detail pane when no chat is open (desktop two-pane), the
+ *  WhatsApp Web "select a chat" placeholder. */
+function Welcome() {
+  return (
+    <div className="wa-welcome">
+      <div className="wa-welcome-icon" aria-hidden>
+        💬
+      </div>
+      <h1>WhatsApp V2</h1>
+      <p>Select a chat to start messaging, or use the toolbar to start a new conversation. Your messages are end-to-end encrypted.</p>
+    </div>
+  );
+}
+
 function Router() {
   const { authed, services } = useServices();
   const [nav, setNav] = useState<Nav>(() => (authed ? { name: "chats" } : { name: "login" }));
@@ -66,140 +80,108 @@ function Router() {
     if (!authed) setNav({ name: "login" });
   }, [authed]);
 
-  const body = ((): JSX.Element => {
+  // Auth flow is full-window (no shell).
   if (nav.name === "login") {
     return <Login onRequested={(challengeId, phone) => setNav({ name: "verify", challengeId, phone })} />;
   }
   if (nav.name === "verify") {
     return <Verify challengeId={nav.challengeId} phone={nav.phone} onDone={() => setNav({ name: "chats" })} />;
   }
-  if (nav.name === "chats") {
-    return (
-      <ChatList
-        onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
-        onNew={() => setNav({ name: "newChat" })}
-        onSearch={() => setNav({ name: "search" })}
-        onProfile={() => setNav({ name: "profile" })}
-        onContacts={() => setNav({ name: "contacts" })}
-        onNewGroup={() => setNav({ name: "createGroup" })}
-        onCalls={() => setNav({ name: "calls" })}
-        onStatus={() => setNav({ name: "status" })}
-        onChannels={() => setNav({ name: "channels" })}
-        onCommunities={() => setNav({ name: "communities" })}
-      />
-    );
-  }
-  if (nav.name === "profile") {
-    return <Profile onBack={() => setNav({ name: "chats" })} onSettings={() => setNav({ name: "settings" })} />;
-  }
-  if (nav.name === "settings") {
-    return <Settings onBack={() => setNav({ name: "profile" })} onSignedOut={() => setNav({ name: "login" })} />;
-  }
-  if (nav.name === "status") {
-    return <Status onBack={() => setNav({ name: "chats" })} />;
-  }
-  if (nav.name === "channels") {
-    return <Channels onOpen={(channelId) => setNav({ name: "channel", channelId })} onBack={() => setNav({ name: "chats" })} />;
-  }
-  if (nav.name === "channel") {
-    return <ChannelScreen channelId={nav.channelId} onBack={() => setNav({ name: "channels" })} />;
-  }
-  if (nav.name === "communities") {
-    return <Communities onOpen={(communityId) => setNav({ name: "community", communityId })} onBack={() => setNav({ name: "chats" })} />;
-  }
-  if (nav.name === "community") {
-    return (
-      <CommunityScreen
-        communityId={nav.communityId}
-        onBack={() => setNav({ name: "communities" })}
-        onOpenGroup={(conversationId) => setNav({ name: "thread", conversationId })}
-      />
-    );
-  }
-  if (nav.name === "calls") {
-    return <CallHistory onBack={() => setNav({ name: "chats" })} />;
-  }
-  if (nav.name === "createGroup") {
-    return (
-      <CreateGroup
-        onCreated={(conversationId) => setNav({ name: "thread", conversationId })}
-        onBack={() => setNav({ name: "chats" })}
-      />
-    );
-  }
-  if (nav.name === "groupInfo") {
-    return (
-      <GroupInfoScreen
-        conversationId={nav.conversationId}
-        onBack={() => setNav({ name: "thread", conversationId: nav.conversationId })}
-        onLeft={() => setNav({ name: "chats" })}
-      />
-    );
-  }
-  if (nav.name === "contacts") {
-    return (
-      <Contacts
-        onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
-        onBack={() => setNav({ name: "chats" })}
-      />
-    );
-  }
-  if (nav.name === "newChat") {
-    return (
-      <NewChat
-        onStarted={(conversationId) => setNav({ name: "thread", conversationId })}
-        onBack={() => setNav({ name: "chats" })}
-      />
-    );
-  }
-  if (nav.name === "search") {
-    const scope = nav.conversationId;
-    return (
-      <Search
-        conversationId={scope}
-        conversationTitle={nav.conversationTitle}
-        onOpen={(conversationId, focusMsgUuid) => setNav({ name: "thread", conversationId, focusMsgUuid })}
-        onBack={() => (scope ? setNav({ name: "thread", conversationId: scope }) : setNav({ name: "chats" }))}
-      />
-    );
-  }
-  // nav.name === "thread"
-  return (
-    <Thread
-      conversationId={nav.conversationId}
-      focusMsgUuid={nav.focusMsgUuid}
-      onBack={() => setNav({ name: "chats" })}
-      onGroupInfo={(conversationId) => setNav({ name: "groupInfo", conversationId })}
-      onSearchInChat={(conversationId) =>
-        setNav({
-          name: "search",
-          conversationId,
-          conversationTitle: services.groupNameOf(conversationId) || services.peerNameOf(conversationId) || undefined,
-        })
+
+  // Authed: a persistent chat list on the left, the active screen on the right.
+  const detail = ((): JSX.Element => {
+    switch (nav.name) {
+      case "thread":
+        return (
+          <Thread
+            conversationId={nav.conversationId}
+            focusMsgUuid={nav.focusMsgUuid}
+            onBack={() => setNav({ name: "chats" })}
+            onGroupInfo={(conversationId) => setNav({ name: "groupInfo", conversationId })}
+            onSearchInChat={(conversationId) =>
+              setNav({
+                name: "search",
+                conversationId,
+                conversationTitle: services.groupNameOf(conversationId) || services.peerNameOf(conversationId) || undefined,
+              })
+            }
+          />
+        );
+      case "profile":
+        return <Profile onBack={() => setNav({ name: "chats" })} onSettings={() => setNav({ name: "settings" })} />;
+      case "settings":
+        return <Settings onBack={() => setNav({ name: "profile" })} onSignedOut={() => setNav({ name: "login" })} />;
+      case "status":
+        return <Status onBack={() => setNav({ name: "chats" })} />;
+      case "channels":
+        return <Channels onOpen={(channelId) => setNav({ name: "channel", channelId })} onBack={() => setNav({ name: "chats" })} />;
+      case "channel":
+        return <ChannelScreen channelId={nav.channelId} onBack={() => setNav({ name: "channels" })} />;
+      case "communities":
+        return <Communities onOpen={(communityId) => setNav({ name: "community", communityId })} onBack={() => setNav({ name: "chats" })} />;
+      case "community":
+        return (
+          <CommunityScreen
+            communityId={nav.communityId}
+            onBack={() => setNav({ name: "communities" })}
+            onOpenGroup={(conversationId) => setNav({ name: "thread", conversationId })}
+          />
+        );
+      case "calls":
+        return <CallHistory onBack={() => setNav({ name: "chats" })} />;
+      case "createGroup":
+        return <CreateGroup onCreated={(conversationId) => setNav({ name: "thread", conversationId })} onBack={() => setNav({ name: "chats" })} />;
+      case "groupInfo":
+        return (
+          <GroupInfoScreen
+            conversationId={nav.conversationId}
+            onBack={() => setNav({ name: "thread", conversationId: nav.conversationId })}
+            onLeft={() => setNav({ name: "chats" })}
+          />
+        );
+      case "contacts":
+        return <Contacts onOpen={(conversationId) => setNav({ name: "thread", conversationId })} onBack={() => setNav({ name: "chats" })} />;
+      case "newChat":
+        return <NewChat onStarted={(conversationId) => setNav({ name: "thread", conversationId })} onBack={() => setNav({ name: "chats" })} />;
+      case "search": {
+        const scope = nav.conversationId;
+        return (
+          <Search
+            conversationId={scope}
+            conversationTitle={nav.conversationTitle}
+            onOpen={(conversationId, focusMsgUuid) => setNav({ name: "thread", conversationId, focusMsgUuid })}
+            onBack={() => (scope ? setNav({ name: "thread", conversationId: scope }) : setNav({ name: "chats" }))}
+          />
+        );
       }
-    />
-  );
+      default:
+        return <Welcome />;
+    }
   })();
 
   return (
     <>
-      {body}
-      {authed && <NotificationToasts onOpen={(conversationId) => setNav({ name: "thread", conversationId })} />}
+      <div className={`wa-shell${nav.name !== "chats" ? " show-detail" : ""}`}>
+        <aside className="wa-side">
+          <ChatList
+            activeId={nav.name === "thread" ? nav.conversationId : undefined}
+            onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
+            onNew={() => setNav({ name: "newChat" })}
+            onSearch={() => setNav({ name: "search" })}
+            onProfile={() => setNav({ name: "profile" })}
+            onContacts={() => setNav({ name: "contacts" })}
+            onNewGroup={() => setNav({ name: "createGroup" })}
+            onCalls={() => setNav({ name: "calls" })}
+            onStatus={() => setNav({ name: "status" })}
+            onChannels={() => setNav({ name: "channels" })}
+            onCommunities={() => setNav({ name: "communities" })}
+          />
+        </aside>
+        <section className="wa-detail">{detail}</section>
+      </div>
+      <NotificationToasts onOpen={(conversationId) => setNav({ name: "thread", conversationId })} />
     </>
   );
-}
-
-/** TopbarUnread shows the account-wide unread badge next to the app title. */
-function TopbarUnread() {
-  const { services } = useServices();
-  const [n, setN] = useState(0);
-  useEffect(() => {
-    const tick = (): void => setN(services.totalUnread());
-    tick();
-    return services.onChange(tick);
-  }, [services]);
-  if (n === 0) return null;
-  return <span className="topbar-badge">{n > 99 ? "99+" : n}</span>;
 }
 
 export function App() {
@@ -208,12 +190,7 @@ export function App() {
       <MediaProvider>
         <CallProvider>
           <div className="app">
-            <header className="topbar">
-              WhatsApp V2 <TopbarUnread />
-            </header>
-            <main className="main">
-              <Router />
-            </main>
+            <Router />
             <CallOverlay />
           </div>
         </CallProvider>

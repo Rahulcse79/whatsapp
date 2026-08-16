@@ -1,29 +1,59 @@
 :root {
-  --brand: #128c7e;
-  --brand-dark: #0f6f64;
-  --mine: #dcf8c6;
-  --theirs: #f0f0f0;
-  --line: #e2e2e2;
-  --muted: #777;
-  --bg: #f7f7f7; /* page behind the app column */
-  --panel: #fff; /* app column, cards, sheets, inputs */
-  --surface: #fafafa; /* secondary surfaces (message pane, list hovers) */
-  --text: #111;
+  /* Green accents (send, FAB, links, unread badges, active states). */
+  --accent: #00a884;
+  --accent-strong: #008069;
+  --tick-read: #53bdeb;
+
+  /* Surfaces. */
+  --page: #d1d7db; /* behind the app frame */
+  --panel: #ffffff; /* list column, cards, sheets, inputs */
+  --header: #f0f2f5; /* panel headers + composer bar */
+  --hover: #f5f6f6; /* list row hover */
+  --active: #f0f2f5; /* selected list row */
+  --wallpaper: #efeae2; /* message pane background */
+
+  /* Bubbles. */
+  --mine: #d9fdd3;
+  --theirs: #ffffff;
+
+  /* Ink + lines. */
+  --text: #111b21;
+  --muted: #667781;
+  --line: #e9edef;
+  --border: #e9edef;
+
+  /* Back-compat aliases for older rules / inline styles. */
+  --brand: var(--accent);
+  --brand-dark: var(--accent-strong);
+  --bg: var(--page);
+  --surface: var(--wallpaper);
+
   color-scheme: light;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: "Segoe UI", system-ui, -apple-system, Helvetica, Arial, sans-serif;
 }
 
 /* Dark palette (T5.15). Applied when the resolved theme is dark; theme.ts stamps
    <html data-theme="dark"> for both an explicit choice and system-follows-OS. */
 :root[data-theme="dark"] {
+  --accent: #00a884;
+  --accent-strong: #017561;
+  --tick-read: #53bdeb;
+
+  --page: #0b141a;
+  --panel: #111b21;
+  --header: #202c33;
+  --hover: #202c33;
+  --active: #2a3942;
+  --wallpaper: #0b141a;
+
   --mine: #005c4b;
   --theirs: #202c33;
-  --line: #2a3942;
-  --muted: #8696a0;
-  --bg: #0b141a;
-  --panel: #111b21;
-  --surface: #1a2830;
+
   --text: #e9edef;
+  --muted: #8696a0;
+  --line: #2a3942;
+  --border: #2a3942;
+
   color-scheme: dark;
 }
 
@@ -38,26 +68,123 @@ body {
 }
 
 .app {
-  max-width: 720px;
-  margin: 0 auto;
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
   background: var(--panel);
+  position: relative;
 }
 
+/* Classic WhatsApp Web chrome: a centered container floating over a green strip
+   that peeks out at the top of the page. Below 1000px it fills the viewport. */
+@media (min-width: 1000px) {
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0 0 auto 0;
+    height: 127px;
+    background: var(--accent-strong);
+    z-index: 0;
+  }
+  .app {
+    position: relative;
+    z-index: 1;
+    max-width: 1600px;
+    width: 100%;
+    margin: 19px auto;
+    height: calc(100vh - 38px);
+    box-shadow: 0 6px 34px rgba(11, 20, 26, 0.28);
+  }
+}
+
+/* The app carries its own panel headers now; the old title strip is retired. */
 .topbar {
-  background: var(--brand);
-  color: #fff;
-  padding: 14px 18px;
-  font-weight: 600;
-  font-size: 18px;
+  display: none;
 }
 
 .main {
   flex: 1;
   display: flex;
   min-height: 0;
+}
+
+/* ── Two-pane shell: persistent chat list + detail, responsive to one pane. ─── */
+.wa-shell {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  background: var(--panel);
+}
+.wa-side {
+  width: 32%;
+  min-width: 300px;
+  max-width: 460px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  min-height: 0;
+}
+.wa-side .pane {
+  border: none;
+}
+.wa-detail {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  background: var(--wallpaper);
+}
+.wa-detail > * {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Welcome placeholder shown in the detail pane when no chat is open. */
+.wa-welcome {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  text-align: center;
+  color: var(--muted);
+  background: var(--header);
+  border-bottom: 6px solid var(--accent);
+  padding: 40px;
+}
+.wa-welcome-icon {
+  font-size: 88px;
+  opacity: 0.45;
+}
+.wa-welcome h1 {
+  font-weight: 300;
+  font-size: 30px;
+  color: var(--text);
+  margin: 0;
+}
+.wa-welcome p {
+  max-width: 420px;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+@media (max-width: 999px) {
+  .wa-side {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    border-right: none;
+  }
+  .wa-shell .wa-detail {
+    display: none;
+  }
+  .wa-shell.show-detail .wa-side {
+    display: none;
+  }
+  .wa-shell.show-detail .wa-detail {
+    display: flex;
+  }
 }
 
 .splash {
@@ -114,33 +241,78 @@ body {
 }
 
 .btn {
-  background: var(--brand);
+  background: var(--accent);
   color: #fff;
   border: none;
-  border-radius: 10px;
-  padding: 12px 16px;
+  border-radius: 22px;
+  padding: 10px 20px;
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
 }
 
 .btn:hover {
-  background: var(--brand-dark);
+  background: var(--accent-strong);
 }
 
 .btn:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: default;
 }
 
 .btn.small {
-  padding: 6px 12px;
+  padding: 6px 14px;
   font-size: 13px;
+  border-radius: 16px;
 }
 
 .btn.ghost {
   background: transparent;
-  color: var(--brand);
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.btn.ghost:hover {
+  background: rgba(134, 150, 160, 0.16);
+  color: var(--text);
+}
+
+/* Round icon button used in the list/thread headers and composer. */
+.wa-icon {
+  width: 40px;
+  height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 19px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+.wa-icon:hover {
+  background: rgba(134, 150, 160, 0.18);
+  color: var(--text);
+}
+.wa-icon:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* Colored initials/emoji avatar circle. */
+.avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  color: #fff;
+  font-weight: 600;
+  overflow: hidden;
+  user-select: none;
 }
 
 .pane {
@@ -153,10 +325,85 @@ body {
 .pane-head {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 10px 16px;
+  gap: 6px;
+  padding: 8px 12px;
+  min-height: 60px;
+  background: var(--header);
   border-bottom: 1px solid var(--line);
   font-weight: 600;
+}
+
+/* Chat-list header: your avatar + a compact icon toolbar. */
+.wa-list-head {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 8px 6px 14px;
+  min-height: 60px;
+  background: var(--header);
+}
+.wa-list-head .wa-list-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* Search / filter bar under the list header. */
+.wa-search {
+  padding: 7px 12px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+}
+.wa-search input {
+  width: 100%;
+  border: none;
+  border-radius: 8px;
+  background: var(--header);
+  color: var(--text);
+  font-size: 14px;
+  padding: 8px 14px 8px 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' fill='none' stroke='%23667781' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.6-3.6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: 12px center;
+  background-size: 17px;
+}
+.wa-search input:focus {
+  outline: none;
+}
+
+/* Thread header: name + presence line beside the avatar. */
+.thread-title {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  margin-left: 4px;
+}
+.thread-name {
+  font-size: 16px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.thread-status {
+  font-size: 13px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.wa-back {
+  font-size: 26px;
+}
+/* In the desktop two-pane the list is always visible, so Back is redundant. */
+@media (min-width: 1000px) {
+  .wa-back {
+    display: none;
+  }
 }
 
 .list {
@@ -167,74 +414,220 @@ body {
 }
 
 .row {
-  padding: 14px 18px;
-  border-bottom: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 9px 14px 9px 15px;
   cursor: pointer;
+  border-bottom: 1px solid var(--line);
 }
 
 .row:hover {
-  background: var(--surface);
+  background: var(--hover);
+}
+.row.active {
+  background: var(--active);
+}
+
+.row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.row-line1,
+.row-line2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
 .row-title {
-  font-weight: 600;
-}
-
-.row-sub {
-  color: var(--muted);
-  font-size: 14px;
-  margin-top: 2px;
+  flex: 1;
+  min-width: 0;
+  font-weight: 500;
+  font-size: 16px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.row-time {
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.row-sub {
+  flex: 1;
+  color: var(--muted);
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.row-right {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.unread-badge {
+  background: var(--accent);
+  color: #fff;
+  border-radius: 999px;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Row quick-actions (favorite / archive) reveal on hover. */
+.row .row-actions {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.row:hover .row-actions {
+  opacity: 1;
+}
+
 .messages {
   flex: 1;
   overflow-y: auto;
-  padding: 12px;
+  padding: 14px 6% 10px;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  background: var(--surface);
-  background-size: cover;
-  background-position: center;
+  gap: 4px;
+  background-color: var(--wallpaper);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='none' stroke='%23000' stroke-opacity='0.03' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='30' cy='30' r='11'/%3E%3Cpath d='M90 18v16M82 26h16'/%3E%3Cpath d='M18 98q11-15 22 0'/%3E%3Crect x='94' y='90' width='20' height='20' rx='5'/%3E%3Cpath d='M60 70l8 8 8-8'/%3E%3C/g%3E%3C/svg%3E");
+  background-size: 300px;
+}
+:root[data-theme="dark"] .messages {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='none' stroke='%23fff' stroke-opacity='0.03' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='30' cy='30' r='11'/%3E%3Cpath d='M90 18v16M82 26h16'/%3E%3Cpath d='M18 98q11-15 22 0'/%3E%3Crect x='94' y='90' width='20' height='20' rx='5'/%3E%3Cpath d='M60 70l8 8 8-8'/%3E%3C/g%3E%3C/svg%3E");
 }
 
 .bubble {
-  max-width: 78%;
-  border-radius: 12px;
-  padding: 8px 12px;
-  display: flex;
-  flex-direction: column;
+  position: relative;
+  display: flow-root; /* contain the floated meta without clipping the tail */
+  max-width: 65%;
+  min-width: 78px;
+  border-radius: 8px;
+  padding: 6px 9px 7px;
+  font-size: 14.2px;
+  line-height: 1.34;
+  box-shadow: 0 1px 0.5px rgba(11, 20, 26, 0.13);
+  overflow-wrap: break-word;
 }
 
 .bubble.mine {
   align-self: flex-end;
   background: var(--mine);
+  border-top-right-radius: 0;
 }
 
 .bubble.theirs {
   align-self: flex-start;
   background: var(--theirs);
+  color: var(--text);
+  border-top-left-radius: 0;
 }
 
-.bubble .state {
+/* Little bubble tail on the squared corner. */
+.bubble.mine::after,
+.bubble.theirs::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  width: 9px;
+  height: 13px;
+}
+.bubble.mine::after {
+  right: -8px;
+  background: var(--mine);
+  clip-path: polygon(0 0, 0 100%, 100% 0);
+}
+.bubble.theirs::after {
+  left: -8px;
+  background: var(--theirs);
+  clip-path: polygon(100% 0, 100% 100%, 0 0);
+}
+
+/* Time + delivery ticks, tucked at the bottom-right; text wraps around it. */
+.bubble-meta {
+  float: right;
+  margin: 8px -2px -3px 10px;
   font-size: 11px;
-  color: #5a7;
-  align-self: flex-end;
-  margin-top: 2px;
+  line-height: 1;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.bubble .state {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1;
 }
 
 .composer {
   display: flex;
-  gap: 8px;
-  padding: 10px;
-  border-top: 1px solid var(--line);
+  align-items: center;
+  gap: 3px;
+  padding: 8px 14px;
+  background: var(--header);
 }
 
 .composer .input {
   flex: 1;
+  border: none;
+  border-radius: 22px;
+  background: var(--panel);
+  padding: 11px 16px;
+}
+.composer .input:focus {
+  outline: none;
+}
+
+/* Composer tool buttons collapse to round icons; send is a green circle. */
+.composer .btn.small.ghost {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  padding: 0;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 19px;
+  color: var(--muted);
+  background: transparent;
+}
+.composer .btn.small.ghost:hover {
+  background: rgba(134, 150, 160, 0.18);
+  color: var(--text);
+}
+.composer > .btn[type="submit"] {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  padding: 0;
+  flex-shrink: 0;
+  font-size: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.composer > .btn[type="submit"]::before {
+  content: "➤";
+  font-size: 20px;
 }
 
 .mono {
@@ -786,13 +1179,13 @@ body {
 
 /* Chat-list section headers (Favorites / Archived) + collapsible archive. */
 .list-section {
-  padding: 8px 18px 4px;
-  font-size: 12px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  background: var(--surface);
+  padding: 10px 16px 4px;
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent);
+  background: var(--panel);
   border-bottom: 1px solid var(--line);
   cursor: pointer;
   display: flex;
@@ -936,6 +1329,7 @@ body {
 
 /* Reaction chips under a bubble. */
 .reactions {
+  clear: both;
   display: flex;
   flex-wrap: wrap;
   gap: 4px;

@@ -49,6 +49,51 @@ function onActivate(handler: () => void) {
   };
 }
 
+/** WhatsApp-style avatar: a colored circle with initials (or an emoji for
+ *  groups/system rows). Colour is derived deterministically from the id/name so
+ *  a given chat always gets the same swatch — no network fetch involved. */
+const AVATAR_COLORS = ["#e1795a", "#5ea15e", "#4a9fd4", "#9b6dd6", "#e0699f", "#4cbcb0", "#e0a13b", "#7c8ce0"];
+function hashCode(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+function initialsOf(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return "?";
+  const first = parts[0]?.[0] ?? "";
+  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
+  return (first + last).toUpperCase() || "?";
+}
+export function Avatar({ name, id, size = 49, emoji }: { name?: string; id?: string; size?: number; emoji?: string }) {
+  const key = id || name || "?";
+  const bg = AVATAR_COLORS[hashCode(key) % AVATAR_COLORS.length];
+  const label = emoji ?? (name ? initialsOf(name) : "?");
+  return (
+    <span className="avatar" aria-hidden style={{ width: size, height: size, background: bg, fontSize: Math.round(size * 0.4) }}>
+      {label}
+    </span>
+  );
+}
+
+/** fmtRowTime renders a chat-list timestamp: clock for today, weekday within a
+ *  week, else a short date — like the WhatsApp chat list. */
+function fmtRowTime(ms: number): string {
+  if (!ms) return "";
+  const d = new Date(ms);
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  if (sameDay) return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const dayMs = 24 * 60 * 60 * 1000;
+  if (now.getTime() - ms < 7 * dayMs) return d.toLocaleDateString([], { weekday: "short" });
+  return d.toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "2-digit" });
+}
+
+/** fmtClock renders a bubble timestamp (h:mm). */
+function fmtClock(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
 export function NewChat({
   onStarted,
   onBack,
@@ -491,6 +536,7 @@ export function ChatList({
   onStatus,
   onChannels,
   onCommunities,
+  activeId,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
@@ -502,10 +548,12 @@ export function ChatList({
   onStatus: () => void;
   onChannels: () => void;
   onCommunities: () => void;
+  activeId?: string;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  const [filter, setFilter] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -533,12 +581,16 @@ export function ChatList({
     };
   }, [services]);
 
+  const nameOf = (id: string): string => services.groupNameOf(id) || services.peerNameOf(id) || "";
+
   const renderRow = (c: ChatSummary): ReactNode => {
     const id = c.conversationId;
     const unread = services.unreadCount(id);
     const muted = services.isMuted(id);
     const fav = services.isFavorite(id);
     const archived = services.isArchived(id);
+    const isGroup = !!services.groupNameOf(id);
+    const name = nameOf(id) || c.title || id.slice(0, 12);
     const stop = (fn: () => void) => (e: { stopPropagation: () => void }) => {
       e.stopPropagation();
       fn();
@@ -546,93 +598,81 @@ export function ChatList({
     return (
       <li
         key={id}
-        className="row"
+        className={`row${id === activeId ? " active" : ""}`}
         role="button"
         tabIndex={0}
         onClick={() => onOpen(id)}
         onKeyDown={onActivate(() => onOpen(id))}
-        style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div className="row-title">
-            {fav && <span title="Favorite" style={{ marginRight: 4 }}>⭐</span>}
-            {services.groupNameOf(id) ? `👥 ${services.groupNameOf(id)}` : services.peerNameOf(id) || c.title}
-            {muted && <span title="Muted" style={{ marginLeft: 6, opacity: 0.6 }}>🔇</span>}
+        <Avatar name={name} id={id} emoji={isGroup ? "👥" : undefined} size={49} />
+        <div className="row-main">
+          <div className="row-line1">
+            <span className="row-title">
+              {fav && <span title="Favorite" style={{ marginRight: 4 }}>⭐</span>}
+              {name}
+              {muted && <span title="Muted" style={{ marginLeft: 6, opacity: 0.6 }}>🔇</span>}
+            </span>
+            <span className="row-time">{fmtRowTime(c.updatedAt)}</span>
           </div>
-          <div className="row-sub">{c.lastPreview || "No messages yet"}</div>
+          <div className="row-line2">
+            <span className="row-sub">{c.lastPreview || "No messages yet"}</span>
+            <span className="row-right">
+              {unread > 0 && (
+                <span className="unread-badge" aria-label={`${unread} unread`} style={muted ? { background: "#8696a0" } : undefined}>
+                  {unread > 99 ? "99+" : unread}
+                </span>
+              )}
+              <span className="row-actions">
+                <button className={`icon-btn${fav ? " on" : ""}`} title={fav ? "Unfavorite" : "Favorite"} aria-label="Toggle favorite" onClick={stop(() => services.toggleFavorite(id))}>
+                  {fav ? "★" : "☆"}
+                </button>
+                <button className={`icon-btn${archived ? " on" : ""}`} title={archived ? "Unarchive" : "Archive"} aria-label="Toggle archive" onClick={stop(() => services.toggleArchive(id))}>
+                  🗄
+                </button>
+              </span>
+            </span>
+          </div>
         </div>
-        {unread > 0 && (
-          <span
-            aria-label={`${unread} unread`}
-            style={{
-              background: muted ? "#9aa0a6" : "#25D366",
-              color: "#fff",
-              borderRadius: 999,
-              minWidth: 20,
-              height: 20,
-              padding: "0 6px",
-              fontSize: "0.72rem",
-              fontWeight: 700,
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-            }}
-          >
-            {unread > 99 ? "99+" : unread}
-          </span>
-        )}
-        <span className="row-actions">
-          <button className={`icon-btn${fav ? " on" : ""}`} title={fav ? "Unfavorite" : "Favorite"} aria-label="Toggle favorite" onClick={stop(() => services.toggleFavorite(id))}>
-            {fav ? "★" : "☆"}
-          </button>
-          <button className={`icon-btn${archived ? " on" : ""}`} title={archived ? "Unarchive" : "Archive"} aria-label="Toggle archive" onClick={stop(() => services.toggleArchive(id))}>
-            🗄
-          </button>
-        </span>
       </li>
     );
   };
 
-  const favorites = items.filter((c) => services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
-  const archived = items.filter((c) => services.isArchived(c.conversationId));
-  const normal = items.filter((c) => !services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
+  const q = filter.trim().toLowerCase();
+  const match = (c: ChatSummary): boolean =>
+    q === "" || nameOf(c.conversationId).toLowerCase().includes(q) || (c.title || "").toLowerCase().includes(q) || (c.lastPreview || "").toLowerCase().includes(q);
+  const shown = items.filter(match);
+  const favorites = shown.filter((c) => services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
+  const archived = shown.filter((c) => services.isArchived(c.conversationId));
+  const normal = shown.filter((c) => !services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
 
   return (
     <div className="pane">
-      <div className="pane-head">
-        <span>Chats</span>
-        <span className="head-actions">
-          <button className="btn small ghost" onClick={onProfile} aria-label="Your profile">
-            👤 You
-          </button>
-          <button className="btn small ghost" onClick={onContacts} aria-label="Contacts">
-            👥 Contacts
-          </button>
-          <button className="btn small ghost" onClick={onCalls} aria-label="Call history">
-            📞 Calls
-          </button>
-          <button className="btn small ghost" onClick={onChannels} aria-label="Channels">
-            📢 Channels
-          </button>
-          <button className="btn small ghost" onClick={onCommunities} aria-label="Communities">
-            🏘️ Communities
-          </button>
-          <button className="btn small ghost" onClick={onStatus} aria-label="Status updates">
-            ⭕ Status
-          </button>
-          <button className="btn small ghost" onClick={onSearch} aria-label="Search messages">
-            🔍 Search
-          </button>
-          <button className="btn small ghost" onClick={onNewGroup} aria-label="New group">
-            ＋👥 Group
-          </button>
-          <button className="btn small" onClick={onNew}>
-            ＋ New
-          </button>
+      <div className="wa-list-head">
+        <button className="avatar" onClick={onProfile} aria-label="Your profile" title="Profile" style={{ width: 40, height: 40, background: "var(--accent)", border: "none", cursor: "pointer", fontSize: 18 }}>
+          👤
+        </button>
+        <span className="wa-list-actions">
+          <button className="wa-icon" onClick={onCommunities} aria-label="Communities" title="Communities">🏘️</button>
+          <button className="wa-icon" onClick={onStatus} aria-label="Status updates" title="Status">⭕</button>
+          <button className="wa-icon" onClick={onChannels} aria-label="Channels" title="Channels">📢</button>
+          <button className="wa-icon" onClick={onCalls} aria-label="Call history" title="Calls">📞</button>
+          <button className="wa-icon" onClick={onContacts} aria-label="Contacts" title="Contacts">👥</button>
+          <button className="wa-icon" onClick={onNewGroup} aria-label="New group" title="New group">＋</button>
+          <button className="wa-icon" onClick={onNew} aria-label="New chat" title="New chat">✏️</button>
         </span>
       </div>
+      <div className="wa-search">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Search or start a new chat"
+          aria-label="Search chats"
+        />
+      </div>
       {items.length === 0 ? (
-        <p className="muted center">No conversations yet. Start one with ＋ New.</p>
+        <p className="muted center">No conversations yet. Start one with the ✏️ button.</p>
+      ) : shown.length === 0 ? (
+        <p className="muted center">No chats match “{filter}”.</p>
       ) : (
         <ul className="list">
           {favorites.length > 0 && <li className="list-section">Favorites</li>}
@@ -640,7 +680,7 @@ export function ChatList({
           {favorites.length > 0 && normal.length > 0 && <li className="list-section">Chats</li>}
           {normal.map(renderRow)}
           {archived.length > 0 && (
-            <li className="list-section" role="button" tabIndex={0} onClick={() => setShowArchived((v) => !v)} onKeyDown={onActivate(() => setShowArchived((v) => !v))}>
+            <li className="list-section" role="button" tabIndex={0} onClick={() => setShowArchived((v) => !v)} onKeyDown={onActivate(() => setShowArchived((v) => !v))} style={{ cursor: "pointer" }}>
               <span>🗄 Archived ({archived.length})</span>
               <span>{showArchived ? "▲" : "▼"}</span>
             </li>
@@ -3433,9 +3473,15 @@ export function Thread({
   return (
     <div className="pane">
       <div className="pane-head">
-        <button className="btn small ghost" onClick={onBack}>
-          ‹ Back
+        <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
+          ‹
         </button>
+        <Avatar
+          name={group ? group.name : services.peerNameOf(conversationId) || conversationId}
+          id={conversationId}
+          emoji={group ? "👥" : undefined}
+          size={40}
+        />
         <div
           className="thread-title"
           role={group ? "button" : undefined}
@@ -3445,26 +3491,38 @@ export function Thread({
           onKeyDown={group ? onActivate(() => onGroupInfo(conversationId)) : undefined}
           title={group ? "Group info" : undefined}
         >
-          <span className={group || services.peerNameOf(conversationId) ? "" : "mono"}>
+          <span className={group || services.peerNameOf(conversationId) ? "thread-name" : "thread-name mono"}>
             {group ? group.name : services.peerNameOf(conversationId) || conversationId.slice(0, 12)}
           </span>
           {group ? (
-            <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
+            <span className="thread-status">
               {group.settings.announcements ? "📢 Announcements" : "Group"} · tap for info
             </span>
           ) : statusLine ? (
-            <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
-              {statusLine}
-            </span>
+            <span className="thread-status">{statusLine}</span>
           ) : null}
         </div>
+        {group ? (
+          <button className="wa-icon" title="Group info" aria-label="Group info" onClick={() => onGroupInfo(conversationId)}>
+            <span aria-hidden>ℹ️</span>
+          </button>
+        ) : (
+          <>
+            <button className="wa-icon" title="Video call" aria-label="Start video call" disabled={!peerId} onClick={() => peerId && void call.startCall(peerId, "video")}>
+              <span aria-hidden>📹</span>
+            </button>
+            <button className="wa-icon" title="Voice call" aria-label="Start voice call" disabled={!peerId} onClick={() => peerId && void call.startCall(peerId, "voice")}>
+              <span aria-hidden>📞</span>
+            </button>
+          </>
+        )}
         {onSearchInChat && (
-          <button className="btn small ghost" title="Search in this chat" aria-label="Search in this chat" onClick={() => onSearchInChat(conversationId)}>
+          <button className="wa-icon" title="Search in this chat" aria-label="Search in this chat" onClick={() => onSearchInChat(conversationId)}>
             <span aria-hidden>🔍</span>
           </button>
         )}
         <button
-          className="btn small ghost"
+          className="wa-icon"
           title={muted ? "Unmute notifications" : "Mute notifications"}
           aria-label={muted ? "Unmute notifications" : "Mute notifications"}
           onClick={() => {
@@ -3474,38 +3532,12 @@ export function Thread({
         >
           <span aria-hidden>{muted ? "🔇" : "🔔"}</span>
         </button>
-        <button className="btn small ghost" title="Chat wallpaper" aria-label="Chat wallpaper" onClick={() => setShowWallpaper(true)}>
+        <button className="wa-icon" title="Chat wallpaper" aria-label="Chat wallpaper" onClick={() => setShowWallpaper(true)}>
           <span aria-hidden>🎨</span>
         </button>
-        <button className="btn small ghost" title="Export chat" aria-label="Export chat" onClick={() => void exportChat()}>
+        <button className="wa-icon" title="Export chat" aria-label="Export chat" onClick={() => void exportChat()}>
           <span aria-hidden>⬇</span>
         </button>
-        {group ? (
-          <button className="btn small ghost" title="Group info" aria-label="Group info" onClick={() => onGroupInfo(conversationId)}>
-            <span aria-hidden>ℹ️</span>
-          </button>
-        ) : (
-          <>
-            <button
-              className="btn small ghost call-btn"
-              title="Voice call"
-              aria-label="Start voice call"
-              disabled={!peerId}
-              onClick={() => peerId && void call.startCall(peerId, "voice")}
-            >
-              <span aria-hidden>📞</span>
-            </button>
-            <button
-              className="btn small ghost call-btn"
-              title="Video call"
-              aria-label="Start video call"
-              disabled={!peerId}
-              onClick={() => peerId && void call.startCall(peerId, "video")}
-            >
-              <span aria-hidden>📹</span>
-            </button>
-          </>
-        )}
       </div>
       <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
@@ -3850,6 +3882,12 @@ function MessageBubble({
           {text?.linkPreview ? <LinkPreviewCard preview={text.linkPreview} /> : null}
         </>
       )}
+      {!message.deleted || message.mine ? (
+        <span className="bubble-meta">
+          {fmtClock(message.createdAt)}
+          {message.mine && !message.deleted ? <StatusTicks state={message.state} /> : null}
+        </span>
+      ) : null}
       {message.reactions.length > 0 ? (
         <div className="reactions">
           {message.reactions.map((r) => (
@@ -3865,7 +3903,6 @@ function MessageBubble({
           ))}
         </div>
       ) : null}
-      {message.mine ? <StatusTicks state={message.state} /> : null}
     </div>
   );
 }

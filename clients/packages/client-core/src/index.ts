@@ -18,3 +18,4 @@ export * from "./memoryRepo";
 export * from "./ephemeral";
 export * from "./deviceAuth";
 export * from "./abuse";
+export * from "./aiRuntime";

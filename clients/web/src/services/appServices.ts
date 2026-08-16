@@ -4,12 +4,16 @@
 // synchronous Hello.last_cursors.
 
 import {
+  AiRuntime,
+  DEFAULT_AI_SETTINGS,
   OtpClient,
   SessionManager,
   WsClient,
   b64urlToBytes,
   bytesToB64url,
   newId,
+  type AiMode,
+  type AiSettings,
   type CallKind,
   type ChatSummary,
   type ConversationCursor,
@@ -333,6 +337,9 @@ export class AppServices {
   private readonly lockedConvs = new Set<string>(); // locked chats (require unlock to open) — client-local
   private readonly hiddenConvs = new Set<string>(); // hidden chats (kept out of the main list) — client-local
   private readonly screenshotProtected = new Set<string>(); // screenshot-protection signalled — client-local
+  // ── on-device AI runtime (T11.01) ──
+  private aiSettings: AiSettings = { mode: DEFAULT_AI_SETTINGS.mode, consent: { ...DEFAULT_AI_SETTINGS.consent } };
+  private aiConfig = { enabled: true, serverEndpointAvailable: false }; // from GET /v1/ai/config
   // undo-send: a just-sent message is held for a short window before dispatch.
   private pendingSend: { conversationId: string; text: string; reply?: QuotedRef; timer: ReturnType<typeof setTimeout> } | null = null;
   // ── scheduling + templates + auto-reply (T6.04, client-local) ──
@@ -408,6 +415,14 @@ export class AppServices {
       if (hd) for (const id of JSON.parse(hd) as string[]) this.hiddenConvs.add(id);
       const ss = localStorage.getItem("wa.ssprotect");
       if (ss) for (const id of JSON.parse(ss) as string[]) this.screenshotProtected.add(id);
+      const aiRaw = localStorage.getItem("wa.ai");
+      if (aiRaw) {
+        const parsed = JSON.parse(aiRaw) as Partial<AiSettings>;
+        this.aiSettings = {
+          mode: parsed.mode ?? "off",
+          consent: { onDevice: parsed.consent?.onDevice ?? false, server: parsed.consent?.server ?? false },
+        };
+      }
     } catch {
       /* no persisted prefs — defaults */
     }
@@ -1246,6 +1261,66 @@ export class AppServices {
   async reportUser(targetUserId: string, reason: number, note?: string): Promise<void> {
     const res = await this.authedRequest("POST", "/v1/reports", { target_user_id: targetUserId, reason, note: note ?? "" });
     if (!res.ok) throw new Error(`Couldn't file the report (HTTP ${res.status}).`);
+  }
+
+  // ── On-device AI runtime (T11.01) ───────────────────────────────────────────
+  // AI is OFF by default. On-device mode keeps everything local (E2EE-safe); an
+  // opt-in server mode would disclose the specific content it processes. An
+  // operator kill-switch (GET /v1/ai/config) can disable all of it.
+
+  /** loadAiConfig pulls the operator kill-switch + endpoint availability. */
+  async loadAiConfig(): Promise<void> {
+    try {
+      const res = await this.authedRequest("GET", "/v1/ai/config");
+      if (!res.ok) return;
+      const c = (await res.json()) as { enabled: boolean; server_endpoint_available: boolean };
+      this.aiConfig = { enabled: c.enabled, serverEndpointAvailable: c.server_endpoint_available };
+      this.notifyChange();
+    } catch {
+      /* offline — keep the cached config (default enabled, on-device only) */
+    }
+  }
+
+  aiKillSwitchOn(): boolean {
+    return this.aiConfig.enabled;
+  }
+  aiServerAvailable(): boolean {
+    return this.aiConfig.serverEndpointAvailable;
+  }
+  getAiSettings(): AiSettings {
+    return { mode: this.aiSettings.mode, consent: { ...this.aiSettings.consent } };
+  }
+
+  /** setAiMode switches AI mode (off / on-device / server). */
+  setAiMode(mode: AiMode): void {
+    this.aiSettings = { ...this.aiSettings, mode };
+    this.persistAi();
+  }
+  /** setAiConsent records the user's consent for a mode (server mode's consent is
+   *  the disclosure acknowledgement that content leaves the device). */
+  setAiConsent(kind: "onDevice" | "server", ok: boolean): void {
+    this.aiSettings = { ...this.aiSettings, consent: { ...this.aiSettings.consent, [kind]: ok } };
+    this.persistAi();
+  }
+  private persistAi(): void {
+    try {
+      localStorage.setItem("wa.ai", JSON.stringify(this.aiSettings));
+    } catch {
+      /* ignore */
+    }
+    this.notifyChange();
+  }
+
+  /** aiRuntime builds the gated runtime T11.02/T11.03 execute tasks through. The
+   *  on-device model provider is injected later (a documented seam) — until then
+   *  the runtime gates correctly and reports "no-provider". */
+  aiRuntime(): AiRuntime {
+    return new AiRuntime({
+      killSwitchOn: () => this.aiConfig.enabled,
+      serverEndpointAvailable: () => this.aiConfig.serverEndpointAvailable,
+      settings: () => this.getAiSettings(),
+      // onDevice / server providers wire in with T11.02 (real models/endpoint).
+    });
   }
   /** nameForUser returns a cached human name for any user id, falling back to a
    *  short id when the profile hasn't been loaded yet. */

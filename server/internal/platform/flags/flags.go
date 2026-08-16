@@ -88,6 +88,7 @@ const (
 	KillRegistrations KillSwitch = "kill.registrations"
 	KillGroupCreation KillSwitch = "kill.group_creation"
 	KillCalls         KillSwitch = "kill.calls"
+	KillAI            KillSwitch = "kill.ai" // disables all on-device / opt-in AI features (T11.01)
 )
 
 // Allowed reports whether a feature guarded by a kill-switch may proceed. It is

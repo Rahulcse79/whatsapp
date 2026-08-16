@@ -2,9 +2,11 @@ import {
   DISAPPEARING_PRESETS,
   SNIPPET_CLOSE,
   SNIPPET_OPEN,
+  disclosureFor,
   extractHashtags,
   isValidPhone,
   sweepExpired,
+  type AiMode,
   type ChatSummary,
   type EphemeralMessage,
   type SearchHit,
@@ -1916,6 +1918,64 @@ function SecuritySection() {
   );
 }
 
+/** AiSection (T11.01): the AI-features consent + disclosure control. Off by
+ *  default; on-device keeps everything local, an opt-in server mode discloses
+ *  that content leaves the device, and an operator kill-switch can disable it. */
+function AiSection() {
+  const { services } = useServices();
+  const [, force] = useState(0);
+  const rerender = (): void => force((n) => n + 1);
+  useEffect(() => {
+    void services.loadAiConfig().then(rerender);
+  }, [services]);
+
+  if (!services.aiKillSwitchOn()) {
+    return (
+      <>
+        <h2 style={{ marginTop: "1.5rem" }}>AI features</h2>
+        <p className="muted" style={{ fontSize: "0.8rem" }}>AI features have been turned off by your administrator.</p>
+      </>
+    );
+  }
+
+  const s = services.getAiSettings();
+  const pick = (mode: AiMode): void => {
+    services.setAiMode(mode);
+    if (mode === "on-device") services.setAiConsent("onDevice", true);
+    rerender();
+  };
+
+  return (
+    <>
+      <h2 style={{ marginTop: "1.5rem" }}>AI features</h2>
+      <p className="muted" style={{ fontSize: "0.8rem" }}>{disclosureFor(s.mode)}</p>
+      <div className="secret-toggles" style={{ borderTop: "none", paddingTop: 0 }}>
+        <label className="secret-toggle">
+          <span>Off</span>
+          <input type="radio" name="ai-mode" checked={s.mode === "off"} onChange={() => pick("off")} />
+        </label>
+        <label className="secret-toggle">
+          <span>On this device only</span>
+          <input type="radio" name="ai-mode" checked={s.mode === "on-device"} onChange={() => pick("on-device")} />
+        </label>
+        {services.aiServerAvailable() ? (
+          <label className="secret-toggle">
+            <span>On a server (opt-in)</span>
+            <input type="radio" name="ai-mode" checked={s.mode === "server"} onChange={() => pick("server")} />
+          </label>
+        ) : null}
+      </div>
+      {s.mode === "server" ? (
+        <label className="secret-toggle">
+          <span>I understand the content I use with AI is sent to the AI service and isn’t end-to-end encrypted for that request.</span>
+          <input type="checkbox" checked={s.consent.server} onChange={(e) => { services.setAiConsent("server", e.target.checked); rerender(); }} />
+        </label>
+      ) : null}
+      <p className="muted" style={{ fontSize: "0.75rem" }}>Specific AI features (smart replies, summaries, translation) arrive next — this controls whether they may run.</p>
+    </>
+  );
+}
+
 export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSignedOut: () => void }) {
   const { services } = useServices();
   const [devices, setDevices] = useState<LinkedDevice[]>([]);
@@ -2028,6 +2088,7 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
       </label>
 
       <SecuritySection />
+      <AiSection />
 
       <h2 style={{ marginTop: "1.5rem" }}>Linked devices ({devices.length})</h2>
       <p className="muted" style={{ fontSize: "0.8rem" }}>

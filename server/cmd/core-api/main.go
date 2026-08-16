@@ -21,6 +21,7 @@ import (
 	abuseadapters "github.com/whatsapp-v2/server/internal/abuse/adapters"
 	"github.com/whatsapp-v2/server/internal/admin"
 	adminadapters "github.com/whatsapp-v2/server/internal/admin/adapters"
+	"github.com/whatsapp-v2/server/internal/ai"
 	"github.com/whatsapp-v2/server/internal/analytics"
 	analyticsadapters "github.com/whatsapp-v2/server/internal/analytics/adapters"
 	"github.com/whatsapp-v2/server/internal/auth"
@@ -406,6 +407,8 @@ func main() {
 	flagStore := flags.NewPGStore(pool)
 	flagCache := flags.NewValkeyCache(vk)
 	flagsSvc := flags.NewService(flagStore, flagCache)
+	// On-device AI runtime config (T11.01): exposes the AI kill-switch to clients.
+	aiSvc := ai.NewService(flagsSvc)
 
 	// ── admin plane (trust & safety + operations) ───────────────────────
 	// OIDC SSO gates the admin SPA (HLD §15.6): the external IdP owns admin
@@ -472,6 +475,7 @@ func main() {
 	ephemeral.Routes(mux, ephemeralSvc, issuer)     // /v1/conversations/{id}/disappearing: per-chat timer (T10.01)
 	deviceauth.Routes(mux, deviceAuthSvc, issuer)   // /v1/auth/passkeys + /v1/auth/logins: WebAuthn 2FA + login audit (T10.02)
 	abuse.Routes(mux, abuseSvc, issuer)             // /v1/reports: file trust-and-safety reports into the admin queue (T10.03)
+	ai.Routes(mux, aiSvc, issuer)                   // /v1/ai/config: on-device AI runtime kill-switch (T11.01)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

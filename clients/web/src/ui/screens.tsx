@@ -2738,6 +2738,71 @@ function LockGate({ onUnlock }: { onUnlock: () => void }) {
   );
 }
 
+/** ReportSheet files a trust-and-safety report against the chat's peer (T10.03),
+ *  optionally blocking them too. Only content the user consents to leaves the
+ *  device — the report itself is metadata. */
+function ReportSheet({ conversationId, onClose }: { conversationId: string; onClose: () => void }) {
+  const { services } = useServices();
+  const peer = services.peerOf(conversationId);
+  const [reason, setReason] = useState(0);
+  const [note, setNote] = useState("");
+  const [alsoBlock, setAlsoBlock] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const reasons = ["Spam", "Harassment", "Scam or phishing", "Impersonation", "Other"];
+
+  async function submit(): Promise<void> {
+    if (!peer) return;
+    setErr(null);
+    setBusy(true);
+    try {
+      await services.reportUser(peer, reason, note.trim() || undefined);
+      if (alsoBlock) await services.blockUser(peer);
+      onClose();
+      window.alert("Thanks — your report was sent to our safety team.");
+    } catch (e) {
+      setErr(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Report {services.peerNameOf(conversationId) || "contact"}</strong>
+        {!peer ? (
+          <>
+            <p className="muted">Reporting is available in direct chats.</p>
+            <button className="btn" onClick={onClose}>Close</button>
+          </>
+        ) : (
+          <>
+            <div className="secret-toggles" style={{ borderTop: "none", paddingTop: 0 }}>
+              {reasons.map((r, i) => (
+                <label key={i} className="secret-toggle">
+                  <span>{r}</span>
+                  <input type="radio" name="report-reason" checked={reason === i} onChange={() => setReason(i)} />
+                </label>
+              ))}
+            </div>
+            <textarea className="input" rows={2} placeholder="Add details (optional)" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
+            <label className="secret-toggle">
+              <span>Also block this contact</span>
+              <input type="checkbox" checked={alsoBlock} onChange={(e) => setAlsoBlock(e.target.checked)} />
+            </label>
+            {err ? <p className="error">{err}</p> : null}
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
+              <button className="btn danger" onClick={() => void submit()} disabled={busy}>{busy ? "Reporting…" : "Report"}</button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** ForwardPicker lists the user's other conversations to forward a message into. */
 function ForwardPicker({ exclude, onPick, onClose }: { exclude: string; onPick: (conversationId: string) => void; onClose: () => void }) {
   const { services } = useServices();
@@ -3467,6 +3532,7 @@ export function Thread({
   const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
   const focusedRef = useRef<string | null>(null); // search jump-to-result (once per target)
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
+  const [reportMsg, setReportMsg] = useState<ThreadMessage | null>(null); // message being reported (T10.03)
   const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | "tools" | null>(null); // composer picker
   const [showPoll, setShowPoll] = useState(false); // poll-creation modal
   const [showLocation, setShowLocation] = useState(false); // location-share sheet
@@ -3702,6 +3768,7 @@ export function Thread({
       void services.react(conversationId, m.msgUuid, emoji, mine ? "remove" : "add");
     },
     forward: (m) => setForwardMsg(m),
+    report: (m) => setReportMsg(m),
   };
 
   // Every image/video in the thread, so the lightbox can page across them.
@@ -3828,6 +3895,7 @@ export function Thread({
         <WallpaperSheet current={wallpaper} onPick={pickWallpaper} onClose={() => setShowWallpaper(false)} />
       ) : null}
       {showSecret ? <SecretChatSheet conversationId={conversationId} onClose={() => setShowSecret(false)} /> : null}
+      {reportMsg ? <ReportSheet conversationId={conversationId} onClose={() => setReportMsg(null)} /> : null}
       {forwardMsg ? (
         <ForwardPicker
           exclude={conversationId}
@@ -4011,6 +4079,7 @@ interface MessageActions {
   toggleStar(m: ThreadMessage): void;
   react(m: ThreadMessage, emoji: string): void;
   forward(m: ThreadMessage): void;
+  report?(m: ThreadMessage): void;
 }
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000; // FR-MSG-06
@@ -4101,6 +4170,7 @@ function MessageBubble({
           {canEdit ? <button className="menu-item" onClick={run(actions.edit)}>✎ Edit</button> : null}
           {canDeleteAll ? <button className="menu-item danger" onClick={run(actions.deleteForEveryone)}>🗑 Delete for everyone</button> : null}
           <button className="menu-item danger" onClick={run(actions.deleteForMe)}>🗑 Delete for me</button>
+          {!message.mine && actions.report ? <button className="menu-item danger" onClick={run(actions.report)}>⚠ Report</button> : null}
         </div>
       ) : null}
 

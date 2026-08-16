@@ -1238,6 +1238,15 @@ export class AppServices {
     const b = (await res.json()) as { blocked?: string[] };
     return b.blocked ?? [];
   }
+
+  /** reportUser files a trust-and-safety report against a user into the admin
+   *  queue (T10.03). reason: 0 spam · 1 harassment · 2 scam · 3 impersonation ·
+   *  4 other. The message stays E2EE — nothing is disclosed unless the caller
+   *  opts to attach ciphertext (not wired here). */
+  async reportUser(targetUserId: string, reason: number, note?: string): Promise<void> {
+    const res = await this.authedRequest("POST", "/v1/reports", { target_user_id: targetUserId, reason, note: note ?? "" });
+    if (!res.ok) throw new Error(`Couldn't file the report (HTTP ${res.status}).`);
+  }
   /** nameForUser returns a cached human name for any user id, falling back to a
    *  short id when the profile hasn't been loaded yet. */
   nameForUser(userId: string): string {

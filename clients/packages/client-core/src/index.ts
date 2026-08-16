@@ -17,3 +17,4 @@ export * from "./db/messageStore";
 export * from "./memoryRepo";
 export * from "./ephemeral";
 export * from "./deviceAuth";
+export * from "./abuse";

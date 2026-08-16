@@ -17,6 +17,8 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/whatsapp-v2/server/internal/abuse"
+	abuseadapters "github.com/whatsapp-v2/server/internal/abuse/adapters"
 	"github.com/whatsapp-v2/server/internal/admin"
 	adminadapters "github.com/whatsapp-v2/server/internal/admin/adapters"
 	"github.com/whatsapp-v2/server/internal/analytics"
@@ -289,6 +291,10 @@ func main() {
 	webauthnRPID := envOr("WA_WEBAUTHN_RP_ID", "localhost")
 	webauthnOrigin := envOr("WA_WEBAUTHN_ORIGIN", "http://localhost:5173")
 	deviceAuthSvc := deviceauth.NewService(deviceauthadapters.NewStore(pool), webauthnRPID, webauthnOrigin)
+	// Anti-abuse (T10.03): file user reports into the T4.01 trust-and-safety queue,
+	// rate-limited. Spam/phishing detection is on-device (E2EE); block lives in the
+	// profile context.
+	abuseSvc := abuse.NewService(abuseadapters.NewStore(pool), limiter)
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -465,6 +471,7 @@ func main() {
 	breakout.Routes(mux, breakoutSvc, issuer)       // /v1/live: breakout rooms + streaming egress + recording consent (T9.03)
 	ephemeral.Routes(mux, ephemeralSvc, issuer)     // /v1/conversations/{id}/disappearing: per-chat timer (T10.01)
 	deviceauth.Routes(mux, deviceAuthSvc, issuer)   // /v1/auth/passkeys + /v1/auth/logins: WebAuthn 2FA + login audit (T10.02)
+	abuse.Routes(mux, abuseSvc, issuer)             // /v1/reports: file trust-and-safety reports into the admin queue (T10.03)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

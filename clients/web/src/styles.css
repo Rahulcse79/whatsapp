@@ -1511,6 +1511,11 @@ body {
 :root[data-theme="dark"] .rich-link {
   color: #8ab4f8;
 }
+/* Phishing/suspicious link (T10.03): warn before opening. */
+.rich-link-risky {
+  color: #e5484d;
+  text-decoration: underline wavy;
+}
 
 /* A sent sticker renders large (emoji fallback until a public asset path lands). */
 .sticker-msg {

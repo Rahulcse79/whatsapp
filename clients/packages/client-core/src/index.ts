@@ -16,3 +16,4 @@ export * from "./db/outboxStore";
 export * from "./db/messageStore";
 export * from "./memoryRepo";
 export * from "./ephemeral";
+export * from "./deviceAuth";

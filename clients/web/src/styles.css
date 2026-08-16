@@ -1954,3 +1954,14 @@ body {
   font-size: 56px;
   opacity: 0.7;
 }
+
+/* Suspicious sign-in flag in the Security surface (T10.02). */
+.login-flag {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  background: color-mix(in srgb, #e5484d 16%, transparent);
+  color: #e5484d;
+}

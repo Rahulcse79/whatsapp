@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -11,14 +12,36 @@ import (
 	"github.com/whatsapp-v2/server/internal/platform/httpx"
 )
 
-// Routes mounts the auth REST surface (auth-users-api.md §Auth) on mux.
-func Routes(mux *http.ServeMux, s *Service) {
+// LoginObserver is notified after a successful sign-in so an auditor can record
+// it (IP, user-agent, device) — the suspicious-login surface (T10.02). Optional
+// and best-effort; the call runs in the background and never blocks the login.
+type LoginObserver interface {
+	Observe(ctx context.Context, userID, deviceID, ip, userAgent string)
+}
+
+// Routes mounts the auth REST surface (auth-users-api.md §Auth) on mux. Any
+// LoginObserver is notified after a successful verify.
+func Routes(mux *http.ServeMux, s *Service, observers ...LoginObserver) {
 	mux.HandleFunc("POST /v1/auth/request-otp", handleRequestOTP(s))
-	mux.HandleFunc("POST /v1/auth/verify-otp", handleVerifyOTP(s))
-	mux.HandleFunc("POST /v1/auth/verify-pin", handleVerifyPIN(s))
+	mux.HandleFunc("POST /v1/auth/verify-otp", handleVerifyOTP(s, observers))
+	mux.HandleFunc("POST /v1/auth/verify-pin", handleVerifyPIN(s, observers))
 	mux.HandleFunc("POST /v1/auth/refresh", handleRefresh(s))
 	mux.HandleFunc("POST /v1/auth/logout", handleLogout(s))
 	mux.HandleFunc("PUT /v1/auth/pin", handleSetPIN(s))
+}
+
+// notifyLogin fires the observers for a completed sign-in (skips the PIN-pending
+// first hop). Runs in the background on a detached context so it never adds
+// latency to the login response.
+func notifyLogin(r *http.Request, observers []LoginObserver, pair TokenPair) {
+	if len(observers) == 0 || pair.UserID == "" || pair.RequiresPIN {
+		return
+	}
+	ip, ua := clientIP(r), r.UserAgent()
+	for _, o := range observers {
+		o := o
+		go o.Observe(context.Background(), pair.UserID, pair.DeviceID, ip, ua)
+	}
 }
 
 func handleRequestOTP(s *Service) http.HandlerFunc {
@@ -59,7 +82,7 @@ func (d deviceBody) info(w http.ResponseWriter, r *http.Request) (DeviceInfo, bo
 	return DeviceInfo{Platform: d.Platform, Name: d.Name, IdentityKey: ik}, true
 }
 
-func handleVerifyOTP(s *Service) http.HandlerFunc {
+func handleVerifyOTP(s *Service, observers []LoginObserver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ChallengeID string     `json:"challenge_id"`
@@ -78,11 +101,12 @@ func handleVerifyOTP(s *Service) http.HandlerFunc {
 			writeErr(w, r, err)
 			return
 		}
+		notifyLogin(r, observers, pair)
 		httpx.JSON(w, http.StatusOK, pair)
 	}
 }
 
-func handleVerifyPIN(s *Service) http.HandlerFunc {
+func handleVerifyPIN(s *Service, observers []LoginObserver) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			ChallengeID string     `json:"challenge_id"`
@@ -101,6 +125,7 @@ func handleVerifyPIN(s *Service) http.HandlerFunc {
 			writeErr(w, r, err)
 			return
 		}
+		notifyLogin(r, observers, pair)
 		httpx.JSON(w, http.StatusOK, pair)
 	}
 }

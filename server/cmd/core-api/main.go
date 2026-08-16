@@ -36,6 +36,8 @@ import (
 	communitiesadapters "github.com/whatsapp-v2/server/internal/communities/adapters"
 	"github.com/whatsapp-v2/server/internal/contacts"
 	contactsadapters "github.com/whatsapp-v2/server/internal/contacts/adapters"
+	"github.com/whatsapp-v2/server/internal/deviceauth"
+	deviceauthadapters "github.com/whatsapp-v2/server/internal/deviceauth/adapters"
 	"github.com/whatsapp-v2/server/internal/devices"
 	devadapters "github.com/whatsapp-v2/server/internal/devices/adapters"
 	"github.com/whatsapp-v2/server/internal/ephemeral"
@@ -281,6 +283,12 @@ func main() {
 	// backstop purge. The authoritative timer is E2EE (client-side); this is the
 	// minimal server support.
 	ephemeralSvc := ephemeral.NewService(ephemeraladapters.NewStore(pool))
+	// Device-auth hardening (T10.02): WebAuthn passkeys (2FA/step-up) + login-event
+	// audit. rp id/origin are the web app's WebAuthn relying-party identity (dev
+	// defaults to localhost); staging/prod inject them.
+	webauthnRPID := envOr("WA_WEBAUTHN_RP_ID", "localhost")
+	webauthnOrigin := envOr("WA_WEBAUTHN_ORIGIN", "http://localhost:5173")
+	deviceAuthSvc := deviceauth.NewService(deviceauthadapters.NewStore(pool), webauthnRPID, webauthnOrigin)
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -442,7 +450,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /metrics", tel.MetricsHandler())
-	auth.Routes(mux, authSvc)
+	auth.Routes(mux, authSvc, deviceAuthSvc) // deviceAuthSvc audits each sign-in (T10.02)
 	keys.Routes(mux, keysSvc, issuer)
 	devices.Routes(mux, devSvc, issuer)
 	groups.Routes(mux, groupsSvc, issuer)
@@ -456,6 +464,7 @@ func main() {
 	webinar.Routes(mux, webinarSvc, issuer)         // /v1/webinars: live 1-to-many, waiting room, raise-hand, Q&A (T9.02)
 	breakout.Routes(mux, breakoutSvc, issuer)       // /v1/live: breakout rooms + streaming egress + recording consent (T9.03)
 	ephemeral.Routes(mux, ephemeralSvc, issuer)     // /v1/conversations/{id}/disappearing: per-chat timer (T10.01)
+	deviceauth.Routes(mux, deviceAuthSvc, issuer)   // /v1/auth/passkeys + /v1/auth/logins: WebAuthn 2FA + login audit (T10.02)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {
@@ -585,6 +594,14 @@ type breakoutMinter struct{ m *calls.TokenMinter }
 
 func (p breakoutMinter) MintJoin(room, identity string, canPublish bool) (string, error) {
 	return p.m.Mint(calls.JoinGrant{Identity: identity, Room: room, CanPublish: canPublish, CanSubscribe: true}, time.Hour, time.Now())
+}
+
+// envOr returns the environment variable, or a fallback default when it's unset.
+func envOr(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
 }
 
 // announcementGroupCreator adapts the groups service to communities.GroupCreator

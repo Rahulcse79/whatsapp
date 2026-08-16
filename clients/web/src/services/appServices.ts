@@ -7,6 +7,8 @@ import {
   OtpClient,
   SessionManager,
   WsClient,
+  b64urlToBytes,
+  bytesToB64url,
   newId,
   type CallKind,
   type ChatSummary,
@@ -31,6 +33,23 @@ export interface PublicProfile {
   username: string;
   displayName: string;
   about: string;
+}
+
+/** PasskeyInfo is a registered WebAuthn credential (T10.02). */
+export interface PasskeyInfo {
+  id: string;
+  name: string;
+  created_at_ms: number;
+  last_used_at_ms?: number;
+}
+
+/** LoginInfo is one row of the recent-logins security surface (T10.02). */
+export interface LoginInfo {
+  device_id?: string;
+  ip: string;
+  user_agent?: string;
+  at_ms: number;
+  suspicious: boolean;
 }
 
 /** MyProfile is the self view — the public fields plus per-field privacy. */
@@ -951,6 +970,110 @@ export class AppServices {
     else set.add(id);
     this.persistSet(key, set);
     this.notifyChange();
+  }
+
+  // ── Device auth hardening: passkeys + login audit (T10.02) ──────────────────
+  // WebAuthn passkeys are a 2FA / step-up factor and back the biometric app/chat
+  // lock (platform authenticator = Touch ID / Windows Hello / Android biometric).
+  // The server verifies assertions; secret key material never leaves the device.
+
+  passkeysSupported(): boolean {
+    return typeof window !== "undefined" && typeof window.PublicKeyCredential !== "undefined";
+  }
+
+  /** registerPasskey runs the WebAuthn create ceremony and enrolls the credential. */
+  async registerPasskey(): Promise<void> {
+    const begin = await this.authedRequest("POST", "/v1/auth/passkeys/register/begin");
+    if (!begin.ok) throw new Error(`passkey enrol failed: HTTP ${begin.status}`);
+    const opts = (await begin.json()) as { challenge: string; rp_id: string; user_id: string; algs: number[] };
+    const cred = (await navigator.credentials.create({
+      publicKey: {
+        challenge: b64urlToBytes(opts.challenge),
+        rp: { id: opts.rp_id, name: "WhatsApp V2" },
+        user: { id: new TextEncoder().encode(opts.user_id), name: opts.user_id, displayName: "You" },
+        pubKeyCredParams: opts.algs.map((alg) => ({ type: "public-key", alg })),
+        authenticatorSelection: { userVerification: "preferred", residentKey: "preferred" },
+        timeout: 60_000,
+      },
+    })) as PublicKeyCredential | null;
+    if (!cred) throw new Error("passkey creation was cancelled");
+    const resp = cred.response as AuthenticatorAttestationResponse;
+    const alg = resp.getPublicKeyAlgorithm();
+    const spki = resp.getPublicKey();
+    if (!spki) throw new Error("this authenticator did not return a public key");
+    const publicKey = await this.rawPublicKey(alg, new Uint8Array(spki));
+    const res = await this.authedRequest("POST", "/v1/auth/passkeys/register/finish", {
+      credential_id: bytesToB64url(new Uint8Array(cred.rawId)),
+      alg,
+      public_key: bytesToB64url(publicKey),
+      client_data_json: bytesToB64url(new Uint8Array(resp.clientDataJSON)),
+      name: this.deviceLabel(),
+    });
+    if (!res.ok) throw new Error(`passkey enrol failed: HTTP ${res.status}`);
+    this.notifyChange();
+  }
+
+  /** rawPublicKey turns the authenticator's SPKI DER into the raw key the server
+   *  stores: EdDSA = the trailing 32 bytes; ES256 = x||y (drop the 0x04 tag). */
+  private async rawPublicKey(alg: number, spki: Uint8Array): Promise<Uint8Array> {
+    if (alg === -8) return spki.slice(spki.length - 32);
+    const key = await crypto.subtle.importKey("spki", spki, { name: "ECDSA", namedCurve: "P-256" }, true, []);
+    const raw = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+    return raw.slice(1, 65);
+  }
+
+  /** loginPasskey runs the WebAuthn get ceremony (biometric prompt) and verifies
+   *  the assertion server-side. Returns true on success — used for the app/chat
+   *  lock and as a 2FA step-up. */
+  async loginPasskey(): Promise<boolean> {
+    const begin = await this.authedRequest("POST", "/v1/auth/passkeys/login/begin");
+    if (!begin.ok) return false;
+    const opts = (await begin.json()) as { challenge: string; rp_id: string; allow_credentials: string[] };
+    if (opts.allow_credentials.length === 0) return false;
+    const assertion = (await navigator.credentials.get({
+      publicKey: {
+        challenge: b64urlToBytes(opts.challenge),
+        rpId: opts.rp_id,
+        allowCredentials: opts.allow_credentials.map((id) => ({ type: "public-key" as const, id: b64urlToBytes(id) })),
+        userVerification: "preferred",
+        timeout: 60_000,
+      },
+    })) as PublicKeyCredential | null;
+    if (!assertion) return false;
+    const resp = assertion.response as AuthenticatorAssertionResponse;
+    const res = await this.authedRequest("POST", "/v1/auth/passkeys/login/finish", {
+      credential_id: bytesToB64url(new Uint8Array(assertion.rawId)),
+      authenticator_data: bytesToB64url(new Uint8Array(resp.authenticatorData)),
+      client_data_json: bytesToB64url(new Uint8Array(resp.clientDataJSON)),
+      signature: bytesToB64url(new Uint8Array(resp.signature)),
+    });
+    return res.ok;
+  }
+
+  async listPasskeys(): Promise<PasskeyInfo[]> {
+    const res = await this.authedRequest("GET", "/v1/auth/passkeys");
+    if (!res.ok) return [];
+    return ((await res.json()) as { passkeys: PasskeyInfo[] }).passkeys ?? [];
+  }
+
+  async deletePasskey(id: string): Promise<void> {
+    await this.authedRequest("DELETE", `/v1/auth/passkeys/${encodeURIComponent(id)}`);
+    this.notifyChange();
+  }
+
+  async recentLogins(): Promise<LoginInfo[]> {
+    const res = await this.authedRequest("GET", "/v1/auth/logins");
+    if (!res.ok) return [];
+    return ((await res.json()) as { logins: LoginInfo[] }).logins ?? [];
+  }
+
+  private deviceLabel(): string {
+    const ua = typeof navigator !== "undefined" ? navigator.userAgent : "";
+    if (/Mac/.test(ua)) return "Mac passkey";
+    if (/Windows/.test(ua)) return "Windows passkey";
+    if (/iPhone|iPad/.test(ua)) return "iOS passkey";
+    if (/Android/.test(ua)) return "Android passkey";
+    return "Passkey";
   }
 
   async togglePin(msgUuid: string, pinned: boolean): Promise<void> {

@@ -39,7 +39,7 @@ import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
 import { Icon } from "./icons";
-import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -1814,6 +1814,108 @@ function StoryViewerOverlay({
 /** Settings screen (T5.12): linked-device management (list/rename/revoke),
  *  notification opt-in, and the account/backup surfaces. Device linking's QR
  *  scan + signed device-list cert is the crypto-wrapper deviceList seam. */
+/** SecuritySection (T10.02): passkeys (Face ID / Touch ID / Hello) as a 2FA +
+ *  biometric-unlock factor, and the recent-sign-ins surface with a new-location
+ *  flag. */
+function SecuritySection() {
+  const { services } = useServices();
+  const [passkeys, setPasskeys] = useState<PasskeyInfo[]>([]);
+  const [logins, setLogins] = useState<LoginInfo[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    void services.listPasskeys().then(setPasskeys).catch(() => {});
+    void services.recentLogins().then(setLogins).catch(() => {});
+  }, [services]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  async function addPasskey(): Promise<void> {
+    setErr(null);
+    setBusy(true);
+    try {
+      await services.registerPasskey();
+      load();
+    } catch (e) {
+      setErr(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const fmt = (ms: number): string => new Date(ms).toLocaleString();
+
+  return (
+    <>
+      <h2 style={{ marginTop: "1.5rem" }}>Security</h2>
+      <p className="muted" style={{ fontSize: "0.8rem" }}>
+        Passkeys (Face ID / Touch ID / Windows Hello) add a phishing-resistant second factor and unlock your locked chats. The key stays on this device.
+      </p>
+      {services.passkeysSupported() ? (
+        <button className="btn small" onClick={() => void addPasskey()} disabled={busy}>
+          {busy ? "Waiting for authenticator…" : "＋ Add a passkey"}
+        </button>
+      ) : (
+        <p className="muted" style={{ fontSize: "0.8rem" }}>Passkeys aren’t supported in this browser.</p>
+      )}
+      {err ? <p className="error">{err}</p> : null}
+      {passkeys.length > 0 ? (
+        <ul className="list">
+          {passkeys.map((p) => (
+            <li key={p.id} className="row" style={{ cursor: "default" }}>
+              <span className="avatar avatar-default" style={{ width: 40, height: 40 }}>
+                <Icon name="settings" size={22} />
+              </span>
+              <div className="row-main">
+                <div className="row-line1">
+                  <span className="row-title">{p.name}</span>
+                </div>
+                <div className="row-line2">
+                  <span className="row-sub">
+                    Added {fmt(p.created_at_ms)}
+                    {p.last_used_at_ms ? ` · used ${fmt(p.last_used_at_ms)}` : ""}
+                  </span>
+                  <span className="row-right">
+                    <button className="btn small ghost" onClick={() => void services.deletePasskey(p.id).then(load)}>
+                      Remove
+                    </button>
+                  </span>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+
+      <h3 style={{ marginTop: "1rem" }}>Recent sign-ins</h3>
+      {logins.length === 0 ? (
+        <p className="muted" style={{ fontSize: "0.8rem" }}>No recent sign-ins recorded yet.</p>
+      ) : (
+        <ul className="list">
+          {logins.map((l, i) => (
+            <li key={i} className="row" style={{ cursor: "default" }}>
+              <div className="row-main">
+                <div className="row-line1">
+                  <span className="row-title">
+                    {l.ip || "unknown IP"}
+                    {l.suspicious ? <span className="login-flag">new location</span> : null}
+                  </span>
+                  <span className="row-time">{fmt(l.at_ms)}</span>
+                </div>
+                <div className="row-line2">
+                  <span className="row-sub">{l.user_agent || "unknown device"}</span>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  );
+}
+
 export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSignedOut: () => void }) {
   const { services } = useServices();
   const [devices, setDevices] = useState<LinkedDevice[]>([]);
@@ -1924,6 +2026,8 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
           ))}
         </span>
       </label>
+
+      <SecuritySection />
 
       <h2 style={{ marginTop: "1.5rem" }}>Linked devices ({devices.length})</h2>
       <p className="muted" style={{ fontSize: "0.8rem" }}>
@@ -2601,14 +2705,35 @@ function SecretChatSheet({ conversationId, onClose }: { conversationId: string; 
   );
 }
 
-/** LockGate covers a locked chat until the user unlocks (biometric unlock is
- *  T10.02; here a tap suffices for the session). */
+/** LockGate covers a locked chat until the user unlocks — via a passkey/biometric
+ *  assertion (T10.02) when available, else a tap for the session. */
 function LockGate({ onUnlock }: { onUnlock: () => void }) {
+  const { services } = useServices();
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  async function biometric(): Promise<void> {
+    setErr(null);
+    setBusy(true);
+    try {
+      if (await services.loginPasskey()) onUnlock();
+      else setErr("Couldn’t verify with a passkey.");
+    } catch {
+      setErr("Biometric unlock failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
   return (
     <div className="locked-gate">
       <div className="locked-lock" aria-hidden>🔒</div>
       <p>This chat is locked.</p>
-      <button className="btn" onClick={onUnlock}>Unlock</button>
+      {services.passkeysSupported() ? (
+        <button className="btn" onClick={() => void biometric()} disabled={busy}>
+          {busy ? "Verifying…" : "Unlock with biometrics"}
+        </button>
+      ) : null}
+      <button className="btn ghost" onClick={onUnlock}>Unlock</button>
+      {err ? <p className="error">{err}</p> : null}
     </div>
   );
 }

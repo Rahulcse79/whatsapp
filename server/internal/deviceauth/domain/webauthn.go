@@ -6,6 +6,7 @@
 package domain
 
 import (
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
@@ -72,7 +73,7 @@ func VerifyClientData(cd ClientData, wantType, wantChallenge, wantOrigin string)
 	if cd.Type != wantType {
 		return ErrClientType
 	}
-	if subtleEq(cd.Challenge, wantChallenge) == false {
+	if !subtleEq(cd.Challenge, wantChallenge) {
 		return ErrChallenge
 	}
 	if cd.Origin != wantOrigin {
@@ -170,11 +171,14 @@ func es256PublicKey(x, y []byte) (*ecdsa.PublicKey, error) {
 	if len(x) != 32 || len(y) != 32 {
 		return nil, ErrBadKey
 	}
-	pub := &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}
-	if !pub.Curve.IsOnCurve(pub.X, pub.Y) {
+	// Validate the point is a valid P-256 public key (on-curve + range) via
+	// crypto/ecdh, which supersedes the deprecated Curve.IsOnCurve. The uncompressed
+	// SEC1 encoding is 0x04 || x || y.
+	uncompressed := append([]byte{0x04}, append(append([]byte{}, x...), y...)...)
+	if _, err := ecdh.P256().NewPublicKey(uncompressed); err != nil {
 		return nil, ErrBadKey
 	}
-	return pub, nil
+	return &ecdsa.PublicKey{Curve: elliptic.P256(), X: new(big.Int).SetBytes(x), Y: new(big.Int).SetBytes(y)}, nil
 }
 
 // DecodeB64URL decodes a raw-URL base64 field (challenge / key coordinate / sig).

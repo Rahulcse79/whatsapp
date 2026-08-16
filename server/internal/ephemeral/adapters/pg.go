@@ -49,7 +49,7 @@ func (s *Store) PurgeExpired(ctx context.Context, now time.Time) (int, error) {
 		 USING conversation_ephemeral ce
 		 WHERE mi.conversation_id = ce.conversation_id
 		   AND ce.ttl_seconds > 0
-		   AND mi.accepted_at < $1 - make_interval(secs => ce.ttl_seconds)`,
+		   AND mi.accepted_at < $1::timestamptz - make_interval(secs => ce.ttl_seconds)`,
 		now)
 	if err != nil {
 		return 0, err

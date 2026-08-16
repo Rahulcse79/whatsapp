@@ -21,6 +21,8 @@
   --muted: #667781;
   --line: #e9edef;
   --border: #e9edef;
+  --avatar-bg: #ccd6db; /* WhatsApp default-avatar circle */
+  --avatar-fg: #ffffff; /* silhouette */
 
   /* Back-compat aliases for older rules / inline styles. */
   --brand: var(--accent);
@@ -53,6 +55,8 @@
   --muted: #8696a0;
   --line: #2a3942;
   --border: #2a3942;
+  --avatar-bg: #3b4a54;
+  --avatar-fg: #ced6db;
 
   color-scheme: dark;
 }
@@ -115,8 +119,64 @@ body {
   min-height: 0;
   background: var(--panel);
 }
+
+/* Far-left icon rail (WhatsApp Web's newest layout). */
+.wa-rail {
+  width: 64px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 10px 0;
+  background: var(--header);
+  border-right: 1px solid var(--line);
+}
+.wa-rail-top,
+.wa-rail-bottom {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+.rail-item {
+  width: 44px;
+  height: 44px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: 50%;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.rail-item:hover {
+  background: rgba(134, 150, 160, 0.16);
+  color: var(--text);
+}
+.rail-item.active {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.rail-label {
+  display: none;
+}
+.rail-avatar {
+  padding: 0;
+}
+.rail-avatar.active {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.wa-panes {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
 .wa-side {
-  width: 32%;
+  width: 33%;
   min-width: 300px;
   max-width: 460px;
   display: flex;
@@ -170,14 +230,58 @@ body {
 }
 
 @media (max-width: 999px) {
+  .wa-shell {
+    flex-direction: column;
+  }
+  /* Rail becomes a bottom tab bar (WhatsApp mobile). */
+  .wa-rail {
+    order: 2;
+    width: 100%;
+    height: 58px;
+    flex-direction: row;
+    padding: 0;
+    border-right: none;
+    border-top: 1px solid var(--line);
+  }
+  .wa-rail-top,
+  .wa-rail-bottom {
+    flex-direction: row;
+    flex: 1;
+    justify-content: space-around;
+    gap: 0;
+  }
+  .wa-rail-bottom .rail-avatar {
+    display: none; /* profile reachable via list header on mobile */
+  }
+  .rail-item {
+    width: auto;
+    height: 100%;
+    flex: 1;
+    border-radius: 0;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .rail-item.active {
+    background: transparent;
+  }
+  .rail-label {
+    display: block;
+    font-size: 11px;
+  }
+  .wa-panes {
+    order: 1;
+  }
   .wa-side {
     width: 100%;
     max-width: none;
     min-width: 0;
     border-right: none;
   }
-  .wa-shell .wa-detail {
+  .wa-panes .wa-detail {
     display: none;
+  }
+  .wa-shell.show-detail .wa-rail {
+    display: none; /* hide bottom tabs inside a chat */
   }
   .wa-shell.show-detail .wa-side {
     display: none;
@@ -314,6 +418,13 @@ body {
   overflow: hidden;
   user-select: none;
 }
+.avatar-default {
+  background: var(--avatar-bg);
+  color: var(--avatar-fg);
+}
+.avatar-default svg {
+  display: block;
+}
 
 .pane {
   flex: 1;
@@ -347,6 +458,55 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 2px;
+}
+.wa-list-title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+.pane-head-title {
+  font-size: 17px;
+  font-weight: 600;
+}
+
+/* Header overflow menu (list header ⋮). */
+.wa-menu-wrap {
+  position: relative;
+  display: inline-flex;
+}
+.wa-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+}
+.wa-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 31;
+  min-width: 180px;
+  background: var(--panel);
+  border-radius: 8px;
+  box-shadow: 0 4px 22px rgba(11, 20, 26, 0.28);
+  padding: 6px 0;
+  display: flex;
+  flex-direction: column;
+}
+.menu-item {
+  background: transparent;
+  border: none;
+  text-align: left;
+  padding: 11px 22px 11px 18px;
+  font-size: 14.5px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.menu-item:hover {
+  background: var(--hover);
+}
+.menu-item.danger {
+  color: #e5484d;
 }
 
 /* Search / filter bar under the list header. */
@@ -594,40 +754,6 @@ body {
 }
 .composer .input:focus {
   outline: none;
-}
-
-/* Composer tool buttons collapse to round icons; send is a green circle. */
-.composer .btn.small.ghost {
-  width: 42px;
-  height: 42px;
-  border-radius: 50%;
-  padding: 0;
-  flex-shrink: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  color: var(--muted);
-  background: transparent;
-}
-.composer .btn.small.ghost:hover {
-  background: rgba(134, 150, 160, 0.18);
-  color: var(--text);
-}
-.composer > .btn[type="submit"] {
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  padding: 0;
-  flex-shrink: 0;
-  font-size: 0;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-.composer > .btn[type="submit"]::before {
-  content: "➤";
-  font-size: 20px;
 }
 
 .mono {
@@ -1624,4 +1750,134 @@ body {
 }
 .contact-phone {
   font-size: 12px;
+}
+
+/* ── Icon buttons carry SVGs now ──────────────────────────────────────────── */
+.wa-icon svg,
+.rail-item svg,
+.wa-send svg {
+  display: block;
+}
+
+/* Circular green send / mic button in the composer. */
+.wa-send {
+  width: 46px;
+  height: 46px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 2px;
+}
+.wa-send:hover {
+  background: var(--accent-strong);
+}
+.wa-send svg {
+  margin-left: 1px;
+}
+
+/* Read ticks tint (WhatsApp blue). */
+.state-read {
+  color: var(--tick-read);
+}
+.bubble-meta .state svg {
+  display: block;
+}
+
+/* ── Attach "＋" tools popover ─────────────────────────────────────────────── */
+.tools-pop {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 8px;
+  z-index: 40;
+  width: 232px;
+  background: var(--panel);
+  border-radius: 14px;
+  box-shadow: 0 6px 26px rgba(11, 20, 26, 0.3);
+  padding: 8px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+}
+.tool-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 12px 4px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  border-radius: 10px;
+  cursor: pointer;
+}
+.tool-item:hover {
+  background: var(--hover);
+}
+.tool-item:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.tool-ic {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.tool-photo { background: #bf59cf; }
+.tool-doc { background: #5157ae; }
+.tool-gif { background: #d3396d; }
+.tool-sticker { background: #eab308; }
+.tool-poll { background: #f2994a; }
+.tool-loc { background: #1fa855; }
+.tool-contact { background: #0a7cff; }
+.tool-tpl { background: #5f66cd; }
+.tool-sch { background: #009de2; }
+.tool-fmt { background: #6b7c85; }
+
+/* ── Updates (status) screen ──────────────────────────────────────────────── */
+.status-avatar {
+  position: relative;
+  flex-shrink: 0;
+  display: inline-flex;
+}
+.status-ring {
+  padding: 2px;
+  border: 2.5px solid var(--accent);
+  border-radius: 50%;
+}
+.status-ring.seen {
+  border-color: var(--muted);
+}
+.status-add {
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: 2px solid var(--panel);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.status-empty {
+  list-style: none;
+  padding: 18px;
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
 }

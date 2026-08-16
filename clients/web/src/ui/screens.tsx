@@ -35,6 +35,7 @@ import { DownloadsPanel } from "./media/DownloadsPanel";
 import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
+import { Icon } from "./icons";
 import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, GroupInfo, GroupMember, Invite, LinkedDevice, MatchedContact, NotificationEntry, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
@@ -49,29 +50,29 @@ function onActivate(handler: () => void) {
   };
 }
 
-/** WhatsApp-style avatar: a colored circle with initials (or an emoji for
- *  groups/system rows). Colour is derived deterministically from the id/name so
- *  a given chat always gets the same swatch — no network fetch involved. */
-const AVATAR_COLORS = ["#e1795a", "#5ea15e", "#4a9fd4", "#9b6dd6", "#e0699f", "#4cbcb0", "#e0a13b", "#7c8ce0"];
-function hashCode(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
-  return Math.abs(h);
-}
-function initialsOf(name: string): string {
-  const parts = name.trim().split(/\s+/).filter(Boolean);
-  if (parts.length === 0) return "?";
-  const first = parts[0]?.[0] ?? "";
-  const last = parts.length > 1 ? (parts[parts.length - 1]?.[0] ?? "") : "";
-  return (first + last).toUpperCase() || "?";
-}
-export function Avatar({ name, id, size = 49, emoji }: { name?: string; id?: string; size?: number; emoji?: string }) {
-  const key = id || name || "?";
-  const bg = AVATAR_COLORS[hashCode(key) % AVATAR_COLORS.length];
-  const label = emoji ?? (name ? initialsOf(name) : "?");
+/** WhatsApp default avatar: a gray circle with a white person (or group)
+ *  silhouette — the exact placeholder WhatsApp shows for a contact without a
+ *  photo. `group` (or the legacy `emoji="👥"`) swaps in the group silhouette. */
+export function Avatar({ size = 49, emoji, group }: { name?: string; id?: string; size?: number; emoji?: string; group?: boolean }) {
+  const isGroup = group ?? emoji === "👥";
+  const glyph = Math.round(size * 0.62);
   return (
-    <span className="avatar" aria-hidden style={{ width: size, height: size, background: bg, fontSize: Math.round(size * 0.4) }}>
-      {label}
+    <span className="avatar avatar-default" aria-hidden style={{ width: size, height: size }}>
+      <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="currentColor" aria-hidden focusable={false}>
+        {isGroup ? (
+          <>
+            <circle cx="7.5" cy="9" r="2.6" />
+            <circle cx="16.5" cy="9" r="2.6" />
+            <path d="M1.5 19.4c0-2.9 2.6-4.6 6-4.6s6 1.7 6 4.6z" />
+            <path d="M12.6 15c.8-.32 1.75-.5 2.9-.5 3.4 0 6 1.7 6 4.6h-6.5" />
+          </>
+        ) : (
+          <>
+            <circle cx="12" cy="8.4" r="4.3" />
+            <path d="M3.4 20.6c0-4.5 3.9-7.1 8.6-7.1s8.6 2.6 8.6 7.1z" />
+          </>
+        )}
+      </svg>
     </span>
   );
 }
@@ -528,32 +529,21 @@ export function CallHistory({ onBack }: { onBack: () => void }) {
 export function ChatList({
   onOpen,
   onNew,
-  onSearch,
-  onProfile,
   onContacts,
   onNewGroup,
-  onCalls,
-  onStatus,
-  onChannels,
-  onCommunities,
   activeId,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
-  onSearch: () => void;
-  onProfile: () => void;
   onContacts: () => void;
   onNewGroup: () => void;
-  onCalls: () => void;
-  onStatus: () => void;
-  onChannels: () => void;
-  onCommunities: () => void;
   activeId?: string;
 }) {
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
   const [filter, setFilter] = useState("");
+  const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
     let alive = true;
@@ -648,17 +638,28 @@ export function ChatList({
   return (
     <div className="pane">
       <div className="wa-list-head">
-        <button className="avatar" onClick={onProfile} aria-label="Your profile" title="Profile" style={{ width: 40, height: 40, background: "var(--accent)", border: "none", cursor: "pointer", fontSize: 18 }}>
-          👤
-        </button>
+        <span className="wa-list-title">Chats</span>
         <span className="wa-list-actions">
-          <button className="wa-icon" onClick={onCommunities} aria-label="Communities" title="Communities">🏘️</button>
-          <button className="wa-icon" onClick={onStatus} aria-label="Status updates" title="Status">⭕</button>
-          <button className="wa-icon" onClick={onChannels} aria-label="Channels" title="Channels">📢</button>
-          <button className="wa-icon" onClick={onCalls} aria-label="Call history" title="Calls">📞</button>
-          <button className="wa-icon" onClick={onContacts} aria-label="Contacts" title="Contacts">👥</button>
-          <button className="wa-icon" onClick={onNewGroup} aria-label="New group" title="New group">＋</button>
-          <button className="wa-icon" onClick={onNew} aria-label="New chat" title="New chat">✏️</button>
+          <button className="wa-icon" onClick={onContacts} aria-label="Contacts" title="Contacts">
+            <Icon name="contacts" size={22} />
+          </button>
+          <button className="wa-icon" onClick={onNew} aria-label="New chat" title="New chat">
+            <Icon name="newchat" size={22} />
+          </button>
+          <span className="wa-menu-wrap">
+            <button className="wa-icon" onClick={() => setMenuOpen((v) => !v)} aria-label="Menu" title="Menu" aria-expanded={menuOpen}>
+              <Icon name="menu" size={22} />
+            </button>
+            {menuOpen ? (
+              <>
+                <div className="wa-menu-backdrop" onClick={() => setMenuOpen(false)} />
+                <div className="wa-menu" role="menu">
+                  <button className="menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onNewGroup(); }}>New group</button>
+                  <button className="menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onContacts(); }}>Contacts</button>
+                </div>
+              </>
+            ) : null}
+          </span>
         </span>
       </div>
       <div className="wa-search">
@@ -1439,12 +1440,15 @@ export function Status({ onBack }: { onBack: () => void }) {
   }
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>Status</h1>
+    <div className="pane">
+      <div className="pane-head">
+        <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
+          <Icon name="back" size={24} />
+        </button>
+        <span className="pane-head-title">Updates</span>
+      </div>
       <ul className="list">
+        <li className="list-section">Status</li>
         <li
           className="row"
           role="button"
@@ -1452,38 +1456,60 @@ export function Status({ onBack }: { onBack: () => void }) {
           onClick={() => (mine.length ? setMode({ m: "view", author: me }) : setMode({ m: "compose" }))}
           onKeyDown={onActivate(() => (mine.length ? setMode({ m: "view", author: me }) : setMode({ m: "compose" })))}
         >
-          <div className="row-title">➕ My status</div>
-          <div className="row-sub">
-            {mine.length ? `${mine.length} update${mine.length > 1 ? "s" : ""} · tap to view` : "Tap to add a status update"}
+          <span className="status-avatar">
+            <Avatar size={49} />
+            {mine.length ? null : (
+              <span className="status-add" aria-hidden>
+                <Icon name="plus" size={14} />
+              </span>
+            )}
+          </span>
+          <div className="row-main">
+            <div className="row-line1">
+              <span className="row-title">My status</span>
+            </div>
+            <div className="row-line2">
+              <span className="row-sub">{mine.length ? `${mine.length} update${mine.length > 1 ? "s" : ""} · tap to view` : "Tap to add status update"}</span>
+              {mine.length ? (
+                <span className="row-right">
+                  <button
+                    className="wa-icon"
+                    aria-label="Add to my status"
+                    title="Add status"
+                    onClick={(e) => { e.stopPropagation(); setMode({ m: "compose" }); }}
+                  >
+                    <Icon name="camera" size={20} />
+                  </button>
+                </span>
+              ) : null}
+            </div>
           </div>
         </li>
-      </ul>
-      <button className="btn small" onClick={() => setMode({ m: "compose" })}>
-        ＋ Add status
-      </button>
-
-      <h2 style={{ marginTop: "1.5rem" }}>Recent updates</h2>
-      {others.length === 0 ? (
-        <p className="muted">No status updates from your contacts yet.</p>
-      ) : (
-        <ul className="list">
-          {others.map(([author, stories]) => (
-            <li
-              key={author}
-              className="row"
-              role="button"
-              tabIndex={0}
-              onClick={() => setMode({ m: "view", author })}
-              onKeyDown={onActivate(() => setMode({ m: "view", author }))}
-            >
-              <div className="row-title">🟢 {services.nameForUser(author)}</div>
-              <div className="row-sub">
-                {stories.length} update{stories.length > 1 ? "s" : ""}
+        {others.length > 0 ? <li className="list-section">Recent updates</li> : null}
+        {others.map(([author, stories]) => (
+          <li
+            key={author}
+            className="row"
+            role="button"
+            tabIndex={0}
+            onClick={() => setMode({ m: "view", author })}
+            onKeyDown={onActivate(() => setMode({ m: "view", author }))}
+          >
+            <span className="status-avatar status-ring">
+              <Avatar size={49} />
+            </span>
+            <div className="row-main">
+              <div className="row-line1">
+                <span className="row-title">{services.nameForUser(author)}</span>
               </div>
-            </li>
-          ))}
-        </ul>
-      )}
+              <div className="row-line2">
+                <span className="row-sub">{stories.length} update{stories.length > 1 ? "s" : ""}</span>
+              </div>
+            </div>
+          </li>
+        ))}
+        {others.length === 0 ? <li className="status-empty">No status updates from your contacts yet.</li> : null}
+      </ul>
     </div>
   );
 }
@@ -3238,7 +3264,7 @@ export function Thread({
   const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
   const focusedRef = useRef<string | null>(null); // search jump-to-result (once per target)
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
-  const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | null>(null); // composer picker
+  const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | "tools" | null>(null); // composer picker
   const [showPoll, setShowPoll] = useState(false); // poll-creation modal
   const [showLocation, setShowLocation] = useState(false); // location-share sheet
   const [showContact, setShowContact] = useState(false); // contact-share picker
@@ -3474,7 +3500,7 @@ export function Thread({
     <div className="pane">
       <div className="pane-head">
         <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
-          ‹
+          <Icon name="back" size={24} />
         </button>
         <Avatar
           name={group ? group.name : services.peerNameOf(conversationId) || conversationId}
@@ -3504,21 +3530,21 @@ export function Thread({
         </div>
         {group ? (
           <button className="wa-icon" title="Group info" aria-label="Group info" onClick={() => onGroupInfo(conversationId)}>
-            <span aria-hidden>ℹ️</span>
+            <Icon name="info" size={22} />
           </button>
         ) : (
           <>
             <button className="wa-icon" title="Video call" aria-label="Start video call" disabled={!peerId} onClick={() => peerId && void call.startCall(peerId, "video")}>
-              <span aria-hidden>📹</span>
+              <Icon name="video" size={22} />
             </button>
             <button className="wa-icon" title="Voice call" aria-label="Start voice call" disabled={!peerId} onClick={() => peerId && void call.startCall(peerId, "voice")}>
-              <span aria-hidden>📞</span>
+              <Icon name="phone" size={21} />
             </button>
           </>
         )}
         {onSearchInChat && (
           <button className="wa-icon" title="Search in this chat" aria-label="Search in this chat" onClick={() => onSearchInChat(conversationId)}>
-            <span aria-hidden>🔍</span>
+            <Icon name="search" size={21} />
           </button>
         )}
         <button
@@ -3530,13 +3556,13 @@ export function Thread({
             setMuted(services.isMuted(conversationId));
           }}
         >
-          <span aria-hidden>{muted ? "🔇" : "🔔"}</span>
+          <Icon name={muted ? "mute" : "bell"} size={21} />
         </button>
         <button className="wa-icon" title="Chat wallpaper" aria-label="Chat wallpaper" onClick={() => setShowWallpaper(true)}>
-          <span aria-hidden>🎨</span>
+          <Icon name="wallpaper" size={21} />
         </button>
         <button className="wa-icon" title="Export chat" aria-label="Export chat" onClick={() => void exportChat()}>
-          <span aria-hidden>⬇</span>
+          <Icon name="download" size={21} />
         </button>
       </div>
       <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>
@@ -3663,58 +3689,64 @@ export function Thread({
               onClose={() => setPicker(null)}
             />
           ) : null}
+          {picker === "tools" ? (
+            <>
+              <div className="wa-menu-backdrop" onClick={() => setPicker(null)} />
+              <div className="tools-pop" role="menu">
+                <button className="tool-item" onClick={() => { setPicker(null); fileRef.current?.click(); }} disabled={sendingMedia || !!editing}>
+                  <span className="tool-ic tool-photo"><Icon name="camera" size={20} /></span>Photo &amp; video
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); fileRef.current?.click(); }} disabled={sendingMedia || !!editing}>
+                  <span className="tool-ic tool-doc"><Icon name="download" size={20} /></span>Document
+                </button>
+                <button className="tool-item" onClick={() => setPicker("gif")} disabled={!!editing}>
+                  <span className="tool-ic tool-gif">GIF</span>GIF
+                </button>
+                <button className="tool-item" onClick={() => setPicker("sticker")} disabled={!!editing}>
+                  <span className="tool-ic tool-sticker"><Icon name="star" size={18} /></span>Sticker
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); setShowPoll(true); }} disabled={!!editing}>
+                  <span className="tool-ic tool-poll"><Icon name="updates" size={18} /></span>Poll
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); setShowLocation(true); }} disabled={!!editing}>
+                  <span className="tool-ic tool-loc"><Icon name="info" size={18} /></span>Location
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); setShowContact(true); }} disabled={!!editing}>
+                  <span className="tool-ic tool-contact"><Icon name="contacts" size={18} /></span>Contact
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); setShowTemplates(true); }} disabled={!!editing}>
+                  <span className="tool-ic tool-tpl"><Icon name="copy" size={18} /></span>Saved replies
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); setShowSchedule(true); }} disabled={!!editing || draft.trim() === ""}>
+                  <span className="tool-ic tool-sch"><Icon name="clock" size={18} /></span>Schedule
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); wrapSelection("*"); }} disabled={!!editing}>
+                  <span className="tool-ic tool-fmt"><b>B</b></span>Bold
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); wrapSelection("_"); }} disabled={!!editing}>
+                  <span className="tool-ic tool-fmt"><i>I</i></span>Italic
+                </button>
+              </div>
+            </>
+          ) : null}
           <form className="composer" onSubmit={send}>
             <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-hidden />
-            <button className="btn small ghost" type="button" aria-label="Bold" title="Bold (*text*)" disabled={!!editing} onClick={() => wrapSelection("*")}>
-              <b>B</b>
+            <button className="wa-icon" type="button" aria-label="Emoji" title="Emoji" onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
+              <Icon name="emoji" size={24} />
             </button>
-            <button className="btn small ghost" type="button" aria-label="Italic" title="Italic (_text_)" disabled={!!editing} onClick={() => wrapSelection("_")}>
-              <i>I</i>
-            </button>
-            <button className="btn small ghost" type="button" aria-label="Emoji" title="Emoji" onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
-              😊
-            </button>
-            <button className="btn small ghost" type="button" aria-label="GIF" title="GIF search" disabled={!!editing} onClick={() => setPicker((p) => (p === "gif" ? null : "gif"))}>
-              GIF
-            </button>
-            <button className="btn small ghost" type="button" aria-label="Sticker" title="Stickers" disabled={!!editing} onClick={() => setPicker((p) => (p === "sticker" ? null : "sticker"))}>
-              🏷
-            </button>
-            <button className="btn small ghost" type="button" aria-label="Poll" title="Create a poll" disabled={!!editing} onClick={() => setShowPoll(true)}>
-              📊
-            </button>
-            <button className="btn small ghost" type="button" aria-label="Location" title="Share location" disabled={!!editing} onClick={() => setShowLocation(true)}>
-              📍
-            </button>
-            <button className="btn small ghost" type="button" aria-label="Contact" title="Share a contact" disabled={!!editing} onClick={() => setShowContact(true)}>
-              👤
-            </button>
-            <button className="btn small ghost" type="button" aria-label="Saved replies" title="Saved replies" disabled={!!editing} onClick={() => setShowTemplates(true)}>
-              📋
-            </button>
-            <button className="btn small ghost" type="button" aria-label="Schedule" title="Schedule this message" disabled={!!editing || draft.trim() === ""} onClick={() => setShowSchedule(true)}>
-              🕒
-            </button>
-            <button
-              className="btn small ghost"
-              type="button"
-              aria-label="Attach file"
-              title="Attach a photo, video, or document"
-              disabled={sendingMedia || !!editing}
-              onClick={() => fileRef.current?.click()}
-            >
-              {sendingMedia ? "…" : "📎"}
+            <button className="wa-icon" type="button" aria-label="Attach" title="Attach" disabled={sendingMedia} onClick={() => setPicker((p) => (p === "tools" ? null : "tools"))}>
+              {sendingMedia ? <span className="spinner tiny" /> : <Icon name="attach" size={23} />}
             </button>
             <input
               ref={composerRef}
               className="input"
               value={draft}
               onChange={(e) => onDraftChange(e.target.value)}
-              placeholder={editing ? "Edit message" : sendingMedia ? "Uploading…" : "Message"}
+              placeholder={editing ? "Edit message" : sendingMedia ? "Uploading…" : "Type a message"}
               aria-label="Type a message"
             />
-            <button className="btn" type="submit">
-              {editing ? "Save" : "Send"}
+            <button className="wa-send" type="submit" aria-label={draft.trim() !== "" || editing ? "Send" : "Voice message"} title={draft.trim() !== "" || editing ? "Send" : "Voice message"}>
+              <Icon name={draft.trim() !== "" || editing ? "send" : "mic"} size={23} />
             </button>
           </form>
         </div>
@@ -3908,17 +3940,17 @@ function MessageBubble({
 }
 
 /** StatusTicks renders WhatsApp-style delivery state on my own bubbles:
- *  🕓 sending · ✓ sent · ✓✓ delivered · ✓✓ (blue) read. */
+ *  clock sending · ✓ sent · ✓✓ delivered · ✓✓ (blue) read. */
 function StatusTicks({ state }: { state: string }) {
-  if (state === "sending") return <span className="state" title="Sending" aria-label="Sending">🕓</span>;
-  if (state === "delivered") return <span className="state" title="Delivered" aria-label="Delivered">✓✓</span>;
+  if (state === "sending") return <span className="state" title="Sending" aria-label="Sending"><Icon name="clock" size={15} /></span>;
+  if (state === "delivered") return <span className="state" title="Delivered" aria-label="Delivered"><Icon name="checkDouble" size={17} /></span>;
   if (state === "read")
     return (
-      <span className="state" title="Read" aria-label="Read" style={{ color: "#34b7f1" }}>
-        ✓✓
+      <span className="state state-read" title="Read" aria-label="Read">
+        <Icon name="checkDouble" size={17} />
       </span>
     );
-  return <span className="state" title="Sent" aria-label="Sent">✓</span>; // sent (default)
+  return <span className="state" title="Sent" aria-label="Sent"><Icon name="check" size={16} /></span>; // sent (default)
 }
 
 /** LinkPreviewCard renders a sender-generated preview (FR-MSG-08). The image is

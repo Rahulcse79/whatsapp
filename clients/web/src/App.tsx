@@ -3,7 +3,8 @@ import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import type { NotificationEntry } from "./services/appServices";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { CallHistory, ChannelScreen, Channels, ChatList, Communities, CommunityScreen, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
+import { Avatar, CallHistory, ChannelScreen, Channels, ChatList, Communities, CommunityScreen, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
+import { Icon, type IconName } from "./ui/icons";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
 /** NotificationToasts shows a transient banner for each in-app notification
@@ -55,6 +56,59 @@ type Nav =
   | { name: "communities" }
   | { name: "community"; communityId: string }
   | { name: "thread"; conversationId: string; focusMsgUuid?: string };
+
+/** NavRail is WhatsApp Web's far-left icon column: sections at the top, settings
+ *  and your profile at the bottom. On narrow screens CSS turns it into a bottom
+ *  tab bar. */
+function NavRail({ active, go }: { active: string; go: (n: Nav) => void }) {
+  const item = (key: string, label: string, icon: IconName, target: Nav) => (
+    <button
+      className={`rail-item${active === key ? " active" : ""}`}
+      title={label}
+      aria-label={label}
+      aria-current={active === key ? "page" : undefined}
+      onClick={() => go(target)}
+    >
+      <Icon name={icon} size={24} />
+      <span className="rail-label">{label}</span>
+    </button>
+  );
+  return (
+    <nav className="wa-rail" aria-label="Sections">
+      <div className="wa-rail-top">
+        {item("chats", "Chats", "chats", { name: "chats" })}
+        {item("updates", "Updates", "updates", { name: "status" })}
+        {item("channels", "Channels", "channel", { name: "channels" })}
+        {item("communities", "Communities", "community", { name: "communities" })}
+        {item("calls", "Calls", "phone", { name: "calls" })}
+      </div>
+      <div className="wa-rail-bottom">
+        {item("settings", "Settings", "settings", { name: "settings" })}
+        <button
+          className={`rail-item rail-avatar${active === "profile" ? " active" : ""}`}
+          title="Profile"
+          aria-label="Profile"
+          onClick={() => go({ name: "profile" })}
+        >
+          <Avatar size={30} />
+        </button>
+      </div>
+    </nav>
+  );
+}
+
+/** railSectionOf maps a nav state to the rail section it belongs to, so the rail
+ *  highlights correctly even for sub-screens (a thread lives under Chats). */
+function railSectionOf(name: Nav["name"]): string {
+  if (["chats", "thread", "newChat", "createGroup", "groupInfo", "contacts", "search"].includes(name)) return "chats";
+  if (name === "status") return "updates";
+  if (name === "channels" || name === "channel") return "channels";
+  if (name === "communities" || name === "community") return "communities";
+  if (name === "calls") return "calls";
+  if (name === "settings") return "settings";
+  if (name === "profile") return "profile";
+  return "chats";
+}
 
 /** Welcome fills the detail pane when no chat is open (desktop two-pane), the
  *  WhatsApp Web "select a chat" placeholder. */
@@ -162,22 +216,19 @@ function Router() {
   return (
     <>
       <div className={`wa-shell${nav.name !== "chats" ? " show-detail" : ""}`}>
-        <aside className="wa-side">
-          <ChatList
-            activeId={nav.name === "thread" ? nav.conversationId : undefined}
-            onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
-            onNew={() => setNav({ name: "newChat" })}
-            onSearch={() => setNav({ name: "search" })}
-            onProfile={() => setNav({ name: "profile" })}
-            onContacts={() => setNav({ name: "contacts" })}
-            onNewGroup={() => setNav({ name: "createGroup" })}
-            onCalls={() => setNav({ name: "calls" })}
-            onStatus={() => setNav({ name: "status" })}
-            onChannels={() => setNav({ name: "channels" })}
-            onCommunities={() => setNav({ name: "communities" })}
-          />
-        </aside>
-        <section className="wa-detail">{detail}</section>
+        <NavRail active={railSectionOf(nav.name)} go={setNav} />
+        <div className="wa-panes">
+          <aside className="wa-side">
+            <ChatList
+              activeId={nav.name === "thread" ? nav.conversationId : undefined}
+              onOpen={(conversationId) => setNav({ name: "thread", conversationId })}
+              onNew={() => setNav({ name: "newChat" })}
+              onContacts={() => setNav({ name: "contacts" })}
+              onNewGroup={() => setNav({ name: "createGroup" })}
+            />
+          </aside>
+          <section className="wa-detail">{detail}</section>
+        </div>
       </div>
       <NotificationToasts onOpen={(conversationId) => setNav({ name: "thread", conversationId })} />
     </>

@@ -15,3 +15,4 @@ export * from "./db/schema";
 export * from "./db/outboxStore";
 export * from "./db/messageStore";
 export * from "./memoryRepo";
+export * from "./ephemeral";

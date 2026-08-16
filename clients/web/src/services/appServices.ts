@@ -309,6 +309,11 @@ export class AppServices {
   private readonly archivedConvs = new Set<string>(); // archived chats (localStorage)
   private readonly wallpaperByConv = new Map<string, string>(); // conversationId → wallpaper key
   private readonly draftByConv = new Map<string, string>(); // conversationId → composer draft
+  // ── secret chats + disappearing (T10.01) ──
+  private readonly disappearingTtl = new Map<string, number>(); // conversationId → ttl seconds (0/absent = off)
+  private readonly lockedConvs = new Set<string>(); // locked chats (require unlock to open) — client-local
+  private readonly hiddenConvs = new Set<string>(); // hidden chats (kept out of the main list) — client-local
+  private readonly screenshotProtected = new Set<string>(); // screenshot-protection signalled — client-local
   // undo-send: a just-sent message is held for a short window before dispatch.
   private pendingSend: { conversationId: string; text: string; reply?: QuotedRef; timer: ReturnType<typeof setTimeout> } | null = null;
   // ── scheduling + templates + auto-reply (T6.04, client-local) ──
@@ -376,6 +381,14 @@ export class AppServices {
       if (tpl) this.msgTemplates = JSON.parse(tpl) as MessageTemplate[];
       const ar = localStorage.getItem("wa.autoreply");
       if (ar) this.autoReplyCfg = JSON.parse(ar) as { enabled: boolean; text: string };
+      const dis = localStorage.getItem("wa.disappearing");
+      if (dis) for (const [id, ttl] of Object.entries(JSON.parse(dis) as Record<string, number>)) this.disappearingTtl.set(id, ttl);
+      const lk = localStorage.getItem("wa.locked");
+      if (lk) for (const id of JSON.parse(lk) as string[]) this.lockedConvs.add(id);
+      const hd = localStorage.getItem("wa.hidden");
+      if (hd) for (const id of JSON.parse(hd) as string[]) this.hiddenConvs.add(id);
+      const ss = localStorage.getItem("wa.ssprotect");
+      if (ss) for (const id of JSON.parse(ss) as string[]) this.screenshotProtected.add(id);
     } catch {
       /* no persisted prefs — defaults */
     }
@@ -870,6 +883,73 @@ export class AppServices {
   /** deleteForMe hides the message locally only — no overlay leaves the device. */
   async deleteForMe(msgUuid: string): Promise<void> {
     await this.db.deleteForMe({ msgUuid });
+    this.notifyChange();
+  }
+
+  // ── Secret chats + disappearing messages (T10.01) ──────────────────────────
+  // The per-chat timer is authoritative client-side; the server keeps a coarse
+  // copy (shared between members + drives its purge backstop). Locked/hidden/
+  // screenshot-protection are client-local signals.
+
+  /** disappearingSeconds is the chat's disappearing timer (0 = off). */
+  disappearingSeconds(conversationId: string): number {
+    return this.disappearingTtl.get(conversationId) ?? 0;
+  }
+
+  /** loadDisappearing pulls the server's timer copy (members share it) into the
+   *  local map — call on opening a chat. */
+  async loadDisappearing(conversationId: string): Promise<void> {
+    try {
+      const res = await this.authedRequest("GET", `/v1/conversations/${encodeURIComponent(conversationId)}/disappearing`);
+      if (!res.ok) return;
+      const { ttl_seconds } = (await res.json()) as { ttl_seconds: number };
+      if (ttl_seconds > 0) this.disappearingTtl.set(conversationId, ttl_seconds);
+      else this.disappearingTtl.delete(conversationId);
+      this.persistDisappearing();
+      this.notifyChange();
+    } catch {
+      /* offline — keep the local copy */
+    }
+  }
+
+  /** setDisappearing sets the chat's timer (0 = off): persists the server copy
+   *  (shared with members + purge backstop) and applies it locally. */
+  async setDisappearing(conversationId: string, seconds: number): Promise<void> {
+    const res = await this.authedRequest("PUT", `/v1/conversations/${encodeURIComponent(conversationId)}/disappearing`, { ttl_seconds: seconds });
+    if (!res.ok) throw new Error(`set disappearing failed: HTTP ${res.status}`);
+    if (seconds > 0) this.disappearingTtl.set(conversationId, seconds);
+    else this.disappearingTtl.delete(conversationId);
+    this.persistDisappearing();
+    this.notifyChange();
+  }
+
+  private persistDisappearing(): void {
+    this.persistMap("wa.disappearing", new Map([...this.disappearingTtl].map(([k, v]) => [k, String(v)])));
+  }
+
+  isLocked(conversationId: string): boolean {
+    return this.lockedConvs.has(conversationId);
+  }
+  toggleLock(conversationId: string): void {
+    this.toggleLocal(this.lockedConvs, "wa.locked", conversationId);
+  }
+  isHidden(conversationId: string): boolean {
+    return this.hiddenConvs.has(conversationId);
+  }
+  toggleHidden(conversationId: string): void {
+    this.toggleLocal(this.hiddenConvs, "wa.hidden", conversationId);
+  }
+  isScreenshotProtected(conversationId: string): boolean {
+    return this.screenshotProtected.has(conversationId);
+  }
+  toggleScreenshotProtection(conversationId: string): void {
+    this.toggleLocal(this.screenshotProtected, "wa.ssprotect", conversationId);
+  }
+
+  private toggleLocal(set: Set<string>, key: string, id: string): void {
+    if (set.has(id)) set.delete(id);
+    else set.add(id);
+    this.persistSet(key, set);
     this.notifyChange();
   }
 

@@ -38,6 +38,8 @@ import (
 	contactsadapters "github.com/whatsapp-v2/server/internal/contacts/adapters"
 	"github.com/whatsapp-v2/server/internal/devices"
 	devadapters "github.com/whatsapp-v2/server/internal/devices/adapters"
+	"github.com/whatsapp-v2/server/internal/ephemeral"
+	ephemeraladapters "github.com/whatsapp-v2/server/internal/ephemeral/adapters"
 	"github.com/whatsapp-v2/server/internal/groups"
 	groupadapters "github.com/whatsapp-v2/server/internal/groups/adapters"
 	"github.com/whatsapp-v2/server/internal/keys"
@@ -275,6 +277,10 @@ func main() {
 	// consent. Reuses the calls token minter (per-room join tokens); egress rides a
 	// no-op driver in dev (the real LiveKit egress API is the seam).
 	breakoutSvc := breakout.NewService(breakoutadapters.NewStore(pool), breakoutMinter{m: calls.NewTokenMinter(liveKitKey, liveKitSecret)}, breakoutadapters.NoopEgress{})
+	// Disappearing messages (T10.01): a coarse per-conversation timer + a relay
+	// backstop purge. The authoritative timer is E2EE (client-side); this is the
+	// minimal server support.
+	ephemeralSvc := ephemeral.NewService(ephemeraladapters.NewStore(pool))
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -309,6 +315,25 @@ func main() {
 					log.Warn("stories: expiry purge failed", "err", err)
 				} else if n > 0 {
 					log.Info("stories: purged expired stories", "count", n)
+				}
+			}
+		}
+	}()
+
+	// Disappearing-messages backstop (T10.01): purge relay ciphertext for chats
+	// past their timer. Every 5 min; a plain DELETE, so pod overlap is harmless.
+	go func() {
+		t := time.NewTicker(5 * time.Minute)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-t.C:
+				if n, err := ephemeralSvc.PurgeExpired(ctx); err != nil {
+					log.Warn("ephemeral: disappearing purge failed", "err", err)
+				} else if n > 0 {
+					log.Info("ephemeral: purged disappearing messages", "count", n)
 				}
 			}
 		}
@@ -430,6 +455,7 @@ func main() {
 	communities.Routes(mux, communitiesSvc, issuer) // /v1/communities: groups-roof + roles/events/discovery (T8.01)
 	webinar.Routes(mux, webinarSvc, issuer)         // /v1/webinars: live 1-to-many, waiting room, raise-hand, Q&A (T9.02)
 	breakout.Routes(mux, breakoutSvc, issuer)       // /v1/live: breakout rooms + streaming egress + recording consent (T9.03)
+	ephemeral.Routes(mux, ephemeralSvc, issuer)     // /v1/conversations/{id}/disappearing: per-chat timer (T10.01)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

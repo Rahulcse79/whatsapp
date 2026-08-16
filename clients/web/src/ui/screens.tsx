@@ -1,9 +1,12 @@
 import {
+  DISAPPEARING_PRESETS,
   SNIPPET_CLOSE,
   SNIPPET_OPEN,
   extractHashtags,
   isValidPhone,
+  sweepExpired,
   type ChatSummary,
+  type EphemeralMessage,
   type SearchHit,
   type ThreadMessage,
 } from "@wa/client-core";
@@ -542,6 +545,7 @@ export function ChatList({
   const { services } = useServices();
   const [items, setItems] = useState<ChatSummary[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  const [showHidden, setShowHidden] = useState(false);
   const [filter, setFilter] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -630,7 +634,10 @@ export function ChatList({
   const q = filter.trim().toLowerCase();
   const match = (c: ChatSummary): boolean =>
     q === "" || nameOf(c.conversationId).toLowerCase().includes(q) || (c.title || "").toLowerCase().includes(q) || (c.lastPreview || "").toLowerCase().includes(q);
-  const shown = items.filter(match);
+  // Hidden chats (T10.01) are kept out of the main sections, in a collapsible
+  // group at the bottom.
+  const shown = items.filter(match).filter((c) => !services.isHidden(c.conversationId));
+  const hidden = items.filter(match).filter((c) => services.isHidden(c.conversationId));
   const favorites = shown.filter((c) => services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
   const archived = shown.filter((c) => services.isArchived(c.conversationId));
   const normal = shown.filter((c) => !services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
@@ -687,6 +694,13 @@ export function ChatList({
             </li>
           )}
           {showArchived && archived.map(renderRow)}
+          {hidden.length > 0 && (
+            <li className="list-section" role="button" tabIndex={0} onClick={() => setShowHidden((v) => !v)} onKeyDown={onActivate(() => setShowHidden((v) => !v))} style={{ cursor: "pointer" }}>
+              <span>🙈 Hidden ({hidden.length})</span>
+              <span>{showHidden ? "▲" : "▼"}</span>
+            </li>
+          )}
+          {showHidden && hidden.map(renderRow)}
         </ul>
       )}
     </div>
@@ -2537,6 +2551,68 @@ function WallpaperSheet({ current, onPick, onClose }: { current: string | null; 
   );
 }
 
+/** SecretChatSheet (T10.01): the per-chat disappearing timer + the secret-chat
+ *  toggles (lock / hide / screenshot-protection). */
+function SecretChatSheet({ conversationId, onClose }: { conversationId: string; onClose: () => void }) {
+  const { services } = useServices();
+  const [, force] = useState(0);
+  const rerender = (): void => force((n) => n + 1);
+  const ttl = services.disappearingSeconds(conversationId);
+  const toggle = (fn: () => void) => () => {
+    fn();
+    rerender();
+  };
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Disappearing messages</strong>
+        <p className="muted">New messages vanish for everyone after the timer. The timer is end-to-end encrypted.</p>
+        <div className="disappear-list">
+          {DISAPPEARING_PRESETS.map((p) => (
+            <button
+              key={p.seconds}
+              className={`disappear-opt${ttl === p.seconds ? " on" : ""}`}
+              onClick={() => void services.setDisappearing(conversationId, p.seconds).then(rerender).catch((e) => window.alert(messageOf(e)))}
+            >
+              <span>{p.label}</span>
+              {ttl === p.seconds ? <Icon name="check" size={18} /> : null}
+            </button>
+          ))}
+        </div>
+        <div className="secret-toggles">
+          <label className="secret-toggle">
+            <span>🔒 Lock this chat</span>
+            <input type="checkbox" checked={services.isLocked(conversationId)} onChange={toggle(() => services.toggleLock(conversationId))} />
+          </label>
+          <label className="secret-toggle">
+            <span>🙈 Hide from chat list</span>
+            <input type="checkbox" checked={services.isHidden(conversationId)} onChange={toggle(() => services.toggleHidden(conversationId))} />
+          </label>
+          <label className="secret-toggle">
+            <span>📸 Screenshot protection</span>
+            <input type="checkbox" checked={services.isScreenshotProtected(conversationId)} onChange={toggle(() => services.toggleScreenshotProtection(conversationId))} />
+          </label>
+        </div>
+        <button className="btn" onClick={onClose}>
+          Done
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/** LockGate covers a locked chat until the user unlocks (biometric unlock is
+ *  T10.02; here a tap suffices for the session). */
+function LockGate({ onUnlock }: { onUnlock: () => void }) {
+  return (
+    <div className="locked-gate">
+      <div className="locked-lock" aria-hidden>🔒</div>
+      <p>This chat is locked.</p>
+      <button className="btn" onClick={onUnlock}>Unlock</button>
+    </div>
+  );
+}
+
 /** ForwardPicker lists the user's other conversations to forward a message into. */
 function ForwardPicker({ exclude, onPick, onClose }: { exclude: string; onPick: (conversationId: string) => void; onClose: () => void }) {
   const { services } = useServices();
@@ -3261,6 +3337,8 @@ export function Thread({
   const [sendingMedia, setSendingMedia] = useState(false);
   const [wallpaper, setWallpaperState] = useState<string | null>(() => services.chatWallpaper(conversationId));
   const [showWallpaper, setShowWallpaper] = useState(false);
+  const [showSecret, setShowSecret] = useState(false); // disappearing/secret-chat sheet (T10.01)
+  const [unlocked, setUnlocked] = useState(false); // locked-chat gate (per open)
   const [flashId, setFlashId] = useState<string | null>(null); // jump-to-original highlight
   const focusedRef = useRef<string | null>(null); // search jump-to-result (once per target)
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
@@ -3283,6 +3361,8 @@ export function Thread({
     subscribedRef.current = false;
     services.setActiveConversation(conversationId); // clears unread + suppresses toasts here
     setMuted(services.isMuted(conversationId));
+    setUnlocked(false); // re-lock a locked chat when switching to it (T10.01)
+    void services.loadDisappearing(conversationId); // pull the shared disappearing timer
     setDraft(services.draft(conversationId)); // restore the persisted composer draft
     setWallpaperState(services.chatWallpaper(conversationId));
     setGroup(services.groupOf(conversationId) ?? null);
@@ -3398,6 +3478,21 @@ export function Thread({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusMsgUuid, messages]);
+
+  // Disappearing-messages sweep (T10.01): once the chat timer elapses for a
+  // message (counted from sent), hide it locally. Runs on load + every 5s. The
+  // server purges its relay copy independently as a backstop.
+  useEffect(() => {
+    const ttl = services.disappearingSeconds(conversationId);
+    if (ttl <= 0) return;
+    const run = (): void => {
+      const items: EphemeralMessage[] = messages.filter((m) => !m.deleted).map((m) => ({ id: m.msgUuid, sentMs: m.createdAt }));
+      for (const id of sweepExpired(items, ttl, Date.now())) void services.deleteForMe(id);
+    };
+    run();
+    const h = window.setInterval(run, 5000);
+    return () => window.clearInterval(h);
+  }, [services, conversationId, messages]);
 
   async function exportChat(): Promise<void> {
     const text = await services.exportChat(conversationId);
@@ -3558,6 +3653,14 @@ export function Thread({
         >
           <Icon name={muted ? "mute" : "bell"} size={21} />
         </button>
+        <button
+          className={`wa-icon${services.disappearingSeconds(conversationId) > 0 ? " on" : ""}`}
+          title="Disappearing messages & privacy"
+          aria-label="Disappearing messages and privacy"
+          onClick={() => setShowSecret(true)}
+        >
+          <Icon name="clock" size={21} />
+        </button>
         <button className="wa-icon" title="Chat wallpaper" aria-label="Chat wallpaper" onClick={() => setShowWallpaper(true)}>
           <Icon name="wallpaper" size={21} />
         </button>
@@ -3565,6 +3668,7 @@ export function Thread({
           <Icon name="download" size={21} />
         </button>
       </div>
+      {services.isLocked(conversationId) && !unlocked ? <LockGate onUnlock={() => setUnlocked(true)} /> : null}
       <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>
         {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
         {messages.map((m) => {
@@ -3598,6 +3702,7 @@ export function Thread({
       {showWallpaper ? (
         <WallpaperSheet current={wallpaper} onPick={pickWallpaper} onClose={() => setShowWallpaper(false)} />
       ) : null}
+      {showSecret ? <SecretChatSheet conversationId={conversationId} onClose={() => setShowSecret(false)} /> : null}
       {forwardMsg ? (
         <ForwardPicker
           exclude={conversationId}

@@ -45,6 +45,8 @@ import (
 	deviceauthadapters "github.com/whatsapp-v2/server/internal/deviceauth/adapters"
 	"github.com/whatsapp-v2/server/internal/devices"
 	devadapters "github.com/whatsapp-v2/server/internal/devices/adapters"
+	"github.com/whatsapp-v2/server/internal/discovery"
+	discoveryadapters "github.com/whatsapp-v2/server/internal/discovery/adapters"
 	"github.com/whatsapp-v2/server/internal/ephemeral"
 	ephemeraladapters "github.com/whatsapp-v2/server/internal/ephemeral/adapters"
 	"github.com/whatsapp-v2/server/internal/groups"
@@ -306,6 +308,9 @@ func main() {
 	collabSvc := collab.NewService(collabadapters.NewStore(pool))
 	// Collaborative whiteboard (T12.02): the per-conversation CRDT op-log.
 	whiteboardSvc := whiteboard.NewService(whiteboardadapters.NewStore(pool))
+	// Discovery (T13.01): public metadata search over the Postgres backend (source
+	// of truth); an OpenSearch backend + reindex-to-Indexer is the drop-in seam.
+	discoverySvc := discovery.NewService(discoveryadapters.NewBackend(pool), discoveryadapters.NewSource(pool), discoveryadapters.NoopIndexer{})
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -488,6 +493,7 @@ func main() {
 	ai.Routes(mux, aiSvc, issuer)                   // /v1/ai/config: on-device AI runtime kill-switch (T11.01)
 	collab.Routes(mux, collabSvc, issuer)           // /v1/conversations/{id}/{notes,tasks,activity} + /v1/notes/*: shared notes/tasks (T12.01)
 	whiteboard.Routes(mux, whiteboardSvc, issuer)   // /v1/conversations/{id}/board/ops: collaborative whiteboard CRDT (T12.02)
+	discovery.Routes(mux, discoverySvc, issuer)     // /v1/discover: public metadata search (channels/communities/usernames) (T13.01)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

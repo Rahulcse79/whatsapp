@@ -3,7 +3,7 @@ import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import type { NotificationEntry } from "./services/appServices";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { Avatar, CallHistory, ChannelScreen, Channels, ChatList, CollabScreen, Communities, CommunityScreen, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify, WhiteboardScreen } from "./ui/screens";
+import { Avatar, CallHistory, ChannelScreen, Channels, ChatList, CollabScreen, Communities, CommunityScreen, Contacts, CreateGroup, DiscoverScreen, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify, WhiteboardScreen } from "./ui/screens";
 import { Icon, type IconName } from "./ui/icons";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
@@ -57,6 +57,7 @@ type Nav =
   | { name: "community"; communityId: string }
   | { name: "collab"; conversationId: string }
   | { name: "board"; conversationId: string }
+  | { name: "discover" }
   | { name: "thread"; conversationId: string; focusMsgUuid?: string };
 
 /** NavRail is WhatsApp Web's far-left icon column: sections at the top, settings
@@ -102,7 +103,7 @@ function NavRail({ active, go }: { active: string; go: (n: Nav) => void }) {
 /** railSectionOf maps a nav state to the rail section it belongs to, so the rail
  *  highlights correctly even for sub-screens (a thread lives under Chats). */
 function railSectionOf(name: Nav["name"]): string {
-  if (["chats", "thread", "newChat", "createGroup", "groupInfo", "contacts", "search", "collab", "board"].includes(name)) return "chats";
+  if (["chats", "thread", "newChat", "createGroup", "groupInfo", "contacts", "search", "collab", "board", "discover"].includes(name)) return "chats";
   if (name === "status") return "updates";
   if (name === "channels" || name === "channel") return "channels";
   if (name === "communities" || name === "community") return "communities";
@@ -151,6 +152,14 @@ function Router() {
         return <CollabScreen conversationId={nav.conversationId} onBack={() => setNav({ name: "thread", conversationId: nav.conversationId })} />;
       case "board":
         return <WhiteboardScreen conversationId={nav.conversationId} onBack={() => setNav({ name: "thread", conversationId: nav.conversationId })} />;
+      case "discover":
+        return (
+          <DiscoverScreen
+            onBack={() => setNav({ name: "chats" })}
+            onOpenChannel={(channelId) => setNav({ name: "channel", channelId })}
+            onOpenCommunity={(communityId) => setNav({ name: "community", communityId })}
+          />
+        );
       case "thread":
         return (
           <Thread
@@ -233,6 +242,7 @@ function Router() {
               onNew={() => setNav({ name: "newChat" })}
               onContacts={() => setNav({ name: "contacts" })}
               onNewGroup={() => setNav({ name: "createGroup" })}
+              onDiscover={() => setNav({ name: "discover" })}
             />
           </aside>
           <section className="wa-detail">{detail}</section>

@@ -94,6 +94,17 @@ export interface CollabActivity {
   at_ms: number;
 }
 
+/** DiscoverResult is one public metadata search hit (T13.01). */
+export interface DiscoverResult {
+  kind: "channel" | "community" | "user";
+  id: string;
+  title: string;
+  subtitle?: string;
+  handle?: string;
+  verified?: boolean;
+  score: number;
+}
+
 /** MyProfile is the self view — the public fields plus per-field privacy. */
 export interface MyProfile extends PublicProfile {
   privacy: Record<string, string>;
@@ -1443,6 +1454,19 @@ export class AppServices {
     if (ops.length === 0) return;
     const res = await this.authedRequest("POST", `/v1/conversations/${this.cid(conversationId)}/board/ops`, { ops });
     if (!res.ok) throw new Error(`Whiteboard sync failed (HTTP ${res.status}).`);
+  }
+
+  // ── Discovery: public metadata search (T13.01) ──────────────────────────────
+
+  /** discover searches public channels, communities, and usernames by metadata
+   *  (never E2EE content). `types` filters (empty = all). */
+  async discover(query: string, types: string[] = []): Promise<DiscoverResult[]> {
+    const q = query.trim();
+    if (q.length < 2) return [];
+    const typeParam = types.length ? `&type=${encodeURIComponent(types.join(","))}` : "";
+    const res = await this.authedRequest("GET", `/v1/discover?q=${encodeURIComponent(q)}${typeParam}`);
+    if (!res.ok) return [];
+    return ((await res.json()) as { results: DiscoverResult[] }).results ?? [];
   }
   /** nameForUser returns a cached human name for any user id, falling back to a
    *  short id when the profile hasn't been loaded yet. */

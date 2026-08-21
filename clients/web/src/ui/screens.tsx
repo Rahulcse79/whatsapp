@@ -51,7 +51,7 @@ import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
 import { Icon } from "./icons";
-import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CollabActivity, CollabComment, CollabNote, CollabRevision, CollabTask, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CollabActivity, CollabComment, CollabNote, CollabRevision, CollabTask, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, DiscoverResult, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -546,12 +546,14 @@ export function ChatList({
   onNew,
   onContacts,
   onNewGroup,
+  onDiscover,
   activeId,
 }: {
   onOpen: (id: string) => void;
   onNew: () => void;
   onContacts: () => void;
   onNewGroup: () => void;
+  onDiscover?: () => void;
   activeId?: string;
 }) {
   const { services } = useServices();
@@ -675,6 +677,7 @@ export function ChatList({
                 <div className="wa-menu" role="menu">
                   <button className="menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onNewGroup(); }}>New group</button>
                   <button className="menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onContacts(); }}>Contacts</button>
+                  {onDiscover ? <button className="menu-item" role="menuitem" onClick={() => { setMenuOpen(false); onDiscover(); }}>Discover</button> : null}
                 </div>
               </>
             ) : null}
@@ -3686,6 +3689,91 @@ export function CollabScreen({ conversationId, onBack }: { conversationId: strin
         </ul>
       )}
       {editing ? <NoteEditor conversationId={conversationId} note={editing === "new" ? null : editing} onClose={() => { setEditing(null); reload(); }} /> : null}
+    </div>
+  );
+}
+
+/** DiscoverScreen (T13.01): public metadata search across channels, public
+ *  communities, and usernames. Results open the entity; nothing E2EE is shown. */
+export function DiscoverScreen({ onBack, onOpenChannel, onOpenCommunity }: { onBack: () => void; onOpenChannel: (id: string) => void; onOpenCommunity: (id: string) => void }) {
+  const { services } = useServices();
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<"" | "channel" | "community" | "user">("");
+  const [results, setResults] = useState<DiscoverResult[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    const q = query.trim();
+    if (q.length < 2) {
+      setResults([]);
+      return;
+    }
+    setSearching(true);
+    const h = window.setTimeout(() => {
+      void services
+        .discover(q, filter ? [filter] : [])
+        .then(setResults)
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 250);
+    return () => window.clearTimeout(h);
+  }, [services, query, filter]);
+
+  const tabs: { key: typeof filter; label: string }[] = [
+    { key: "", label: "All" },
+    { key: "channel", label: "Channels" },
+    { key: "community", label: "Communities" },
+    { key: "user", label: "People" },
+  ];
+  const icon = (k: DiscoverResult["kind"]): ReactNode =>
+    k === "channel" ? <Icon name="channel" size={22} /> : k === "community" ? <Icon name="community" size={22} /> : <Icon name="contacts" size={22} />;
+  const open = (r: DiscoverResult): void => {
+    if (r.kind === "channel") onOpenChannel(r.id);
+    else if (r.kind === "community") onOpenCommunity(r.id);
+  };
+
+  return (
+    <div className="pane">
+      <div className="pane-head">
+        <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
+          <Icon name="back" size={24} />
+        </button>
+        <span className="pane-head-title">Discover</span>
+      </div>
+      <div className="wa-search">
+        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search channels, communities, people" aria-label="Discover search" autoFocus />
+      </div>
+      <div className="collab-tabs">
+        {tabs.map((t) => (
+          <button key={t.label} className={`collab-tab${filter === t.key ? " on" : ""}`} onClick={() => setFilter(t.key)}>{t.label}</button>
+        ))}
+      </div>
+      {query.trim().length < 2 ? (
+        <p className="muted center">Search public channels, communities, and usernames.</p>
+      ) : searching && results.length === 0 ? (
+        <p className="muted center">Searching…</p>
+      ) : results.length === 0 ? (
+        <p className="muted center">No results for “{query.trim()}”.</p>
+      ) : (
+        <ul className="list">
+          {results.map((r) => (
+            <li key={`${r.kind}:${r.id}`} className="row" role={r.kind === "user" ? undefined : "button"} tabIndex={r.kind === "user" ? undefined : 0} onClick={() => open(r)} onKeyDown={r.kind === "user" ? undefined : onActivate(() => open(r))} style={r.kind === "user" ? { cursor: "default" } : undefined}>
+              <span className="avatar avatar-default" style={{ width: 44, height: 44 }}>{icon(r.kind)}</span>
+              <div className="row-main">
+                <div className="row-line1">
+                  <span className="row-title">
+                    {r.title}
+                    {r.verified ? <span className="collab-badge collab-approved" style={{ textTransform: "none" }}>✓ Verified</span> : null}
+                  </span>
+                </div>
+                <div className="row-line2">
+                  <span className="row-sub">{r.handle ? r.handle + (r.subtitle ? " · " + r.subtitle : "") : r.subtitle || r.kind}</span>
+                </div>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

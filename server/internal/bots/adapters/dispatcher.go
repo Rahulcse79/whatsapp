@@ -33,7 +33,7 @@ func (d *HTTPDispatcher) Deliver(ctx context.Context, url, signature string, pay
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 300 {
 		return fmt.Errorf("bots: webhook returned %d", resp.StatusCode)
 	}

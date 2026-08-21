@@ -22,3 +22,4 @@ export * from "./aiRuntime";
 export * from "./messagingAi";
 export * from "./aiModeration";
 export * from "./whiteboard";
+export * from "./interactive";

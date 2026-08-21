@@ -11,13 +11,18 @@ import {
   makeStroke,
   meetingSummary,
   mergeOps,
+  parseInteractive,
   renderStrokes,
+  replyTextFor,
   smartReplies,
   sweepExpired,
+  validateInteractive,
   type AiMode,
   type BoardOp,
   type ChatSummary,
   type EphemeralMessage,
+  type InteractiveButton,
+  type InteractiveMessage,
   type MeetingSummary,
   type SearchHit,
   type ThreadMessage,
@@ -51,7 +56,7 @@ import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
 import { Icon } from "./icons";
-import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CollabActivity, CollabComment, CollabNote, CollabRevision, CollabTask, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, DiscoverResult, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { BotView, CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CollabActivity, CollabComment, CollabNote, CollabRevision, CollabTask, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, DiscoverResult, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -1989,6 +1994,105 @@ function AiSection() {
   );
 }
 
+/** BotsSection lets the user register bots (public @handle + an https webhook),
+ *  see their bots, reveal a freshly-rotated shared secret once, and delete them
+ *  (T13.02). The secret signs webhook deliveries (X-WA-Signature: HMAC-SHA256). */
+function BotsSection() {
+  const { services } = useServices();
+  const [bots, setBots] = useState<BotView[]>([]);
+  const [handle, setHandle] = useState("");
+  const [name, setName] = useState("");
+  const [webhook, setWebhook] = useState("");
+  const [secret, setSecret] = useState<{ id: string; value: string } | null>(null); // shown once
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    void services.listBots().then(setBots).catch(() => {});
+  }, [services]);
+  useEffect(load, [load]);
+
+  async function register(): Promise<void> {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await services.registerBot(handle.trim(), name.trim(), webhook.trim());
+      setSecret({ id: res.bot.id, value: res.secret });
+      setHandle("");
+      setName("");
+      setWebhook("");
+      load();
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rotate(id: string): Promise<void> {
+    try {
+      setSecret({ id, value: await services.rotateBotSecret(id) });
+    } catch (err) {
+      window.alert(messageOf(err));
+    }
+  }
+
+  async function remove(id: string): Promise<void> {
+    if (!window.confirm("Delete this bot? Its webhook will stop receiving events.")) return;
+    try {
+      await services.deleteBot(id);
+      if (secret?.id === id) setSecret(null);
+      load();
+    } catch (err) {
+      window.alert(messageOf(err));
+    }
+  }
+
+  return (
+    <>
+      <h2 style={{ marginTop: "1.5rem" }}>Bots ({bots.length})</h2>
+      <p className="muted" style={{ fontSize: "0.8rem" }}>
+        Register a bot with a public @handle and an https webhook. We deliver events signed with a
+        shared secret (<code>X-WA-Signature</code>: HMAC-SHA256) so your bot can trust they came from us.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 420 }}>
+        <input className="input" placeholder="handle (a–z, 0–9, _)" value={handle} maxLength={32} onChange={(e) => setHandle(e.target.value.toLowerCase())} />
+        <input className="input" placeholder="Display name" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
+        <input className="input" placeholder="https://your-bot.example/webhook" value={webhook} onChange={(e) => setWebhook(e.target.value)} />
+        {error ? <span className="muted" style={{ color: "var(--danger, #c0392b)", fontSize: "0.8rem" }}>{error}</span> : null}
+        <button className="btn" disabled={busy || handle.trim() === "" || name.trim() === "" || webhook.trim() === ""} onClick={() => void register()}>
+          Register bot
+        </button>
+      </div>
+      {secret ? (
+        <div className="row" style={{ marginTop: 10, background: "rgba(18,140,126,0.08)", borderRadius: 8, padding: "8px 10px" }}>
+          <div>
+            <strong>Shared secret (copy it now — shown once):</strong>
+            <br />
+            <code style={{ wordBreak: "break-all", fontSize: "0.78rem" }}>{secret.value}</code>
+            <br />
+            <button className="btn small ghost" onClick={() => void navigator.clipboard?.writeText(secret.value).catch(() => {})}>⧉ Copy</button>
+            <button className="btn small ghost" onClick={() => setSecret(null)}>Dismiss</button>
+          </div>
+        </div>
+      ) : null}
+      <ul className="list">
+        {bots.map((b) => (
+          <li key={b.id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+            <span style={{ flex: 1 }}>
+              @{b.handle} · {b.name}
+              <br />
+              <span className="muted" style={{ fontSize: "0.72rem", wordBreak: "break-all" }}>{b.webhook_url}</span>
+            </span>
+            <button className="btn small ghost" onClick={() => void rotate(b.id)}>Rotate secret</button>
+            <button className="btn small ghost danger" onClick={() => void remove(b.id)}>Delete</button>
+          </li>
+        ))}
+      </ul>
+    </>
+  );
+}
+
 export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSignedOut: () => void }) {
   const { services } = useServices();
   const [devices, setDevices] = useState<LinkedDevice[]>([]);
@@ -2102,6 +2206,7 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
 
       <SecuritySection />
       <AiSection />
+      <BotsSection />
 
       <h2 style={{ marginTop: "1.5rem" }}>Linked devices ({devices.length})</h2>
       <p className="muted" style={{ fontSize: "0.8rem" }}>
@@ -2994,6 +3099,42 @@ function PollBubble({ poll, mine }: { poll: PollBody; mine: boolean }) {
   );
 }
 
+/** InteractiveBubble renders an interactive message: text, an optional card, and
+ *  up to three tap-able buttons. A "reply" button sends its payload/label back as
+ *  a normal message; a "url" button opens a link; a "callback" is a bot ping (no
+ *  client action in a user↔user thread). */
+function InteractiveBubble({ msg, onQuickReply }: { msg: InteractiveMessage; onQuickReply?: (text: string) => void }) {
+  const tap = (b: InteractiveButton): void => {
+    if (b.kind === "url" && b.url) {
+      window.open(b.url, "_blank", "noopener,noreferrer");
+      return;
+    }
+    if (b.kind === "callback") return; // a bot handles callbacks server-side
+    onQuickReply?.(replyTextFor(b)); // "reply": send the payload/label as a message
+  };
+  return (
+    <div className="interactive">
+      {msg.card ? (
+        <div className="interactive-card">
+          {msg.card.imageUrl ? <img className="interactive-card-img" src={msg.card.imageUrl} alt="" /> : null}
+          <div className="interactive-card-body">
+            <strong>{msg.card.title}</strong>
+            {msg.card.subtitle ? <span className="muted">{msg.card.subtitle}</span> : null}
+          </div>
+        </div>
+      ) : null}
+      <div className="interactive-text"><RichText text={msg.text} /></div>
+      <div className="interactive-buttons">
+        {msg.buttons.map((b) => (
+          <button key={b.id} className="interactive-btn" onClick={() => tap(b)}>
+            {b.kind === "url" ? "🔗 " : ""}{b.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** PollComposer collects a question + 2–12 options + a multi toggle. */
 function PollComposer({ onCreate, onClose }: { onCreate: (question: string, options: string[], multi: boolean) => void; onClose: () => void }) {
   const [question, setQuestion] = useState("");
@@ -3032,6 +3173,44 @@ function PollComposer({ onCreate, onClose }: { onCreate: (question: string, opti
           <button className="btn" disabled={!valid} onClick={() => onCreate(question.trim(), cleaned, multi)}>
             Create
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** InteractiveComposer builds an interactive message: a body + 1–3 quick-reply
+ *  buttons. Each button sends its label back as a reply when tapped (T13.02). */
+function InteractiveComposer({ onSend, onClose }: { onSend: (text: string, buttons: InteractiveButton[]) => void; onClose: () => void }) {
+  const [text, setText] = useState("");
+  const [labels, setLabels] = useState<string[]>(["", ""]);
+  const buttons: InteractiveButton[] = labels
+    .map((l) => l.trim())
+    .filter((l) => l !== "")
+    .map((l, i) => ({ id: `b${i}`, label: l, kind: "reply" as const }));
+  const err = validateInteractive(text, buttons);
+  const setLabel = (i: number, v: string): void => setLabels((ls) => ls.map((l, j) => (j === i ? v : l)));
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet" onClick={(e) => e.stopPropagation()}>
+        <strong>Interactive message</strong>
+        <textarea className="input" rows={2} placeholder="Message text" value={text} autoFocus onChange={(e) => setText(e.target.value)} />
+        <span className="muted" style={{ fontSize: "0.8rem" }}>Buttons (1–3) — tapping one sends its label back as a reply.</span>
+        {labels.map((l, i) => (
+          <div key={i} style={{ display: "flex", gap: 6 }}>
+            <input className="input" placeholder={`Button ${i + 1}`} value={l} maxLength={40} onChange={(e) => setLabel(i, e.target.value)} />
+            {labels.length > 1 ? (
+              <button className="btn small ghost" aria-label="Remove button" onClick={() => setLabels((ls) => ls.filter((_, j) => j !== i))}>×</button>
+            ) : null}
+          </div>
+        ))}
+        {labels.length < 3 ? (
+          <button className="btn small ghost" onClick={() => setLabels((ls) => [...ls, ""])}>＋ Add button</button>
+        ) : null}
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", alignItems: "center" }}>
+          {err ? <span className="muted" style={{ fontSize: "0.78rem", marginRight: "auto" }}>{err}</span> : null}
+          <button className="btn ghost" onClick={onClose}>Cancel</button>
+          <button className="btn" disabled={!!err} onClick={() => onSend(text.trim(), buttons)}>Send</button>
         </div>
       </div>
     </div>
@@ -4044,6 +4223,7 @@ export function Thread({
   const [showContact, setShowContact] = useState(false); // contact-share picker
   const [showSchedule, setShowSchedule] = useState(false); // schedule-message sheet
   const [showTemplates, setShowTemplates] = useState(false); // saved-reply picker
+  const [showInteractive, setShowInteractive] = useState(false); // interactive-message composer
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLInputElement>(null);
   const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -4432,6 +4612,7 @@ export function Thread({
               }}
               flash={flashId === m.msgUuid}
               onJump={jumpTo}
+              onQuickReply={sendQuick}
             />
           );
         })}
@@ -4498,6 +4679,15 @@ export function Thread({
       ) : null}
       {showLocation ? <LocationSheet conversationId={conversationId} onClose={() => setShowLocation(false)} /> : null}
       {showContact ? <ContactPicker conversationId={conversationId} onClose={() => setShowContact(false)} /> : null}
+      {showInteractive ? (
+        <InteractiveComposer
+          onClose={() => setShowInteractive(false)}
+          onSend={(text, buttons) => {
+            setShowInteractive(false);
+            void services.sendInteractive(conversationId, text, buttons).catch((e) => window.alert(messageOf(e)));
+          }}
+        />
+      ) : null}
       {showTemplates ? (
         <TemplatePicker
           onClose={() => setShowTemplates(false)}
@@ -4592,6 +4782,9 @@ export function Thread({
                 </button>
                 <button className="tool-item" onClick={() => { setPicker(null); setShowContact(true); }} disabled={!!editing}>
                   <span className="tool-ic tool-contact"><Icon name="contacts" size={18} /></span>Contact
+                </button>
+                <button className="tool-item" onClick={() => { setPicker(null); setShowInteractive(true); }} disabled={!!editing}>
+                  <span className="tool-ic tool-poll">🔘</span>Buttons
                 </button>
                 <button className="tool-item" onClick={() => { setPicker(null); setShowTemplates(true); }} disabled={!!editing}>
                   <span className="tool-ic tool-tpl"><Icon name="copy" size={18} /></span>Saved replies
@@ -4695,6 +4888,8 @@ function snippetOf(m: ThreadMessage): string {
   if (sticker) return `${sticker.emoji} Sticker`;
   const poll = parsePoll(m.body);
   if (poll) return `📊 ${poll.question}`;
+  const interactive = parseInteractive(m.body);
+  if (interactive) return `🔘 ${interactive.text.slice(0, 60)}`;
   return parseTextMessage(m.body).text.slice(0, 80);
 }
 
@@ -4707,6 +4902,7 @@ function MessageBubble({
   bubbleRef,
   flash,
   onJump,
+  onQuickReply,
 }: {
   message: ThreadMessage;
   actions: MessageActions;
@@ -4714,6 +4910,7 @@ function MessageBubble({
   bubbleRef?: (el: HTMLDivElement | null) => void;
   flash?: boolean;
   onJump?: (msgUuid: string) => void;
+  onQuickReply?: (text: string) => void;
 }) {
   const [menu, setMenu] = useState(false);
   const media = message.deleted ? null : parseMediaMessage(message.body);
@@ -4722,7 +4919,8 @@ function MessageBubble({
   const location = media || sticker || poll || message.deleted ? null : parseLocation(message.body);
   const live = media || sticker || poll || location || message.deleted ? null : parseLiveLocation(message.body);
   const contact = media || sticker || poll || location || live || message.deleted ? null : parseContactCard(message.body);
-  const special = !!(media || sticker || poll || location || live || contact);
+  const interactive = media || sticker || poll || location || live || contact || message.deleted ? null : parseInteractive(message.body);
+  const special = !!(media || sticker || poll || location || live || contact || interactive);
   const text = special || message.deleted ? null : parseTextMessage(message.body);
   const age = Date.now() - message.createdAt;
   const canEdit = message.mine && !message.deleted && !special && age < EDIT_WINDOW_MS;
@@ -4810,6 +5008,8 @@ function MessageBubble({
         <LiveLocationBubble live={live} mine={message.mine} />
       ) : contact ? (
         <ContactCardBubble card={contact} />
+      ) : interactive ? (
+        <InteractiveBubble msg={interactive} onQuickReply={onQuickReply} />
       ) : (
         <>
           <span>{message.deleted ? <em style={{ opacity: 0.7 }}>This message was deleted</em> : text ? <RichText text={text.text} /> : null}</span>

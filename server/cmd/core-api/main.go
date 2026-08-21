@@ -27,6 +27,8 @@ import (
 	"github.com/whatsapp-v2/server/internal/auth"
 	authadapters "github.com/whatsapp-v2/server/internal/auth/adapters"
 	"github.com/whatsapp-v2/server/internal/auth/domain"
+	"github.com/whatsapp-v2/server/internal/bots"
+	botsadapters "github.com/whatsapp-v2/server/internal/bots/adapters"
 	"github.com/whatsapp-v2/server/internal/breakout"
 	breakoutadapters "github.com/whatsapp-v2/server/internal/breakout/adapters"
 	"github.com/whatsapp-v2/server/internal/calls"
@@ -311,6 +313,8 @@ func main() {
 	// Discovery (T13.01): public metadata search over the Postgres backend (source
 	// of truth); an OpenSearch backend + reindex-to-Indexer is the drop-in seam.
 	discoverySvc := discovery.NewService(discoveryadapters.NewBackend(pool), discoveryadapters.NewSource(pool), discoveryadapters.NoopIndexer{})
+	// Bot framework (T13.02): registry + HMAC-signed webhook delivery.
+	botsSvc := bots.NewService(botsadapters.NewStore(pool), botsadapters.NewHTTPDispatcher())
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -494,6 +498,7 @@ func main() {
 	collab.Routes(mux, collabSvc, issuer)           // /v1/conversations/{id}/{notes,tasks,activity} + /v1/notes/*: shared notes/tasks (T12.01)
 	whiteboard.Routes(mux, whiteboardSvc, issuer)   // /v1/conversations/{id}/board/ops: collaborative whiteboard CRDT (T12.02)
 	discovery.Routes(mux, discoverySvc, issuer)     // /v1/discover: public metadata search (channels/communities/usernames) (T13.01)
+	bots.Routes(mux, botsSvc, issuer)               // /v1/bots: bot framework — register + HMAC webhook (T13.02)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

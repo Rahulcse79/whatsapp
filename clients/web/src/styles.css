@@ -1687,6 +1687,56 @@ body {
   font-size: 12px;
 }
 
+/* ── Interactive messages: text + tap-able buttons (T13.02) ──────────────── */
+.interactive {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 220px;
+  max-width: 320px;
+}
+.interactive-text {
+  overflow-wrap: anywhere;
+}
+.interactive-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--panel);
+}
+.interactive-card-img {
+  width: 100%;
+  max-height: 160px;
+  object-fit: cover;
+}
+.interactive-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+}
+.interactive-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.interactive-btn {
+  padding: 8px 10px;
+  border: 1px solid var(--brand);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--brand);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+}
+.interactive-btn:hover {
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
+}
+
 /* ── Location + contact cards (T6.03) ─────────────────────────────────────── */
 .loc-card {
   display: flex;

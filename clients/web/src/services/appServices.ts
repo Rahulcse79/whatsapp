@@ -11,12 +11,15 @@ import {
   WsClient,
   b64urlToBytes,
   bytesToB64url,
+  encodeInteractive,
   newId,
   type AiMode,
   type AiSettings,
   type CallKind,
   type ChatSummary,
   type ConversationCursor,
+  type InteractiveButton,
+  type InteractiveCard,
   type RingState,
   type SearchHit,
   type SessionProvider,
@@ -298,6 +301,15 @@ export interface GifResult {
   previewUrl: string;
   width: number;
   height: number;
+}
+
+/** A registered bot the current user owns (never carries the shared secret). */
+export interface BotView {
+  id: string;
+  handle: string;
+  name: string;
+  webhook_url: string;
+  created_at_ms: number;
 }
 
 /** A sticker within a pack (object_key is a public, non-E2EE asset). */
@@ -903,6 +915,43 @@ export class AppServices {
     await this.db.enqueueText({ conversationId, text: body, listText: `${sticker.emoji} Sticker`, clientRef: newId(), now: Date.now() });
     this.notifyChange();
     await this.ws?.flush();
+  }
+
+  /** sendInteractive sends an interactive message (text + tap-able buttons) as a
+   *  normal E2EE message — the structured body rides the sealed envelope, exactly
+   *  like polls (T13.02). The recipient renders buttons and, on a "reply" tap,
+   *  sends the button's payload back as a message. */
+  async sendInteractive(conversationId: string, text: string, buttons: InteractiveButton[], card?: InteractiveCard): Promise<void> {
+    const body = encodeInteractive(text, buttons, card); // throws on invalid input
+    await this.db.enqueueText({ conversationId, text: body, listText: `🔘 ${text.slice(0, 40)}`, clientRef: newId(), now: Date.now() });
+    this.notifyChange();
+    await this.ws?.flush();
+  }
+
+  /** listBots returns the bots I've registered (no secrets). */
+  async listBots(): Promise<BotView[]> {
+    const res = await this.authedRequest("GET", "/v1/bots");
+    if (!res.ok) throw new Error("Couldn't load your bots.");
+    const b = (await res.json()) as { bots: BotView[] | null };
+    return b.bots ?? [];
+  }
+
+  /** registerBot creates a bot and returns it plus its shared secret (shown once). */
+  async registerBot(handle: string, name: string, webhookUrl: string): Promise<{ bot: BotView; secret: string }> {
+    return (await this.authedJson("/v1/bots", { handle, name, webhook_url: webhookUrl })) as { bot: BotView; secret: string };
+  }
+
+  /** deleteBot removes one of my bots. */
+  async deleteBot(id: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/bots/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error("Couldn't delete the bot.");
+  }
+
+  /** rotateBotSecret issues a fresh shared secret for one of my bots (shown once). */
+  async rotateBotSecret(id: string): Promise<string> {
+    const res = await this.authedRequest("POST", `/v1/bots/${encodeURIComponent(id)}/rotate-secret`);
+    if (!res.ok) throw new Error("Couldn't rotate the secret.");
+    return ((await res.json()) as { secret: string }).secret;
   }
 
   private media: MediaPipeline | null = null;

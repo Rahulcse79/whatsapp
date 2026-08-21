@@ -97,6 +97,122 @@ export function Avatar({ size = 49, emoji, group }: { name?: string; id?: string
   );
 }
 
+/** AuthLayout is the branded shell for the signed-out flow (login / verify): a
+ *  centred card with the product mark, a heading pair, the form, and the E2EE
+ *  reassurance footer. */
+function AuthLayout({
+  title,
+  subtitle,
+  onSubmit,
+  children,
+}: {
+  title: string;
+  subtitle: string;
+  onSubmit: (e: FormEvent) => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="auth">
+      <form className="auth-card" onSubmit={onSubmit}>
+        <div className="auth-brand">
+          <span className="auth-mark" aria-hidden>
+            <Icon name="chats" size={26} />
+          </span>
+          <span className="auth-brand-name">WhatsApp V2</span>
+        </div>
+        <div className="auth-heading">
+          <h1>{title}</h1>
+          <p className="muted">{subtitle}</p>
+        </div>
+        {children}
+      </form>
+      <p className="auth-foot">
+        <Icon name="info" size={14} /> Your messages are end-to-end encrypted.
+      </p>
+    </div>
+  );
+}
+
+/** Screen is the standard full-screen shell (U3): a sticky header carrying an
+ *  optional back button, the title (+ subtitle) and trailing actions, over a
+ *  scrolling body whose content sits in a readable centred column. Every full
+ *  screen uses this so headers, padding and scroll behaviour match everywhere. */
+export function Screen({
+  title,
+  subtitle,
+  onBack,
+  actions,
+  wide,
+  children,
+}: {
+  title: ReactNode;
+  subtitle?: ReactNode;
+  onBack?: () => void;
+  actions?: ReactNode;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <div className="screen">
+      <header className="screen-head">
+        {onBack ? (
+          <button type="button" className="wa-icon" aria-label="Back" onClick={onBack}>
+            <Icon name="back" size={22} />
+          </button>
+        ) : null}
+        <div className="screen-title">
+          <span className="screen-title-text">{title}</span>
+          {subtitle ? <span className="screen-subtitle">{subtitle}</span> : null}
+        </div>
+        {actions ? <div className="screen-head-actions">{actions}</div> : null}
+      </header>
+      <div className="screen-body">
+        <div className={`screen-inner${wide ? " wide" : ""}`}>{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Section is a grouped card of related content inside a Screen body. */
+export function Section({
+  title,
+  desc,
+  actions,
+  flush,
+  children,
+}: {
+  title?: ReactNode;
+  desc?: ReactNode;
+  actions?: ReactNode;
+  flush?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <section className={`section${flush ? " flush" : ""}`}>
+      {title || actions ? (
+        <div className="section-head">
+          {title ? <h2 className="section-title">{title}</h2> : <span />}
+          {actions ? <div className="inline">{actions}</div> : null}
+        </div>
+      ) : null}
+      {desc ? <p className="section-desc">{desc}</p> : null}
+      {children}
+    </section>
+  );
+}
+
+/** EmptyState is the one "nothing here yet" block used across every list. */
+export function EmptyState({ icon, title, text, action }: { icon?: ReactNode; title: string; text?: ReactNode; action?: ReactNode }) {
+  return (
+    <div className="empty">
+      {icon ? <div className="empty-icon" aria-hidden>{icon}</div> : null}
+      <div className="empty-title">{title}</div>
+      {text ? <p className="empty-text">{text}</p> : null}
+      {action}
+    </div>
+  );
+}
+
 /** fmtRowTime renders a chat-list timestamp: clock for today, weekday within a
  *  week, else a short date — like the WhatsApp chat list. */
 function fmtRowTime(ms: number): string {
@@ -146,31 +262,43 @@ export function NewChat({
   }
 
   return (
-    <form className="card" onSubmit={submit}>
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>New chat</h1>
-      <p className="muted">Enter the phone number of someone who has an account.</p>
-      <input
-        className="input"
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
-        placeholder="+14155550123"
-        aria-label="Contact phone number in international format"
-        inputMode="tel"
-        autoFocus
-        disabled={busy}
-      />
-      {error && (
-        <p className="error" role="alert">
-          {error}
-        </p>
-      )}
-      <button className="btn" type="submit" disabled={busy}>
-        {busy ? "Starting…" : "Start chat"}
-      </button>
-    </form>
+    <Screen title="New chat" onBack={onBack}>
+      <Section desc="Enter the phone number of someone who already has an account. Numbers must be in international format.">
+        <form className="stack" onSubmit={submit}>
+          <div className="field">
+            <label className="field-label" htmlFor="newchat-phone">
+              Phone number
+            </label>
+            <input
+              id="newchat-phone"
+              className={`input${error ? " invalid" : ""}`}
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+14155550123"
+              aria-label="Contact phone number in international format"
+              inputMode="tel"
+              autoFocus
+              disabled={busy}
+            />
+            {error ? (
+              <span className="field-error" role="alert">
+                {error}
+              </span>
+            ) : (
+              <span className="field-help">We'll start an end-to-end encrypted chat.</span>
+            )}
+          </div>
+          <div className="actions end">
+            <button type="button" className="btn ghost" onClick={onBack}>
+              Cancel
+            </button>
+            <button className="btn" type="submit" disabled={busy}>
+              {busy ? "Starting…" : "Start chat"}
+            </button>
+          </div>
+        </form>
+      </Section>
+    </Screen>
   );
 }
 
@@ -259,111 +387,135 @@ export function Profile({ onBack, onSettings }: { onBack: () => void; onSettings
   }
 
   return (
-    <div className="card">
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <button type="button" className="btn small" onClick={onBack}>
-          ‹ Back
-        </button>
+    <Screen
+      title="Your profile"
+      onBack={onBack}
+      actions={
         <button type="button" className="btn small ghost" onClick={onSettings}>
-          ⚙️ Settings & devices
+          <Icon name="settings" size={17} /> Settings
         </button>
-      </div>
-      <h1>Your profile</h1>
-      <form onSubmit={save}>
-        <label style={fieldWrap}>
-          <span className="muted" style={fieldLabel}>
-            Display name
-          </span>
-          <input
-            className="input"
-            value={displayName}
-            onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="Your name"
-            aria-label="Display name"
-            maxLength={100}
-            disabled={busy}
-          />
-        </label>
-        <label style={fieldWrap}>
-          <span className="muted" style={fieldLabel}>
-            Username (a–z, 0–9, _ .)
-          </span>
-          <input
-            className="input"
-            value={username}
-            onChange={(e) => setUsername(e.target.value)}
-            placeholder="username"
-            aria-label="Username"
-            maxLength={30}
-            disabled={busy}
-          />
-        </label>
-        <label style={fieldWrap}>
-          <span className="muted" style={fieldLabel}>
-            About
-          </span>
-          <input
-            className="input"
-            value={about}
-            onChange={(e) => setAbout(e.target.value)}
-            placeholder="Hey there! I use WhatsApp V2"
-            aria-label="About"
-            maxLength={200}
-            disabled={busy}
-          />
-        </label>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-        {saved && (
-          <p className="muted" role="status">
-            Saved ✓
-          </p>
-        )}
-        <button className="btn" type="submit" disabled={busy}>
-          {busy ? "Saving…" : "Save"}
-        </button>
-      </form>
+      }
+    >
+      <section className="section profile-hero">
+        <Avatar size={88} />
+        <div className="profile-hero-text">
+          <span className="profile-hero-name">{displayName.trim() || "Your name"}</span>
+          {username.trim() ? <span className="profile-hero-handle">@{username.trim()}</span> : null}
+          <span className="profile-hero-about">{about.trim() || "Hey there! I use WhatsApp V2"}</span>
+        </div>
+      </section>
 
-      <h2 style={{ marginTop: "1.5rem" }}>Privacy</h2>
-      {PRIVACY_FIELDS.map((f) => (
-        <label key={f.key} style={fieldWrap}>
-          <span className="muted" style={fieldLabel}>
-            {f.label}
-          </span>
-          <select
-            className="input"
-            value={privacy[f.key] ?? "everyone"}
-            aria-label={f.label}
-            onChange={(e) => void changePrivacy(f.key, e.target.value)}
-          >
-            {PRIVACY_OPTIONS.map((o) => (
-              <option key={o} value={o}>
-                {o.charAt(0).toUpperCase() + o.slice(1)}
-              </option>
-            ))}
-          </select>
-        </label>
-      ))}
+      <Section title="Profile details" desc="Your name and about are visible to people you chat with, subject to the privacy settings below.">
+        <form className="stack" onSubmit={save}>
+          <div className="field">
+            <label className="field-label" htmlFor="profile-name">
+              Display name
+            </label>
+            <input
+              id="profile-name"
+              className="input"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Your name"
+              aria-label="Display name"
+              maxLength={100}
+              disabled={busy}
+            />
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="profile-username">
+              Username
+            </label>
+            <input
+              id="profile-username"
+              className="input"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="username"
+              aria-label="Username"
+              maxLength={30}
+              disabled={busy}
+            />
+            <span className="field-help">Letters, numbers, underscore and dot. People can find you by this.</span>
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="profile-about">
+              About
+            </label>
+            <input
+              id="profile-about"
+              className="input"
+              value={about}
+              onChange={(e) => setAbout(e.target.value)}
+              placeholder="Hey there! I use WhatsApp V2"
+              aria-label="About"
+              maxLength={200}
+              disabled={busy}
+            />
+          </div>
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="actions end">
+            {saved ? (
+              <span className="badge accent" role="status">
+                ✓ Saved
+              </span>
+            ) : null}
+            <button className="btn" type="submit" disabled={busy}>
+              {busy ? "Saving…" : "Save changes"}
+            </button>
+          </div>
+        </form>
+      </Section>
 
-      <h2 style={{ marginTop: "1.5rem" }}>Blocked ({blocked.length})</h2>
-      {blocked.length === 0 ? (
-        <p className="muted">You haven't blocked anyone.</p>
-      ) : (
-        <ul className="list">
-          {blocked.map((id) => (
-            <li key={id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span>{services.nameForUser(id)}</span>
-              <button className="btn small ghost" onClick={() => void unblock(id)}>
-                Unblock
-              </button>
-            </li>
+      <Section title="Privacy" desc="Choose who can see each part of your profile.">
+        <div className="stack">
+          {PRIVACY_FIELDS.map((f) => (
+            <div className="field-row" key={f.key}>
+              <label className="field-label" htmlFor={`privacy-${f.key}`}>
+                {f.label}
+              </label>
+              <select
+                id={`privacy-${f.key}`}
+                className="input"
+                value={privacy[f.key] ?? "everyone"}
+                aria-label={f.label}
+                onChange={(e) => void changePrivacy(f.key, e.target.value)}
+              >
+                {PRIVACY_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {o.charAt(0).toUpperCase() + o.slice(1)}
+                  </option>
+                ))}
+              </select>
+            </div>
           ))}
-        </ul>
-      )}
-    </div>
+        </div>
+      </Section>
+
+      <Section title={`Blocked contacts${blocked.length ? ` (${blocked.length})` : ""}`}>
+        {blocked.length === 0 ? (
+          <p className="section-desc">You haven't blocked anyone.</p>
+        ) : (
+          <ul className="list">
+            {blocked.map((id) => (
+              <li key={id} className="row static">
+                <Avatar size={38} />
+                <div className="row-main">
+                  <div className="row-title">{services.nameForUser(id)}</div>
+                </div>
+                <button className="btn small ghost" onClick={() => void unblock(id)}>
+                  Unblock
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+    </Screen>
   );
 }
 
@@ -393,25 +545,39 @@ export function Login({ onRequested }: { onRequested: (challengeId: string, phon
   }
 
   return (
-    <form className="card" onSubmit={submit}>
-      <h1>Your phone number</h1>
-      <p className="muted">We&apos;ll send a one-time code to confirm it&apos;s you.</p>
-      <input
-        className="input"
-        value={phone}
-        onChange={(e) => setPhone(e.target.value)}
-        placeholder="+14155550123"
-        aria-label="Phone number in international format"
-        inputMode="tel"
-        autoComplete="tel"
-        autoFocus
-        disabled={busy}
-      />
-      {error ? <p className="error">{error}</p> : null}
-      <button className="btn" type="submit" disabled={busy}>
+    <AuthLayout
+      title="Enter your phone number"
+      subtitle="We'll send a one-time code to confirm it's you."
+      onSubmit={submit}
+    >
+      <div className="field">
+        <label className="field-label" htmlFor="login-phone">
+          Phone number
+        </label>
+        <input
+          id="login-phone"
+          className={`input${error ? " invalid" : ""}`}
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="+14155550123"
+          aria-label="Phone number in international format"
+          inputMode="tel"
+          autoComplete="tel"
+          autoFocus
+          disabled={busy}
+        />
+        {error ? (
+          <span className="field-error" role="alert">
+            {error}
+          </span>
+        ) : (
+          <span className="field-help">Include your country code, e.g. +1 for the US.</span>
+        )}
+      </div>
+      <button className="btn large block" type="submit" disabled={busy}>
         {busy ? "Sending…" : "Send code"}
       </button>
-    </form>
+    </AuthLayout>
   );
 }
 
@@ -455,12 +621,14 @@ export function Verify({
   }
 
   return (
-    <form className="card" onSubmit={submit}>
-      <h1>{needsPin ? "Enter your PIN" : "Enter the code"}</h1>
-      <p className="muted">{needsPin ? "This device needs your 2-step PIN." : `Sent to ${phone}`}</p>
+    <AuthLayout
+      title={needsPin ? "Enter your PIN" : "Enter your code"}
+      subtitle={needsPin ? "This device needs your 2-step verification PIN." : `We sent a 6-digit code to ${phone}.`}
+      onSubmit={submit}
+    >
       {needsPin ? (
         <input
-          className="input code"
+          className={`input code${error ? " invalid" : ""}`}
           value={pin}
           onChange={(e) => setPin(e.target.value)}
           placeholder="••••••"
@@ -473,22 +641,27 @@ export function Verify({
         />
       ) : (
         <input
-          className="input code"
+          className={`input code${error ? " invalid" : ""}`}
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          placeholder="123456"
+          placeholder="······"
           aria-label="One-time verification code"
           inputMode="numeric"
+          maxLength={6}
           autoComplete="one-time-code"
           autoFocus
           disabled={busy}
         />
       )}
-      {error ? <p className="error">{error}</p> : null}
-      <button className="btn" type="submit" disabled={busy}>
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <button className="btn large block" type="submit" disabled={busy}>
         {busy ? "Verifying…" : "Verify"}
       </button>
-    </form>
+    </AuthLayout>
   );
 }
 
@@ -978,95 +1151,107 @@ export function Contacts({ onOpen, onBack }: { onOpen: (id: string) => void; onB
   }
 
   const userRow = (u: UserRef): ReactNode => (
-    <li key={u.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-      <span>@{u.username}</span>
-      <span style={{ display: "flex", gap: "0.4rem" }}>
+    <li key={u.userId} className="row static">
+      <Avatar size={40} />
+      <div className="row-main">
+        <div className="row-title">@{u.username}</div>
+      </div>
+      <div className="row-right">
         <button
-          className="btn small ghost"
+          className={`wa-icon${favIds.has(u.userId) ? " on" : ""}`}
           onClick={() => void toggleFav(u)}
           aria-label={favIds.has(u.userId) ? "Remove favorite" : "Add favorite"}
           title={favIds.has(u.userId) ? "Unfavorite" : "Favorite"}
         >
-          {favIds.has(u.userId) ? "★" : "☆"}
+          <Icon name="star" size={18} />
         </button>
-        <button className="btn small" onClick={() => void message(u.userId)}>
+        <button className="btn small secondary" onClick={() => void message(u.userId)}>
           Message
         </button>
-      </span>
+      </div>
     </li>
   );
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>Contacts</h1>
-
-      <h2>Find people</h2>
-      <input
-        className="input"
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search by username…"
-        aria-label="Search by username"
-      />
-      {query.trim().length >= 2 &&
-        (results.length === 0 ? (
-          <p className="muted">No users found.</p>
-        ) : (
-          <ul className="list">{results.map(userRow)}</ul>
-        ))}
-
-      <h2 style={{ marginTop: "1.5rem" }}>Favorites ({favorites.length})</h2>
-      {favorites.length === 0 ? (
-        <p className="muted">Star someone to keep them handy here.</p>
-      ) : (
-        <ul className="list">{favorites.map(userRow)}</ul>
-      )}
-
-      <h2 style={{ marginTop: "1.5rem" }}>Find by phone</h2>
-      <p className="muted" style={{ fontSize: "0.8rem" }}>
-        Paste numbers in international format (one per line). Only the peppered hash is stored.
-      </p>
-      <textarea
-        className="input"
-        rows={3}
-        value={phones}
-        onChange={(e) => setPhones(e.target.value)}
-        placeholder={"+14155550123\n+919876543210"}
-        aria-label="Phone numbers"
-      />
-      <button className="btn small" onClick={() => void checkPhones()} disabled={busy || phones.trim() === ""}>
-        {busy ? "Checking…" : "Check numbers"}
-      </button>
-      {matched !== null &&
-        (matched.length === 0 ? (
-          <p className="muted">None of those numbers are on WhatsApp V2 yet.</p>
-        ) : (
-          <ul className="list">{matched.map((m) => userRow({ userId: m.userId, username: m.username }))}</ul>
-        ))}
-
-      <h2 style={{ marginTop: "1.5rem" }}>Invite a friend</h2>
-      {invite ? (
-        <div>
-          <input className="input mono" readOnly value={invite.url} aria-label="Invite link" onFocus={(e) => e.currentTarget.select()} />
-          <button className="btn small" onClick={() => void copyInvite()}>
-            {copied ? "Copied ✓" : "Copy link"}
-          </button>
-        </div>
-      ) : (
-        <button className="btn small" onClick={() => void makeInvite()}>
-          Create invite link
-        </button>
-      )}
-
-      {error && (
-        <p className="error" role="alert" style={{ marginTop: "1rem" }}>
+    <Screen title="Contacts" onBack={onBack}>
+      {error ? (
+        <p className="error" role="alert">
           {error}
         </p>
-      )}
-    </div>
+      ) : null}
+
+      <Section title="Find people" desc="Search anyone on WhatsApp V2 by their username.">
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search by username…"
+          aria-label="Search by username"
+        />
+        {query.trim().length >= 2 ? (
+          results.length === 0 ? (
+            <p className="section-desc">No users match “{query.trim()}”.</p>
+          ) : (
+            <ul className="list">{results.map(userRow)}</ul>
+          )
+        ) : null}
+      </Section>
+
+      <Section title={`Favorites${favorites.length ? ` (${favorites.length})` : ""}`}>
+        {favorites.length === 0 ? (
+          <p className="section-desc">Star someone to keep them handy here.</p>
+        ) : (
+          <ul className="list">{favorites.map(userRow)}</ul>
+        )}
+      </Section>
+
+      <Section title="Find by phone" desc="Paste numbers in international format, one per line. Only a peppered hash of each number is sent — never the numbers themselves.">
+        <textarea
+          className="input"
+          rows={3}
+          value={phones}
+          onChange={(e) => setPhones(e.target.value)}
+          placeholder={"+14155550123\n+919876543210"}
+          aria-label="Phone numbers"
+        />
+        <div className="actions">
+          <button className="btn small" onClick={() => void checkPhones()} disabled={busy || phones.trim() === ""}>
+            {busy ? "Checking…" : "Check numbers"}
+          </button>
+        </div>
+        {matched !== null ? (
+          matched.length === 0 ? (
+            <p className="section-desc">None of those numbers are on WhatsApp V2 yet.</p>
+          ) : (
+            <ul className="list">{matched.map((m) => userRow({ userId: m.userId, username: m.username }))}</ul>
+          )
+        ) : null}
+      </Section>
+
+      <Section title="Invite a friend" desc="Share a personal link so someone can join and start a chat with you.">
+        {invite ? (
+          <div className="inline">
+            <input
+              className="input mono"
+              readOnly
+              value={invite.url}
+              aria-label="Invite link"
+              onFocus={(e) => e.currentTarget.select()}
+              style={{ flex: 1, minWidth: 220 }}
+            />
+            <button className="btn small secondary" onClick={() => void copyInvite()}>
+              {copied ? "Copied ✓" : "Copy link"}
+            </button>
+          </div>
+        ) : (
+          <div className="actions">
+            <button className="btn small" onClick={() => void makeInvite()}>
+              Create invite link
+            </button>
+          </div>
+        )}
+      </Section>
+    </Screen>
   );
 }
 
@@ -1120,65 +1305,101 @@ export function CreateGroup({ onCreated, onBack }: { onCreated: (id: string) => 
   }
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>New group</h1>
-      <label style={fieldWrap}>
-        <span className="muted" style={fieldLabel}>
-          Group name
-        </span>
-        <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="Weekend Trip" aria-label="Group name" maxLength={100} disabled={busy} />
-      </label>
-      <label style={fieldWrap}>
-        <span className="muted" style={fieldLabel}>
-          Description (optional)
-        </span>
-        <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's this group about?" aria-label="Group description" maxLength={500} disabled={busy} />
-      </label>
-
-      <h2 style={{ marginTop: "1rem" }}>Members ({picked.length})</h2>
-      {picked.length > 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", marginBottom: "0.6rem" }}>
-          {picked.map((p) => (
-            <button key={p.userId} className="btn small ghost" onClick={() => setPicked((s) => s.filter((x) => x.userId !== p.userId))} title="Remove">
-              @{p.username} ✕
-            </button>
-          ))}
+    <Screen
+      title="New group"
+      onBack={onBack}
+      actions={
+        <button className="btn small" onClick={() => void create()} disabled={busy}>
+          {busy ? "Creating…" : "Create group"}
+        </button>
+      }
+    >
+      <Section title="Group details">
+        <div className="field">
+          <label className="field-label" htmlFor="group-name">
+            Group name
+          </label>
+          <input
+            id="group-name"
+            className={`input${error ? " invalid" : ""}`}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="Weekend Trip"
+            aria-label="Group name"
+            maxLength={100}
+            disabled={busy}
+          />
         </div>
-      )}
-      <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Add members by username…" aria-label="Add members" />
-      {query.trim().length >= 2 && (
-        <ul className="list">
-          {results
-            .filter((r) => !pickedIds.has(r.userId))
-            .map((r) => (
-              <li key={r.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>@{r.username}</span>
-                <button
-                  className="btn small"
-                  onClick={() => {
-                    setPicked((s) => [...s, r]);
-                    setQuery("");
-                  }}
-                >
-                  Add
-                </button>
-              </li>
-            ))}
-        </ul>
-      )}
+        <div className="field">
+          <label className="field-label" htmlFor="group-desc">
+            Description <span className="muted">(optional)</span>
+          </label>
+          <input
+            id="group-desc"
+            className="input"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="What's this group about?"
+            aria-label="Group description"
+            maxLength={500}
+            disabled={busy}
+          />
+        </div>
+      </Section>
 
-      {error && (
-        <p className="error" role="alert" style={{ marginTop: "0.8rem" }}>
+      <Section title={`Members (${picked.length})`} desc="Add people by username. You can always add more once the group exists.">
+        {picked.length > 0 ? (
+          <div className="inline">
+            {picked.map((p) => (
+              <button
+                key={p.userId}
+                className="chip on"
+                onClick={() => setPicked((s) => s.filter((x) => x.userId !== p.userId))}
+                title="Remove"
+              >
+                @{p.username} <span aria-hidden>✕</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        <input
+          className="input"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Add members by username…"
+          aria-label="Add members"
+        />
+        {query.trim().length >= 2 ? (
+          <ul className="list">
+            {results
+              .filter((r) => !pickedIds.has(r.userId))
+              .map((r) => (
+                <li key={r.userId} className="row static">
+                  <Avatar size={38} />
+                  <div className="row-main">
+                    <div className="row-title">@{r.username}</div>
+                  </div>
+                  <button
+                    className="btn small secondary"
+                    onClick={() => {
+                      setPicked((s) => [...s, r]);
+                      setQuery("");
+                    }}
+                  >
+                    Add
+                  </button>
+                </li>
+              ))}
+          </ul>
+        ) : null}
+      </Section>
+
+      {error ? (
+        <p className="error" role="alert">
           {error}
         </p>
-      )}
-      <button className="btn" onClick={() => void create()} disabled={busy} style={{ marginTop: "0.8rem" }}>
-        {busy ? "Creating…" : "Create group"}
-      </button>
-    </div>
+      ) : null}
+    </Screen>
   );
 }
 
@@ -1259,160 +1480,185 @@ export function GroupInfoScreen({ conversationId, onBack, onLeft }: { conversati
   }
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back to chat
-      </button>
-      <h1>{group.name}</h1>
-      {group.description && <p className="muted">{group.description}</p>}
-      <p className="muted" style={{ fontSize: "0.8rem" }}>
-        You are {myRole === "owner" ? "the owner" : `a${myRole === "admin" ? "n admin" : " member"}`}.
-      </p>
+    <Screen title="Group info" onBack={onBack}>
+      <section className="section profile-hero">
+        <Avatar size={80} group />
+        <div className="profile-hero-text">
+          <span className="profile-hero-name">{group.name}</span>
+          <span className="profile-hero-about">
+            {members.length} member{members.length === 1 ? "" : "s"}
+          </span>
+          {group.description ? <span className="profile-hero-about">{group.description}</span> : null}
+          <span className="inline">
+            <span className={`badge${myRole === "member" ? "" : " accent"}`}>You're {myRole === "owner" ? "the owner" : myRole === "admin" ? "an admin" : "a member"}</span>
+          </span>
+        </div>
+      </section>
 
-      {iCanManage && (
-        <>
-          <h2 style={{ marginTop: "1rem" }}>Settings</h2>
-          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.6rem" }}>
-            <input type="checkbox" checked={group.settings.announcements} onChange={(e) => void saveSettings({ announcements: e.target.checked })} />
-            <span>📢 Announcements only (admins post)</span>
-          </label>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>
-              Who can post
-            </span>
-            <select className="input" value={group.settings.who_can_post} onChange={(e) => void saveSettings({ who_can_post: e.target.value })}>
-              <option value="all">Everyone</option>
-              <option value="admins">Admins only</option>
-            </select>
-          </label>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>
-              Who can edit group info
-            </span>
-            <select className="input" value={group.settings.who_can_edit_info} onChange={(e) => void saveSettings({ who_can_edit_info: e.target.value })}>
-              <option value="all">Everyone</option>
-              <option value="admins">Admins only</option>
-            </select>
-          </label>
-        </>
-      )}
-
-      <h2 style={{ marginTop: "1rem" }}>Members ({members.length})</h2>
-      <ul className="list">
-        {[...members]
-          .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))
-          .map((m) => (
-            <li key={m.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-              <span>
-                {services.nameForUser(m.userId)}{" "}
-                {m.role !== "member" && <span className="muted" style={{ fontSize: "0.75rem" }}>· {m.role}</span>}
-              </span>
-              <span style={{ display: "flex", gap: "0.35rem" }}>
-                {iAmOwner && m.role === "member" && (
-                  <button className="btn small ghost" onClick={() => void guard(() => services.setGroupRole(conversationId, m.userId, 1))} title="Make admin">
-                    ↑ admin
-                  </button>
-                )}
-                {iAmOwner && m.role === "admin" && (
-                  <button className="btn small ghost" onClick={() => void guard(() => services.setGroupRole(conversationId, m.userId, 0))} title="Demote to member">
-                    ↓ member
-                  </button>
-                )}
-                {iCanManage && m.role !== "owner" && (
-                  <button className="btn small ghost" onClick={() => void guard(() => services.removeGroupMember(conversationId, m.userId))} title="Remove">
-                    Remove
-                  </button>
-                )}
-              </span>
-            </li>
-          ))}
-      </ul>
-
-      {iCanManage && (
-        <>
-          <h2 style={{ marginTop: "1rem" }}>Add members</h2>
-          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by username…" aria-label="Add members" />
-          {query.trim().length >= 2 && (
-            <ul className="list">
-              {results
-                .filter((r) => !memberIds.has(r.userId))
-                .map((r) => (
-                  <li key={r.userId} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <span>@{r.username}</span>
-                    <button
-                      className="btn small"
-                      onClick={() =>
-                        void guard(async () => {
-                          await services.addGroupMembers(conversationId, [r.userId]);
-                          setQuery("");
-                        })
-                      }
-                    >
-                      Add
-                    </button>
-                  </li>
-                ))}
-            </ul>
-          )}
-
-          <h2 style={{ marginTop: "1rem" }}>Invite link</h2>
-          {invite ? (
-            <div>
-              <input
-                className="input mono"
-                readOnly
-                value={invite}
-                aria-label="Group invite link"
-                onFocus={(e) => e.currentTarget.select()}
-              />
-              <button
-                className="btn small"
-                onClick={() => {
-                  void navigator.clipboard?.writeText(invite).then(() => {
-                    setCopied(true);
-                    setTimeout(() => setCopied(false), 1500);
-                  });
-                }}
-              >
-                {copied ? "Copied ✓" : "Copy link"}
-              </button>
-            </div>
-          ) : (
-            <button className="btn small" onClick={() => void makeInvite()}>
-              Create invite link
-            </button>
-          )}
-        </>
-      )}
-
-      {error && (
-        <p className="error" role="alert" style={{ marginTop: "1rem" }}>
+      {error ? (
+        <p className="error" role="alert">
           {error}
         </p>
-      )}
+      ) : null}
 
-      <div style={{ display: "flex", gap: "0.5rem", marginTop: "1.5rem" }}>
-        <button
-          className="btn small ghost"
-          onClick={() => {
-            if (window.confirm("Leave this group?")) void guard(async () => (await services.leaveGroup(conversationId), onLeft()));
-          }}
-        >
-          Leave group
-        </button>
-        {iAmOwner && (
+      {iCanManage ? (
+        <Section title="Group settings" desc="Control who can post and who can change the group's name, photo and description.">
+          <label className="setting">
+            <span className="setting-text">
+              <span className="setting-title">Announcements only</span>
+              <span className="setting-desc">Only admins can send messages to this group.</span>
+            </span>
+            <input
+              type="checkbox"
+              className="switch"
+              checked={group.settings.announcements}
+              onChange={(e) => void saveSettings({ announcements: e.target.checked })}
+            />
+          </label>
+          <div className="field-row">
+            <label className="field-label" htmlFor="grp-post">
+              Who can post
+            </label>
+            <select id="grp-post" className="input" value={group.settings.who_can_post} onChange={(e) => void saveSettings({ who_can_post: e.target.value })}>
+              <option value="all">Everyone</option>
+              <option value="admins">Admins only</option>
+            </select>
+          </div>
+          <div className="field-row">
+            <label className="field-label" htmlFor="grp-edit">
+              Who can edit group info
+            </label>
+            <select id="grp-edit" className="input" value={group.settings.who_can_edit_info} onChange={(e) => void saveSettings({ who_can_edit_info: e.target.value })}>
+              <option value="all">Everyone</option>
+              <option value="admins">Admins only</option>
+            </select>
+          </div>
+        </Section>
+      ) : null}
+
+      <Section title={`Members (${members.length})`}>
+        <ul className="list">
+          {[...members]
+            .sort((a, b) => (ROLE_RANK[b.role] ?? 0) - (ROLE_RANK[a.role] ?? 0))
+            .map((m) => (
+              <li key={m.userId} className="row static">
+                <Avatar size={40} />
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title">{services.nameForUser(m.userId)}</span>
+                    {m.role !== "member" ? <span className="badge accent">{m.role}</span> : null}
+                  </div>
+                </div>
+                <div className="row-right">
+                  {iAmOwner && m.role === "member" ? (
+                    <button className="btn small ghost" onClick={() => void guard(() => services.setGroupRole(conversationId, m.userId, 1))} title="Make admin">
+                      Make admin
+                    </button>
+                  ) : null}
+                  {iAmOwner && m.role === "admin" ? (
+                    <button className="btn small ghost" onClick={() => void guard(() => services.setGroupRole(conversationId, m.userId, 0))} title="Demote to member">
+                      Demote
+                    </button>
+                  ) : null}
+                  {iCanManage && m.role !== "owner" ? (
+                    <button className="btn small ghost danger" onClick={() => void guard(() => services.removeGroupMember(conversationId, m.userId))} title="Remove">
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+        </ul>
+      </Section>
+
+      {iCanManage ? (
+        <>
+          <Section title="Add members">
+            <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by username…" aria-label="Add members" />
+            {query.trim().length >= 2 ? (
+              <ul className="list">
+                {results
+                  .filter((r) => !memberIds.has(r.userId))
+                  .map((r) => (
+                    <li key={r.userId} className="row static">
+                      <Avatar size={38} />
+                      <div className="row-main">
+                        <div className="row-title">@{r.username}</div>
+                      </div>
+                      <button
+                        className="btn small secondary"
+                        onClick={() =>
+                          void guard(async () => {
+                            await services.addGroupMembers(conversationId, [r.userId]);
+                            setQuery("");
+                          })
+                        }
+                      >
+                        Add
+                      </button>
+                    </li>
+                  ))}
+              </ul>
+            ) : null}
+          </Section>
+
+          <Section title="Invite link" desc="Anyone with this link can join the group.">
+            {invite ? (
+              <div className="inline">
+                <input
+                  className="input mono"
+                  readOnly
+                  value={invite}
+                  aria-label="Group invite link"
+                  onFocus={(e) => e.currentTarget.select()}
+                  style={{ flex: 1, minWidth: 220 }}
+                />
+                <button
+                  className="btn small secondary"
+                  onClick={() => {
+                    void navigator.clipboard?.writeText(invite).then(() => {
+                      setCopied(true);
+                      setTimeout(() => setCopied(false), 1500);
+                    });
+                  }}
+                >
+                  {copied ? "Copied ✓" : "Copy link"}
+                </button>
+              </div>
+            ) : (
+              <div className="actions">
+                <button className="btn small" onClick={() => void makeInvite()}>
+                  Create invite link
+                </button>
+              </div>
+            )}
+          </Section>
+        </>
+      ) : null}
+
+      <Section title="Danger zone" desc="Leaving removes this group from your chats. Deleting removes it for everyone.">
+        <div className="actions">
           <button
-            className="btn small ghost"
-            style={{ color: "var(--danger, #c0392b)" }}
+            className="btn outline"
             onClick={() => {
-              if (window.confirm("Delete this group for everyone? This can't be undone.")) void guard(async () => (await services.deleteGroup(conversationId), onLeft()));
+              if (window.confirm("Leave this group?")) void guard(async () => (await services.leaveGroup(conversationId), onLeft()));
             }}
           >
-            Delete group
+            Leave group
           </button>
-        )}
-      </div>
-    </div>
+          {iAmOwner ? (
+            <button
+              className="btn danger"
+              onClick={() => {
+                if (window.confirm("Delete this group for everyone? This can't be undone.")) void guard(async () => (await services.deleteGroup(conversationId), onLeft()));
+              }}
+            >
+              Delete group
+            </button>
+          ) : null}
+        </div>
+      </Section>
+    </Screen>
   );
 }
 

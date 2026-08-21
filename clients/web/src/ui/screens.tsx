@@ -7,10 +7,15 @@ import {
   disclosureFor,
   extractHashtags,
   isValidPhone,
+  makeClear,
+  makeStroke,
   meetingSummary,
+  mergeOps,
+  renderStrokes,
   smartReplies,
   sweepExpired,
   type AiMode,
+  type BoardOp,
   type ChatSummary,
   type EphemeralMessage,
   type MeetingSummary,
@@ -34,7 +39,7 @@ import {
   type PollBody,
   type QuotedRef,
 } from "@wa/media-pipeline";
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { getTheme, setTheme, type ThemeChoice } from "../theme";
 import { RichText } from "./RichText";
@@ -3685,6 +3690,131 @@ export function CollabScreen({ conversationId, onBack }: { conversationId: strin
   );
 }
 
+/** WhiteboardScreen (T12.02): a real-time collaborative canvas over the CRDT
+ *  op-log. Strokes append locally + POST to the server; a 1.2s poll merges peers'
+ *  ops (grow-only set → convergent). */
+export function WhiteboardScreen({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {
+  const { services } = useServices();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const opsRef = useRef<BoardOp[]>([]);
+  const cursorRef = useRef(0);
+  const drawingRef = useRef<{ points: number[] } | null>(null);
+  const [color, setColor] = useState("#e5484d");
+  const [width, setWidth] = useState(3);
+  const me = services.myUserId();
+  const colors = ["#111b21", "#e5484d", "#1fa855", "#0a7cff", "#f2994a", "#9b6dd6"];
+
+  const redraw = useCallback(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const ctx = c.getContext("2d");
+    if (!ctx) return;
+    const w = c.width;
+    const h = c.height;
+    ctx.clearRect(0, 0, w, h);
+    const drawPath = (pts: number[], col: string, wid: number): void => {
+      ctx.strokeStyle = col;
+      ctx.lineWidth = wid;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      for (let i = 0; i < pts.length; i += 2) {
+        const x = pts[i]! * w;
+        const y = pts[i + 1]! * h;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+    for (const s of renderStrokes(opsRef.current)) drawPath(s.points, s.color, s.width);
+    const d = drawingRef.current;
+    if (d && d.points.length >= 2) drawPath(d.points, color, width);
+  }, [color, width]);
+
+  useEffect(() => {
+    const c = canvasRef.current;
+    if (!c) return;
+    const resize = (): void => {
+      const r = c.getBoundingClientRect();
+      c.width = r.width;
+      c.height = r.height;
+      redraw();
+    };
+    resize();
+    window.addEventListener("resize", resize);
+    return () => window.removeEventListener("resize", resize);
+  }, [redraw]);
+
+  useEffect(() => {
+    let alive = true;
+    const poll = async (): Promise<void> => {
+      const { ops, cursor } = await services.boardSync(conversationId, cursorRef.current);
+      if (!alive || ops.length === 0) return;
+      opsRef.current = mergeOps(opsRef.current, ops as BoardOp[]);
+      cursorRef.current = Math.max(cursorRef.current, cursor);
+      redraw();
+    };
+    void poll();
+    const h = window.setInterval(() => void poll(), 1200);
+    return () => {
+      alive = false;
+      window.clearInterval(h);
+    };
+  }, [services, conversationId, redraw]);
+
+  const posOf = (e: ReactPointerEvent<HTMLCanvasElement>): [number, number] => {
+    const r = e.currentTarget.getBoundingClientRect();
+    return [(e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height];
+  };
+  const down = (e: ReactPointerEvent<HTMLCanvasElement>): void => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const [x, y] = posOf(e);
+    drawingRef.current = { points: [x, y] };
+  };
+  const move = (e: ReactPointerEvent<HTMLCanvasElement>): void => {
+    if (!drawingRef.current) return;
+    const [x, y] = posOf(e);
+    drawingRef.current.points.push(x, y);
+    redraw();
+  };
+  const commit = (op: BoardOp): void => {
+    opsRef.current = mergeOps(opsRef.current, [op]);
+    cursorRef.current = Math.max(cursorRef.current, op.seq);
+    redraw();
+    void services.boardAppend(conversationId, [op]).catch(() => {});
+  };
+  const up = (): void => {
+    const d = drawingRef.current;
+    drawingRef.current = null;
+    if (!d || d.points.length < 2) {
+      redraw();
+      return;
+    }
+    commit(makeStroke(opsRef.current, me, crypto.randomUUID(), color, width, d.points));
+  };
+
+  return (
+    <div className="pane">
+      <div className="pane-head">
+        <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
+          <Icon name="back" size={24} />
+        </button>
+        <span className="pane-head-title">Whiteboard</span>
+      </div>
+      <div className="wb-toolbar">
+        {colors.map((c) => (
+          <button key={c} className={`wb-swatch${color === c ? " on" : ""}`} style={{ background: c }} onClick={() => setColor(c)} aria-label={`Pen colour ${c}`} />
+        ))}
+        <input type="range" min={1} max={12} value={width} onChange={(e) => setWidth(Number(e.target.value))} aria-label="Pen width" />
+        <button className="btn small ghost" onClick={() => commit(makeClear(opsRef.current, me, crypto.randomUUID()))}>Clear</button>
+      </div>
+      <div className="wb-stage">
+        <canvas ref={canvasRef} className="wb-canvas" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerLeave={up} />
+      </div>
+    </div>
+  );
+}
+
 /** NoteEditor edits a shared note under optimistic version concurrency, with an
  *  approval workflow, comments, and revision history. */
 function NoteEditor({ conversationId, note, onClose }: { conversationId: string; note: CollabNote | null; onClose: () => void }) {
@@ -3790,6 +3920,7 @@ export function Thread({
   onGroupInfo,
   onSearchInChat,
   onCollab,
+  onBoard,
   focusMsgUuid,
 }: {
   conversationId: string;
@@ -3797,6 +3928,7 @@ export function Thread({
   onGroupInfo: (id: string) => void;
   onSearchInChat?: (id: string) => void;
   onCollab?: (id: string) => void;
+  onBoard?: (id: string) => void;
   focusMsgUuid?: string;
 }) {
   const { services } = useServices();
@@ -4181,6 +4313,11 @@ export function Thread({
         {onCollab ? (
           <button className="wa-icon" title="Notes & tasks" aria-label="Notes and tasks" onClick={() => onCollab(conversationId)}>
             <Icon name="copy" size={20} />
+          </button>
+        ) : null}
+        {onBoard ? (
+          <button className="wa-icon" title="Whiteboard" aria-label="Whiteboard" onClick={() => onBoard(conversationId)}>
+            <Icon name="wallpaper" size={21} />
           </button>
         ) : null}
         {aiOn ? (

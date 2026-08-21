@@ -2036,6 +2036,50 @@ body {
   padding-top: 8px;
 }
 
+/* ── Collaborative whiteboard (T12.02) ────────────────────────────────────── */
+.wb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: var(--header);
+  border-bottom: 1px solid var(--line);
+}
+.wb-swatch {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  cursor: pointer;
+  padding: 0;
+}
+.wb-swatch.on {
+  border-color: var(--text);
+  box-shadow: 0 0 0 2px var(--panel) inset;
+}
+.wb-toolbar input[type="range"] {
+  width: 110px;
+  accent-color: var(--accent);
+}
+.wb-stage {
+  flex: 1;
+  min-height: 0;
+  background: #ffffff;
+  background-image: radial-gradient(circle, rgba(0, 0, 0, 0.06) 1px, transparent 1px);
+  background-size: 22px 22px;
+}
+:root[data-theme="dark"] .wb-stage {
+  background: #0f1a20;
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+}
+.wb-canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+
 /* Topic tags in the AI summary sheet (T11.03). */
 .topic-tag {
   background: color-mix(in srgb, var(--accent) 14%, transparent);

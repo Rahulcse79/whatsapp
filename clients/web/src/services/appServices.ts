@@ -1427,6 +1427,23 @@ export class AppServices {
   async collabActivity(conversationId: string): Promise<CollabActivity[]> {
     return (await this.collabJSON<{ activity: CollabActivity[] }>("GET", `/v1/conversations/${this.cid(conversationId)}/activity`)).activity ?? [];
   }
+
+  // ── Collaborative whiteboard (T12.02): CRDT op-log sync ──────────────────────
+
+  /** boardSync pulls ops with seq > since; returns the raw op JSON + new cursor. */
+  async boardSync(conversationId: string, since: number): Promise<{ ops: unknown[]; cursor: number }> {
+    const res = await this.authedRequest("GET", `/v1/conversations/${this.cid(conversationId)}/board/ops?since=${since}`);
+    if (!res.ok) return { ops: [], cursor: since };
+    const b = (await res.json()) as { ops?: unknown[]; cursor?: number };
+    return { ops: b.ops ?? [], cursor: b.cursor ?? since };
+  }
+
+  /** boardAppend pushes a batch of local ops (stroke/erase/clear). */
+  async boardAppend(conversationId: string, ops: unknown[]): Promise<void> {
+    if (ops.length === 0) return;
+    const res = await this.authedRequest("POST", `/v1/conversations/${this.cid(conversationId)}/board/ops`, { ops });
+    if (!res.ok) throw new Error(`Whiteboard sync failed (HTTP ${res.status}).`);
+  }
   /** nameForUser returns a cached human name for any user id, falling back to a
    *  short id when the profile hasn't been loaded yet. */
   nameForUser(userId: string): string {

@@ -70,6 +70,8 @@ import (
 	storiesadapters "github.com/whatsapp-v2/server/internal/stories/adapters"
 	"github.com/whatsapp-v2/server/internal/webinar"
 	webinaradapters "github.com/whatsapp-v2/server/internal/webinar/adapters"
+	"github.com/whatsapp-v2/server/internal/whiteboard"
+	whiteboardadapters "github.com/whatsapp-v2/server/internal/whiteboard/adapters"
 )
 
 // Stamped by CI at release: -ldflags "-X main.version=… -X main.commit=…".
@@ -302,6 +304,8 @@ func main() {
 	// comments, approvals, and an activity timeline — gated on conversation
 	// membership.
 	collabSvc := collab.NewService(collabadapters.NewStore(pool))
+	// Collaborative whiteboard (T12.02): the per-conversation CRDT op-log.
+	whiteboardSvc := whiteboard.NewService(whiteboardadapters.NewStore(pool))
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -483,6 +487,7 @@ func main() {
 	abuse.Routes(mux, abuseSvc, issuer)             // /v1/reports: file trust-and-safety reports into the admin queue (T10.03)
 	ai.Routes(mux, aiSvc, issuer)                   // /v1/ai/config: on-device AI runtime kill-switch (T11.01)
 	collab.Routes(mux, collabSvc, issuer)           // /v1/conversations/{id}/{notes,tasks,activity} + /v1/notes/*: shared notes/tasks (T12.01)
+	whiteboard.Routes(mux, whiteboardSvc, issuer)   // /v1/conversations/{id}/board/ops: collaborative whiteboard CRDT (T12.02)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

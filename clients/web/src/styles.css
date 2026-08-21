@@ -1960,6 +1960,28 @@ body {
   opacity: 0.7;
 }
 
+/* Smart-reply chips above the composer (T11.02). */
+.smart-replies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 14px 2px;
+  background: var(--header);
+}
+.smart-reply {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--accent);
+  border-radius: 16px;
+  padding: 6px 14px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.smart-reply:hover {
+  background: var(--hover);
+}
+
 /* Suspicious sign-in flag in the Security surface (T10.02). */
 .login-flag {
   margin-left: 8px;

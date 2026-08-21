@@ -2,9 +2,12 @@ import {
   DISAPPEARING_PRESETS,
   SNIPPET_CLOSE,
   SNIPPET_OPEN,
+  correctGrammar,
   disclosureFor,
   extractHashtags,
   isValidPhone,
+  smartReplies,
+  summarizeConversation,
   sweepExpired,
   type AiMode,
   type ChatSummary,
@@ -3594,6 +3597,7 @@ export function Thread({
   const focusedRef = useRef<string | null>(null); // search jump-to-result (once per target)
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
   const [reportMsg, setReportMsg] = useState<ThreadMessage | null>(null); // message being reported (T10.03)
+  const [summary, setSummary] = useState<string | null>(null); // AI conversation summary (T11.02)
   const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | "tools" | null>(null); // composer picker
   const [showPoll, setShowPoll] = useState(false); // poll-creation modal
   const [showLocation, setShowLocation] = useState(false); // location-share sheet
@@ -3808,6 +3812,30 @@ export function Thread({
     }
   }
 
+  // On-device messaging AI (T11.02) — gated by the AI settings + kill-switch.
+  const aiOn = services.aiFeaturesOn();
+  const lastReceived =
+    aiOn && draft.trim() === "" && !editing
+      ? [...messages].reverse().find((m) => !m.mine && !m.deleted && parseTextMessage(m.body).text.trim() !== "")
+      : undefined;
+  const replyChips = lastReceived ? smartReplies(parseTextMessage(lastReceived.body).text) : [];
+
+  function sendQuick(text: string): void {
+    services.sendTextWithUndo(conversationId, text); // send a smart-reply directly
+  }
+  function runSummary(): void {
+    const lines = messages
+      .filter((m) => !m.deleted)
+      .map((m) => {
+        const t = parseTextMessage(m.body).text;
+        if (!t) return "";
+        const speaker = m.mine ? "You" : services.peerNameOf(conversationId) || "Them";
+        return `${speaker}: ${t}`;
+      })
+      .filter(Boolean);
+    setSummary(lines.length >= 2 ? summarizeConversation(lines, 4) : "Not enough messages to summarize yet.");
+  }
+
   // Message-action handlers passed down to each bubble.
   const actions: MessageActions = {
     reply: (m) => {
@@ -3830,6 +3858,12 @@ export function Thread({
     },
     forward: (m) => setForwardMsg(m),
     report: (m) => setReportMsg(m),
+    readAloud: aiOn
+      ? (m) => {
+          const t = parseTextMessage(m.body).text;
+          if (t && "speechSynthesis" in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(t));
+        }
+      : undefined,
   };
 
   // Every image/video in the thread, so the lightbox can page across them.
@@ -3920,6 +3954,11 @@ export function Thread({
         <button className="wa-icon" title="Export chat" aria-label="Export chat" onClick={() => void exportChat()}>
           <Icon name="download" size={21} />
         </button>
+        {aiOn ? (
+          <button className="wa-icon" title="Summarize chat (on-device AI)" aria-label="Summarize chat" onClick={runSummary} style={{ fontSize: 18 }}>
+            ✨
+          </button>
+        ) : null}
       </div>
       {services.isLocked(conversationId) && !unlocked ? <LockGate onUnlock={() => setUnlocked(true)} /> : null}
       <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>
@@ -3957,6 +3996,16 @@ export function Thread({
       ) : null}
       {showSecret ? <SecretChatSheet conversationId={conversationId} onClose={() => setShowSecret(false)} /> : null}
       {reportMsg ? <ReportSheet conversationId={conversationId} onClose={() => setReportMsg(null)} /> : null}
+      {summary !== null ? (
+        <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={() => setSummary(null)}>
+          <div className="sheet" onClick={(e) => e.stopPropagation()}>
+            <strong>✨ Summary</strong>
+            <p style={{ fontSize: "0.9rem", lineHeight: 1.5 }}>{summary}</p>
+            <p className="muted" style={{ fontSize: "0.72rem" }}>Generated on your device — nothing was sent anywhere.</p>
+            <button className="btn" onClick={() => setSummary(null)}>Done</button>
+          </div>
+        </div>
+      ) : null}
       {forwardMsg ? (
         <ForwardPicker
           exclude={conversationId}
@@ -4088,6 +4137,15 @@ export function Thread({
               </div>
             </>
           ) : null}
+          {replyChips.length > 0 ? (
+            <div className="smart-replies" role="group" aria-label="Suggested replies">
+              {replyChips.map((r) => (
+                <button key={r} type="button" className="smart-reply" onClick={() => sendQuick(r)}>
+                  {r}
+                </button>
+              ))}
+            </div>
+          ) : null}
           <form className="composer" onSubmit={send}>
             <input ref={fileRef} type="file" hidden onChange={onPickFile} aria-hidden />
             <button className="wa-icon" type="button" aria-label="Emoji" title="Emoji" onClick={() => setPicker((p) => (p === "emoji" ? null : "emoji"))}>
@@ -4096,6 +4154,17 @@ export function Thread({
             <button className="wa-icon" type="button" aria-label="Attach" title="Attach" disabled={sendingMedia} onClick={() => setPicker((p) => (p === "tools" ? null : "tools"))}>
               {sendingMedia ? <span className="spinner tiny" /> : <Icon name="attach" size={23} />}
             </button>
+            {aiOn && draft.trim() !== "" && !editing ? (
+              <button
+                className="wa-icon"
+                type="button"
+                aria-label="Fix grammar"
+                title="Fix grammar (on-device AI)"
+                onClick={() => onDraftChange(correctGrammar(draft).text)}
+              >
+                ✨
+              </button>
+            ) : null}
             <input
               ref={composerRef}
               className="input"
@@ -4141,6 +4210,7 @@ interface MessageActions {
   react(m: ThreadMessage, emoji: string): void;
   forward(m: ThreadMessage): void;
   report?(m: ThreadMessage): void;
+  readAloud?(m: ThreadMessage): void;
 }
 
 const EDIT_WINDOW_MS = 15 * 60 * 1000; // FR-MSG-06
@@ -4226,6 +4296,7 @@ function MessageBubble({
           <button className="menu-item" onClick={run(actions.reply)}>↩ Reply</button>
           <button className="menu-item" onClick={run(actions.forward)}>↪ Forward</button>
           {text ? <button className="menu-item" onClick={run(actions.copy)}>⧉ Copy</button> : null}
+          {text && actions.readAloud ? <button className="menu-item" onClick={run(actions.readAloud)}>🔊 Read aloud</button> : null}
           <button className="menu-item" onClick={run(actions.toggleStar)}>{message.starred ? "☆ Unstar" : "⭐ Star"}</button>
           <button className="menu-item" onClick={run(actions.togglePin)}>{message.pinned ? "📌 Unpin" : "📌 Pin"}</button>
           {canEdit ? <button className="menu-item" onClick={run(actions.edit)}>✎ Edit</button> : null}

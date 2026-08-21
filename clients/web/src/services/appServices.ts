@@ -1322,6 +1322,16 @@ export class AppServices {
       // onDevice / server providers wire in with T11.02 (real models/endpoint).
     });
   }
+
+  /** aiFeaturesOn gates the on-device messaging-AI features (smart replies,
+   *  grammar, summarize, read-aloud) — they need AI enabled + consent, but not a
+   *  model provider (they're deterministic/browser-native). */
+  aiFeaturesOn(): boolean {
+    if (!this.aiConfig.enabled) return false;
+    const s = this.aiSettings;
+    if (s.mode === "off") return false;
+    return s.mode === "on-device" ? s.consent.onDevice : s.consent.server;
+  }
   /** nameForUser returns a cached human name for any user id, falling back to a
    *  short id when the profile hasn't been loaded yet. */
   nameForUser(userId: string): string {

@@ -1981,6 +1981,15 @@ body {
 .smart-reply:hover {
   background: var(--hover);
 }
+/* Topic tags in the AI summary sheet (T11.03). */
+.topic-tag {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
 
 /* Suspicious sign-in flag in the Security surface (T10.02). */
 .login-flag {

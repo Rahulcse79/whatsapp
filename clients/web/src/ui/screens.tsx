@@ -3,15 +3,17 @@ import {
   SNIPPET_CLOSE,
   SNIPPET_OPEN,
   correctGrammar,
+  detectToxicity,
   disclosureFor,
   extractHashtags,
   isValidPhone,
+  meetingSummary,
   smartReplies,
-  summarizeConversation,
   sweepExpired,
   type AiMode,
   type ChatSummary,
   type EphemeralMessage,
+  type MeetingSummary,
   type SearchHit,
   type ThreadMessage,
 } from "@wa/client-core";
@@ -3597,7 +3599,7 @@ export function Thread({
   const focusedRef = useRef<string | null>(null); // search jump-to-result (once per target)
   const [forwardMsg, setForwardMsg] = useState<ThreadMessage | null>(null); // message being forwarded
   const [reportMsg, setReportMsg] = useState<ThreadMessage | null>(null); // message being reported (T10.03)
-  const [summary, setSummary] = useState<string | null>(null); // AI conversation summary (T11.02)
+  const [summary, setSummary] = useState<MeetingSummary | null>(null); // AI conversation summary (T11.02/T11.03)
   const [picker, setPicker] = useState<"emoji" | "gif" | "sticker" | "tools" | null>(null); // composer picker
   const [showPoll, setShowPoll] = useState(false); // poll-creation modal
   const [showLocation, setShowLocation] = useState(false); // location-share sheet
@@ -3690,6 +3692,10 @@ export function Thread({
     e.preventDefault();
     const text = draft.trim();
     if (!text) return;
+    // On-device toxicity nudge (T11.03): warn before sending hostile wording.
+    if (services.aiFeaturesOn() && detectToxicity(text).level === "high") {
+      if (!window.confirm("This message may come across as offensive. Send anyway?")) return;
+    }
     setDraft("");
     services.setDraft(conversationId, ""); // clear the persisted draft
     lastTypingRef.current = 0;
@@ -3833,7 +3839,7 @@ export function Thread({
         return `${speaker}: ${t}`;
       })
       .filter(Boolean);
-    setSummary(lines.length >= 2 ? summarizeConversation(lines, 4) : "Not enough messages to summarize yet.");
+    setSummary(lines.length >= 2 ? meetingSummary(lines) : { summary: "Not enough messages to summarize yet.", actionItems: [], topics: [] });
   }
 
   // Message-action handlers passed down to each bubble.
@@ -4000,7 +4006,24 @@ export function Thread({
         <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={() => setSummary(null)}>
           <div className="sheet" onClick={(e) => e.stopPropagation()}>
             <strong>✨ Summary</strong>
-            <p style={{ fontSize: "0.9rem", lineHeight: 1.5 }}>{summary}</p>
+            <p style={{ fontSize: "0.9rem", lineHeight: 1.5 }}>{summary.summary}</p>
+            {summary.actionItems.length > 0 ? (
+              <>
+                <strong style={{ fontSize: "0.85rem" }}>Action items</strong>
+                <ul style={{ margin: "2px 0", paddingLeft: 18, fontSize: "0.82rem", lineHeight: 1.5 }}>
+                  {summary.actionItems.map((a, i) => (
+                    <li key={i}>{a}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+            {summary.topics.length > 0 ? (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {summary.topics.map((t) => (
+                  <span key={t} className="topic-tag">#{t}</span>
+                ))}
+              </div>
+            ) : null}
             <p className="muted" style={{ fontSize: "0.72rem" }}>Generated on your device — nothing was sent anywhere.</p>
             <button className="btn" onClick={() => setSummary(null)}>Done</button>
           </div>

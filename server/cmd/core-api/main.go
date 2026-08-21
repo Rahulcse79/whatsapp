@@ -55,6 +55,8 @@ import (
 	groupadapters "github.com/whatsapp-v2/server/internal/groups/adapters"
 	"github.com/whatsapp-v2/server/internal/keys"
 	keyadapters "github.com/whatsapp-v2/server/internal/keys/adapters"
+	"github.com/whatsapp-v2/server/internal/notifyprefs"
+	notifyprefsadapters "github.com/whatsapp-v2/server/internal/notifyprefs/adapters"
 	"github.com/whatsapp-v2/server/internal/platform/config"
 	"github.com/whatsapp-v2/server/internal/platform/flags"
 	"github.com/whatsapp-v2/server/internal/platform/logging"
@@ -315,6 +317,8 @@ func main() {
 	discoverySvc := discovery.NewService(discoveryadapters.NewBackend(pool), discoveryadapters.NewSource(pool), discoveryadapters.NoopIndexer{})
 	// Bot framework (T13.02): registry + HMAC-signed webhook delivery.
 	botsSvc := bots.NewService(botsadapters.NewStore(pool), botsadapters.NewHTTPDispatcher())
+	// Multi-channel notification preferences (T14.01): server-authoritative channels/quiet-hours/snooze/scheduled reminders.
+	notifyPrefsSvc := notifyprefs.NewService(notifyprefsadapters.NewStore(pool))
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -499,6 +503,7 @@ func main() {
 	whiteboard.Routes(mux, whiteboardSvc, issuer)   // /v1/conversations/{id}/board/ops: collaborative whiteboard CRDT (T12.02)
 	discovery.Routes(mux, discoverySvc, issuer)     // /v1/discover: public metadata search (channels/communities/usernames) (T13.01)
 	bots.Routes(mux, botsSvc, issuer)               // /v1/bots: bot framework — register + HMAC webhook (T13.02)
+	notifyprefs.Routes(mux, notifyPrefsSvc, issuer) // /v1/notifications: prefs, snooze, scheduled reminders (T14.01)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

@@ -312,6 +312,29 @@ export interface BotView {
   created_at_ms: number;
 }
 
+/** Server-authoritative notification preferences (T14.01): which channels may
+ *  fire, an optional quiet-hours window (minute-of-day, -1 = off), and
+ *  sound/vibrate. Applies across all of a user's devices. */
+export interface NotifPrefs {
+  push: boolean;
+  email: boolean;
+  sms: boolean;
+  desktop: boolean;
+  quiet_start_min: number; // -1 = off
+  quiet_end_min: number; // -1 = off
+  sound: boolean;
+  vibrate: boolean;
+}
+
+/** A scheduled reminder notification (content-free) the user set for themselves. */
+export interface ScheduledNotif {
+  id: string;
+  conversation_id?: string;
+  title: string;
+  due_at_ms: number;
+  fired: boolean;
+}
+
 /** A sticker within a pack (object_key is a public, non-E2EE asset). */
 export interface StickerItem {
   id: string;
@@ -386,6 +409,8 @@ export class AppServices {
   private globalMuted = false; // global mute (localStorage)
   private readonly notifLog: NotificationEntry[] = []; // recent in-app notifications (newest first)
   private readonly toastListeners = new Set<(n: NotificationEntry) => void>();
+  // Cached server-authoritative notification prefs (T14.01); defaults until loaded.
+  private notifPrefsCache: NotifPrefs = { push: true, email: false, sms: false, desktop: true, quiet_start_min: -1, quiet_end_min: -1, sound: true, vibrate: true };
   private readonly typingByConv = new Map<string, number>(); // conversationId → typing-expiry ts
   private readonly presenceByUser = new Map<string, { online: boolean; lastSeenMs: number }>();
   // ── chat conveniences (T5.15, client-local) ──
@@ -560,8 +585,9 @@ export class AppServices {
             };
             this.notifLog.unshift(entry);
             if (this.notifLog.length > 50) this.notifLog.pop();
-            if (!this.globalMuted && !this.mutedConvs.has(it.conversationId)) {
+            if (!this.globalMuted && !this.mutedConvs.has(it.conversationId) && !this.inQuietHours()) {
               for (const cb of this.toastListeners) cb(entry);
+              this.alertCues(); // sound/vibrate per the user's prefs (T14.01)
             }
           }
           this.maybeAutoReply(b.items); // T6.04 away auto-responder
@@ -1898,6 +1924,120 @@ export class AppServices {
       /* ignore */
     }
     this.notifyChange();
+  }
+
+  // ── multi-channel notification prefs (T14.01) ─────────────────────────────
+
+  /** notifPrefs returns the cached server-authoritative preferences. */
+  notifPrefs(): NotifPrefs {
+    return this.notifPrefsCache;
+  }
+
+  /** loadNotifPrefs fetches the server prefs into the cache (call on Settings open). */
+  async loadNotifPrefs(): Promise<NotifPrefs> {
+    const res = await this.authedRequest("GET", "/v1/notifications/prefs");
+    if (res.ok) this.notifPrefsCache = (await res.json()) as NotifPrefs;
+    return this.notifPrefsCache;
+  }
+
+  /** saveNotifPrefs persists preferences (channels / quiet hours / sound / vibrate). */
+  async saveNotifPrefs(prefs: NotifPrefs): Promise<void> {
+    const res = await this.authedRequest("PUT", "/v1/notifications/prefs", prefs);
+    if (!res.ok) throw new Error("Couldn't save notification settings.");
+    this.notifPrefsCache = prefs;
+    this.notifyChange();
+  }
+
+  /** snoozeConversation mutes a conversation server-side until untilMs (syncs
+   *  across devices); also updates the local mute so the UI reacts immediately. */
+  async snoozeConversation(conversationId: string, untilMs: number): Promise<void> {
+    this.mutedConvs.add(conversationId);
+    try {
+      localStorage.setItem("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
+    } catch {
+      /* ignore */
+    }
+    this.notifyChange();
+    const res = await this.authedRequest("PUT", `/v1/conversations/${encodeURIComponent(conversationId)}/snooze`, { until_ms: untilMs });
+    if (!res.ok) throw new Error("Couldn't snooze the conversation.");
+  }
+
+  /** clearConversationSnooze un-snoozes a conversation on the server + locally. */
+  async clearConversationSnooze(conversationId: string): Promise<void> {
+    this.mutedConvs.delete(conversationId);
+    try {
+      localStorage.setItem("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
+    } catch {
+      /* ignore */
+    }
+    this.notifyChange();
+    await this.authedRequest("DELETE", `/v1/conversations/${encodeURIComponent(conversationId)}/snooze`);
+  }
+
+  /** scheduledNotifications lists the caller's reminders (soonest-due first). */
+  async scheduledNotifications(): Promise<ScheduledNotif[]> {
+    const res = await this.authedRequest("GET", "/v1/notifications/scheduled");
+    if (!res.ok) throw new Error("Couldn't load scheduled reminders.");
+    const b = (await res.json()) as { scheduled: ScheduledNotif[] | null };
+    return b.scheduled ?? [];
+  }
+
+  /** scheduleNotification creates a content-free reminder at dueAtMs. */
+  async scheduleNotification(title: string, dueAtMs: number, conversationId?: string): Promise<ScheduledNotif> {
+    return (await this.authedJson("/v1/notifications/scheduled", {
+      title,
+      due_at_ms: dueAtMs,
+      conversation_id: conversationId ?? "",
+    })) as ScheduledNotif;
+  }
+
+  /** cancelScheduledNotification deletes a reminder. */
+  async cancelScheduledNotification(id: string): Promise<void> {
+    const res = await this.authedRequest("DELETE", `/v1/notifications/scheduled/${encodeURIComponent(id)}`);
+    if (!res.ok) throw new Error("Couldn't cancel the reminder.");
+  }
+
+  /** inQuietHours reports whether the user's local time is inside their quiet-hours
+   *  window (honours a window that wraps past midnight). */
+  private inQuietHours(): boolean {
+    const p = this.notifPrefsCache;
+    if (p.quiet_start_min < 0 || p.quiet_end_min < 0) return false;
+    const now = new Date();
+    const min = now.getHours() * 60 + now.getMinutes();
+    const s = p.quiet_start_min;
+    const e = p.quiet_end_min;
+    if (s === e) return true; // all-day quiet
+    return s < e ? min >= s && min < e : min >= s || min < e;
+  }
+
+  /** alertCues plays a short sound and/or vibrates per the user's prefs. Best-
+   *  effort: silently no-ops where the browser blocks autoplay/vibration. */
+  private alertCues(): void {
+    const p = this.notifPrefsCache;
+    if (p.vibrate && typeof navigator !== "undefined" && "vibrate" in navigator) {
+      try {
+        navigator.vibrate(80);
+      } catch {
+        /* ignore */
+      }
+    }
+    if (p.sound) {
+      try {
+        const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+        if (!Ctx) return;
+        const ac = new Ctx();
+        const osc = ac.createOscillator();
+        const gain = ac.createGain();
+        osc.frequency.value = 880;
+        gain.gain.value = 0.05;
+        osc.connect(gain).connect(ac.destination);
+        osc.start();
+        osc.stop(ac.currentTime + 0.12);
+        osc.onended = () => void ac.close();
+      } catch {
+        /* ignore */
+      }
+    }
   }
 
   // ── chat conveniences (T5.15) ─────────────────────────────────────────────

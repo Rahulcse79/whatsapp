@@ -56,7 +56,7 @@ import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
 import { Icon } from "./icons";
-import type { BotView, CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CollabActivity, CollabComment, CollabNote, CollabRevision, CollabTask, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, DiscoverResult, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { BotView, CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CollabActivity, CollabComment, CollabNote, CollabRevision, CollabTask, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, DiscoverResult, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotifPrefs, NotificationEntry, ScheduledNotif, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -2093,6 +2093,155 @@ function BotsSection() {
   );
 }
 
+/** minToHHMM/hhmmToMin convert a minute-of-day to/from an <input type="time">. */
+function minToHHMM(min: number): string {
+  if (min < 0) return "22:00";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+function hhmmToMin(v: string): number {
+  const parts = v.split(":");
+  const h = parseInt(parts[0] ?? "", 10);
+  const m = parseInt(parts[1] ?? "", 10);
+  if (Number.isNaN(h) || Number.isNaN(m)) return 0;
+  return h * 60 + m;
+}
+
+/** NotificationsSection is the T14.01 multi-channel surface: extra delivery
+ *  channels (email/SMS content-free nudges, desktop), quiet hours, sound/vibrate,
+ *  and scheduled reminders. Server-authoritative, so it applies across devices. */
+function NotificationsSection() {
+  const { services } = useServices();
+  const [prefs, setPrefs] = useState<NotifPrefs>(() => services.notifPrefs());
+  const [quietOn, setQuietOn] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [scheduled, setScheduled] = useState<ScheduledNotif[]>([]);
+  const [title, setTitle] = useState("");
+  const [due, setDue] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  const loadScheduled = useCallback(() => {
+    void services.scheduledNotifications().then(setScheduled).catch(() => {});
+  }, [services]);
+  useEffect(() => {
+    void services.loadNotifPrefs().then((p) => {
+      setPrefs(p);
+      setQuietOn(p.quiet_start_min >= 0 && p.quiet_end_min >= 0);
+    });
+    loadScheduled();
+  }, [services, loadScheduled]);
+
+  const set = <K extends keyof NotifPrefs>(k: K, v: NotifPrefs[K]): void => {
+    setPrefs((p) => ({ ...p, [k]: v }));
+    setSaved(false);
+  };
+
+  async function save(): Promise<void> {
+    const next: NotifPrefs = quietOn
+      ? prefs
+      : { ...prefs, quiet_start_min: -1, quiet_end_min: -1 };
+    try {
+      await services.saveNotifPrefs(next);
+      setPrefs(next);
+      setSaved(true);
+    } catch (e) {
+      window.alert(messageOf(e));
+    }
+  }
+
+  async function addReminder(): Promise<void> {
+    setErr(null);
+    const ms = new Date(due).getTime();
+    if (!title.trim() || Number.isNaN(ms) || ms <= Date.now()) {
+      setErr("Enter a title and a future date/time.");
+      return;
+    }
+    try {
+      await services.scheduleNotification(title.trim(), ms);
+      setTitle("");
+      setDue("");
+      loadScheduled();
+    } catch (e) {
+      setErr(messageOf(e));
+    }
+  }
+
+  const channel = (key: "email" | "sms" | "desktop", label: string, hint: string): ReactNode => (
+    <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.4rem" }}>
+      <input type="checkbox" checked={prefs[key]} onChange={(e) => set(key, e.target.checked)} />
+      <span>
+        {label}
+        <br />
+        <span className="muted" style={{ fontSize: "0.72rem" }}>{hint}</span>
+      </span>
+    </label>
+  );
+
+  return (
+    <>
+      <h2 style={{ marginTop: "1.5rem" }}>Notification channels</h2>
+      <p className="muted" style={{ fontSize: "0.8rem" }}>
+        Extra ways to be alerted when you're away. Email and SMS are content-free nudges — they only
+        say you have new activity, never the message itself.
+      </p>
+      {channel("desktop", "Desktop notifications", "Browser notifications while a client is open.")}
+      {channel("email", "Email nudge", "A generic email when you have unread activity (requires a configured mail relay).")}
+      {channel("sms", "SMS nudge", "A last-resort text when you have unread activity (requires a configured SMS gateway).")}
+
+      <h3 style={{ marginTop: "1rem" }}>Quiet hours</h3>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+        <input type="checkbox" checked={quietOn} onChange={(e) => { setQuietOn(e.target.checked); setSaved(false); }} />
+        <span>Silence alerts during a daily window (calls still ring)</span>
+      </label>
+      {quietOn ? (
+        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
+          <label style={{ fontSize: "0.85rem" }}>From <input className="input" type="time" value={minToHHMM(prefs.quiet_start_min < 0 ? 1320 : prefs.quiet_start_min)} onChange={(e) => set("quiet_start_min", hhmmToMin(e.target.value))} /></label>
+          <label style={{ fontSize: "0.85rem" }}>to <input className="input" type="time" value={minToHHMM(prefs.quiet_end_min < 0 ? 420 : prefs.quiet_end_min)} onChange={(e) => set("quiet_end_min", hhmmToMin(e.target.value))} /></label>
+        </div>
+      ) : null}
+
+      <h3 style={{ marginTop: "1rem" }}>Sound &amp; vibration</h3>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+        <input type="checkbox" checked={prefs.sound} onChange={(e) => set("sound", e.target.checked)} />
+        <span>Play a sound for new messages</span>
+      </label>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.4rem" }}>
+        <input type="checkbox" checked={prefs.vibrate} onChange={(e) => set("vibrate", e.target.checked)} />
+        <span>Vibrate (where supported)</span>
+      </label>
+
+      <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
+        <button className="btn" onClick={() => void save()}>Save notification settings</button>
+        {saved ? <span className="muted" style={{ fontSize: "0.8rem" }}>✓ Saved</span> : null}
+      </div>
+
+      <h3 style={{ marginTop: "1.25rem" }}>Scheduled reminders</h3>
+      <p className="muted" style={{ fontSize: "0.8rem" }}>Get a content-free nudge to yourself at a set time.</p>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+        <input className="input" placeholder="Reminder title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} style={{ maxWidth: 220 }} />
+        <input className="input" type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} />
+        <button className="btn small" onClick={() => void addReminder()}>Add</button>
+      </div>
+      {err ? <span className="muted" style={{ color: "var(--danger, #c0392b)", fontSize: "0.8rem" }}>{err}</span> : null}
+      {scheduled.length > 0 ? (
+        <ul className="list">
+          {scheduled.map((n) => (
+            <li key={n.id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
+              <span style={{ flex: 1 }}>
+                {n.title}
+                <br />
+                <span className="muted" style={{ fontSize: "0.72rem" }}>{new Date(n.due_at_ms).toLocaleString()}{n.fired ? " · fired" : ""}</span>
+              </span>
+              <button className="btn small ghost danger" onClick={() => void services.cancelScheduledNotification(n.id).then(loadScheduled).catch((e) => window.alert(messageOf(e)))}>Cancel</button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
+  );
+}
+
 export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSignedOut: () => void }) {
   const { services } = useServices();
   const [devices, setDevices] = useState<LinkedDevice[]>([]);
@@ -2293,6 +2442,8 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
           </button>
         </>
       )}
+
+      <NotificationsSection />
 
       <h2 style={{ marginTop: "1.5rem" }}>Saved replies</h2>
       <p className="muted" style={{ fontSize: "0.85rem" }}>Reusable messages you can insert from a chat's 📋 button.</p>

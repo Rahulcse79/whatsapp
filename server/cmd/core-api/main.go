@@ -35,6 +35,8 @@ import (
 	channelsadapters "github.com/whatsapp-v2/server/internal/channels/adapters"
 	"github.com/whatsapp-v2/server/internal/chat"
 	chatadapters "github.com/whatsapp-v2/server/internal/chat/adapters"
+	"github.com/whatsapp-v2/server/internal/collab"
+	collabadapters "github.com/whatsapp-v2/server/internal/collab/adapters"
 	"github.com/whatsapp-v2/server/internal/communities"
 	communitiesadapters "github.com/whatsapp-v2/server/internal/communities/adapters"
 	"github.com/whatsapp-v2/server/internal/contacts"
@@ -296,6 +298,10 @@ func main() {
 	// rate-limited. Spam/phishing detection is on-device (E2EE); block lives in the
 	// profile context.
 	abuseSvc := abuse.NewService(abuseadapters.NewStore(pool), limiter)
+	// Collaboration (T12.01): shared notes (versioned + history), task lists,
+	// comments, approvals, and an activity timeline — gated on conversation
+	// membership.
+	collabSvc := collab.NewService(collabadapters.NewStore(pool))
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -476,6 +482,7 @@ func main() {
 	deviceauth.Routes(mux, deviceAuthSvc, issuer)   // /v1/auth/passkeys + /v1/auth/logins: WebAuthn 2FA + login audit (T10.02)
 	abuse.Routes(mux, abuseSvc, issuer)             // /v1/reports: file trust-and-safety reports into the admin queue (T10.03)
 	ai.Routes(mux, aiSvc, issuer)                   // /v1/ai/config: on-device AI runtime kill-switch (T11.01)
+	collab.Routes(mux, collabSvc, issuer)           // /v1/conversations/{id}/{notes,tasks,activity} + /v1/notes/*: shared notes/tasks (T12.01)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {

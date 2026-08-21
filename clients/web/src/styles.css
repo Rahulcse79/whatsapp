@@ -1981,6 +1981,61 @@ body {
 .smart-reply:hover {
   background: var(--hover);
 }
+/* ── Collaboration: shared notes & tasks (T12.01) ─────────────────────────── */
+.collab-tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+.collab-tab {
+  flex: 1;
+  padding: 12px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+}
+.collab-tab.on {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.collab-badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.collab-pending {
+  background: color-mix(in srgb, #f2994a 18%, transparent);
+  color: #f2994a;
+}
+.collab-approved {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+.collab-rejected {
+  background: color-mix(in srgb, #e5484d 16%, transparent);
+  color: #e5484d;
+}
+.collab-editor {
+  width: min(560px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+}
+.collab-revs,
+.collab-comments {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+}
+
 /* Topic tags in the AI summary sheet (T11.03). */
 .topic-tag {
   background: color-mix(in srgb, var(--accent) 14%, transparent);

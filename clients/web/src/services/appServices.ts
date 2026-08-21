@@ -56,6 +56,44 @@ export interface LoginInfo {
   suspicious: boolean;
 }
 
+// ── Collaboration DTOs (T12.01) ──
+export interface CollabNote {
+  id: string;
+  title: string;
+  body: string;
+  version: number;
+  approval: string;
+  approver?: string;
+  updated_by: string;
+  updated_at_ms: number;
+}
+export interface CollabTask {
+  id: string;
+  title: string;
+  done: boolean;
+  assignee?: string;
+  created_at_ms: number;
+}
+export interface CollabComment {
+  id: string;
+  author: string;
+  body: string;
+  created_at_ms: number;
+}
+export interface CollabRevision {
+  version: number;
+  title: string;
+  body: string;
+  author: string;
+  created_at_ms: number;
+}
+export interface CollabActivity {
+  actor: string;
+  kind: string;
+  summary: string;
+  at_ms: number;
+}
+
 /** MyProfile is the self view — the public fields plus per-field privacy. */
 export interface MyProfile extends PublicProfile {
   privacy: Record<string, string>;
@@ -1331,6 +1369,63 @@ export class AppServices {
     const s = this.aiSettings;
     if (s.mode === "off") return false;
     return s.mode === "on-device" ? s.consent.onDevice : s.consent.server;
+  }
+
+  // ── Collaboration: shared notes + tasks (T12.01) ────────────────────────────
+
+  private async collabJSON<T>(method: string, path: string, body?: unknown): Promise<T> {
+    const res = await this.authedRequest(method, path, body);
+    if (res.status === 409) throw new Error("This was changed by someone else — reload and try again.");
+    if (!res.ok) throw new Error(`Request failed (HTTP ${res.status}).`);
+    return (await res.json()) as T;
+  }
+  private async collabVoid(method: string, path: string, body?: unknown): Promise<void> {
+    const res = await this.authedRequest(method, path, body);
+    if (res.status === 409) throw new Error("This was changed by someone else — reload and try again.");
+    if (!res.ok) throw new Error(`Request failed (HTTP ${res.status}).`);
+  }
+  private cid(conversationId: string): string {
+    return encodeURIComponent(conversationId);
+  }
+
+  async collabNotes(conversationId: string): Promise<CollabNote[]> {
+    return (await this.collabJSON<{ notes: CollabNote[] }>("GET", `/v1/conversations/${this.cid(conversationId)}/notes`)).notes ?? [];
+  }
+  async createNote(conversationId: string, title: string, body: string): Promise<CollabNote> {
+    return this.collabJSON<CollabNote>("POST", `/v1/conversations/${this.cid(conversationId)}/notes`, { title, body });
+  }
+  async updateNote(noteId: string, title: string, body: string, baseVersion: number): Promise<CollabNote> {
+    return this.collabJSON<CollabNote>("PUT", `/v1/notes/${encodeURIComponent(noteId)}`, { title, body, base_version: baseVersion });
+  }
+  async noteRevisions(noteId: string): Promise<CollabRevision[]> {
+    return (await this.collabJSON<{ revisions: CollabRevision[] }>("GET", `/v1/notes/${encodeURIComponent(noteId)}/revisions`)).revisions ?? [];
+  }
+  async requestApproval(noteId: string): Promise<void> {
+    await this.collabVoid("POST", `/v1/notes/${encodeURIComponent(noteId)}/approval/request`);
+  }
+  async decideApproval(noteId: string, approve: boolean): Promise<void> {
+    await this.collabVoid("POST", `/v1/notes/${encodeURIComponent(noteId)}/approval/decide`, { approve });
+  }
+  async noteComments(noteId: string): Promise<CollabComment[]> {
+    return (await this.collabJSON<{ comments: CollabComment[] }>("GET", `/v1/notes/${encodeURIComponent(noteId)}/comments`)).comments ?? [];
+  }
+  async addNoteComment(noteId: string, body: string): Promise<CollabComment> {
+    return this.collabJSON<CollabComment>("POST", `/v1/notes/${encodeURIComponent(noteId)}/comments`, { body });
+  }
+  async collabTasks(conversationId: string): Promise<CollabTask[]> {
+    return (await this.collabJSON<{ tasks: CollabTask[] }>("GET", `/v1/conversations/${this.cid(conversationId)}/tasks`)).tasks ?? [];
+  }
+  async createTask(conversationId: string, title: string): Promise<CollabTask> {
+    return this.collabJSON<CollabTask>("POST", `/v1/conversations/${this.cid(conversationId)}/tasks`, { title });
+  }
+  async toggleTask(conversationId: string, taskId: string, done: boolean): Promise<void> {
+    await this.collabVoid("POST", `/v1/conversations/${this.cid(conversationId)}/tasks/${encodeURIComponent(taskId)}/done`, { done });
+  }
+  async deleteCollabTask(conversationId: string, taskId: string): Promise<void> {
+    await this.collabVoid("DELETE", `/v1/conversations/${this.cid(conversationId)}/tasks/${encodeURIComponent(taskId)}`);
+  }
+  async collabActivity(conversationId: string): Promise<CollabActivity[]> {
+    return (await this.collabJSON<{ activity: CollabActivity[] }>("GET", `/v1/conversations/${this.cid(conversationId)}/activity`)).activity ?? [];
   }
   /** nameForUser returns a cached human name for any user id, falling back to a
    *  short id when the profile hasn't been loaded yet. */

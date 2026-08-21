@@ -3,7 +3,7 @@ import { CallOverlay } from "./call/CallOverlay";
 import { CallProvider } from "./call/CallContext";
 import type { NotificationEntry } from "./services/appServices";
 import { MediaProvider } from "./ui/media/MediaContext";
-import { Avatar, CallHistory, ChannelScreen, Channels, ChatList, Communities, CommunityScreen, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
+import { Avatar, CallHistory, ChannelScreen, Channels, ChatList, CollabScreen, Communities, CommunityScreen, Contacts, CreateGroup, GroupInfoScreen, Login, NewChat, Profile, Search, Settings, Status, Thread, Verify } from "./ui/screens";
 import { Icon, type IconName } from "./ui/icons";
 import { ServicesProvider, useServices } from "./ui/ServicesContext";
 
@@ -55,6 +55,7 @@ type Nav =
   | { name: "channel"; channelId: string }
   | { name: "communities" }
   | { name: "community"; communityId: string }
+  | { name: "collab"; conversationId: string }
   | { name: "thread"; conversationId: string; focusMsgUuid?: string };
 
 /** NavRail is WhatsApp Web's far-left icon column: sections at the top, settings
@@ -100,7 +101,7 @@ function NavRail({ active, go }: { active: string; go: (n: Nav) => void }) {
 /** railSectionOf maps a nav state to the rail section it belongs to, so the rail
  *  highlights correctly even for sub-screens (a thread lives under Chats). */
 function railSectionOf(name: Nav["name"]): string {
-  if (["chats", "thread", "newChat", "createGroup", "groupInfo", "contacts", "search"].includes(name)) return "chats";
+  if (["chats", "thread", "newChat", "createGroup", "groupInfo", "contacts", "search", "collab"].includes(name)) return "chats";
   if (name === "status") return "updates";
   if (name === "channels" || name === "channel") return "channels";
   if (name === "communities" || name === "community") return "communities";
@@ -145,6 +146,8 @@ function Router() {
   // Authed: a persistent chat list on the left, the active screen on the right.
   const detail = ((): JSX.Element => {
     switch (nav.name) {
+      case "collab":
+        return <CollabScreen conversationId={nav.conversationId} onBack={() => setNav({ name: "thread", conversationId: nav.conversationId })} />;
       case "thread":
         return (
           <Thread
@@ -152,6 +155,7 @@ function Router() {
             focusMsgUuid={nav.focusMsgUuid}
             onBack={() => setNav({ name: "chats" })}
             onGroupInfo={(conversationId) => setNav({ name: "groupInfo", conversationId })}
+            onCollab={(conversationId) => setNav({ name: "collab", conversationId })}
             onSearchInChat={(conversationId) =>
               setNav({
                 name: "search",

@@ -46,7 +46,7 @@ import { Gallery } from "./media/Gallery";
 import { MediaMessage } from "./media/MediaMessage";
 import { useServices } from "./ServicesContext";
 import { Icon } from "./icons";
-import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
+import type { CallHistoryItem, ChannelInfo, ChannelInsights, ChannelPost, CollabActivity, CollabComment, CollabNote, CollabRevision, CollabTask, CommunityEvent, CommunityInfo, CommunityMember, CommunitySummary, GroupInfo, GroupMember, Invite, LinkedDevice, LoginInfo, MatchedContact, NotificationEntry, PasskeyInfo, PollResults, StoryFeedItem, StoryViewer, UserRef } from "../services/appServices";
 
 /** onActivate makes a non-<button> clickable element keyboard-operable — Enter or
  *  Space fires it, matching native button behaviour (a11y: interactive controls
@@ -3568,17 +3568,235 @@ function TemplatePicker({ onPick, onClose }: { onPick: (text: string) => void; o
   );
 }
 
+/** CollabScreen (T12.01): a conversation's shared Notes & Tasks workspace, with
+ *  an activity timeline. Notes edit under optimistic version concurrency. */
+export function CollabScreen({ conversationId, onBack }: { conversationId: string; onBack: () => void }) {
+  const { services } = useServices();
+  const [tab, setTab] = useState<"tasks" | "notes" | "activity">("tasks");
+  const [tasks, setTasks] = useState<CollabTask[]>([]);
+  const [notes, setNotes] = useState<CollabNote[]>([]);
+  const [activity, setActivity] = useState<CollabActivity[]>([]);
+  const [newTask, setNewTask] = useState("");
+  const [editing, setEditing] = useState<CollabNote | "new" | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+
+  const reload = useCallback(() => {
+    void services.collabTasks(conversationId).then(setTasks).catch(() => {});
+    void services.collabNotes(conversationId).then(setNotes).catch(() => {});
+    void services.collabActivity(conversationId).then(setActivity).catch(() => {});
+  }, [services, conversationId]);
+  useEffect(() => {
+    reload();
+  }, [reload]);
+
+  const name = (id: string): string => services.nameForUser(id);
+  async function addTask(): Promise<void> {
+    const t = newTask.trim();
+    if (!t) return;
+    try {
+      await services.createTask(conversationId, t);
+      setNewTask("");
+      reload();
+    } catch (e) {
+      setErr(messageOf(e));
+    }
+  }
+
+  return (
+    <div className="pane">
+      <div className="pane-head">
+        <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
+          <Icon name="back" size={24} />
+        </button>
+        <span className="pane-head-title">Notes &amp; Tasks</span>
+      </div>
+      <div className="collab-tabs">
+        {(["tasks", "notes", "activity"] as const).map((t) => (
+          <button key={t} className={`collab-tab${tab === t ? " on" : ""}`} onClick={() => setTab(t)}>
+            {t[0]!.toUpperCase() + t.slice(1)}
+          </button>
+        ))}
+      </div>
+      {err ? <p className="error" style={{ padding: "0 16px" }}>{err}</p> : null}
+      {tab === "tasks" ? (
+        <>
+          <div style={{ display: "flex", gap: 8, padding: "10px 14px" }}>
+            <input className="input" value={newTask} placeholder="Add a task…" onChange={(e) => setNewTask(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void addTask()} />
+            <button className="btn" onClick={() => void addTask()}>Add</button>
+          </div>
+          <ul className="list">
+            {tasks.map((t) => (
+              <li key={t.id} className="row" style={{ cursor: "default" }}>
+                <input type="checkbox" checked={t.done} onChange={() => void services.toggleTask(conversationId, t.id, !t.done).then(reload)} style={{ width: 20, height: 20 }} />
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title" style={{ textDecoration: t.done ? "line-through" : "none", opacity: t.done ? 0.6 : 1 }}>{t.title}</span>
+                  </div>
+                </div>
+                <button className="wa-icon" title="Delete task" aria-label="Delete task" onClick={() => void services.deleteCollabTask(conversationId, t.id).then(reload)}>
+                  <Icon name="trash" size={18} />
+                </button>
+              </li>
+            ))}
+            {tasks.length === 0 ? <li className="status-empty">No tasks yet.</li> : null}
+          </ul>
+        </>
+      ) : tab === "notes" ? (
+        <>
+          <div style={{ padding: "10px 14px" }}>
+            <button className="btn small" onClick={() => setEditing("new")}>＋ New note</button>
+          </div>
+          <ul className="list">
+            {notes.map((n) => (
+              <li key={n.id} className="row" role="button" tabIndex={0} onClick={() => setEditing(n)} onKeyDown={onActivate(() => setEditing(n))}>
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title">{n.title}</span>
+                    {n.approval !== "none" ? <span className={`collab-badge collab-${n.approval}`}>{n.approval}</span> : null}
+                  </div>
+                  <div className="row-line2">
+                    <span className="row-sub">v{n.version} · {name(n.updated_by)}</span>
+                  </div>
+                </div>
+              </li>
+            ))}
+            {notes.length === 0 ? <li className="status-empty">No notes yet.</li> : null}
+          </ul>
+        </>
+      ) : (
+        <ul className="list">
+          {activity.map((a, i) => (
+            <li key={i} className="row" style={{ cursor: "default" }}>
+              <div className="row-main">
+                <div className="row-line1">
+                  <span className="row-title" style={{ fontWeight: 400, fontSize: 14 }}>{name(a.actor)} {a.summary}</span>
+                </div>
+                <div className="row-line2">
+                  <span className="row-sub">{formatLastSeen(a.at_ms)}</span>
+                </div>
+              </div>
+            </li>
+          ))}
+          {activity.length === 0 ? <li className="status-empty">No activity yet.</li> : null}
+        </ul>
+      )}
+      {editing ? <NoteEditor conversationId={conversationId} note={editing === "new" ? null : editing} onClose={() => { setEditing(null); reload(); }} /> : null}
+    </div>
+  );
+}
+
+/** NoteEditor edits a shared note under optimistic version concurrency, with an
+ *  approval workflow, comments, and revision history. */
+function NoteEditor({ conversationId, note, onClose }: { conversationId: string; note: CollabNote | null; onClose: () => void }) {
+  const { services } = useServices();
+  const [title, setTitle] = useState(note?.title ?? "");
+  const [body, setBody] = useState(note?.body ?? "");
+  const [cur, setCur] = useState<CollabNote | null>(note);
+  const [comments, setComments] = useState<CollabComment[]>([]);
+  const [comment, setComment] = useState("");
+  const [revs, setRevs] = useState<CollabRevision[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const name = (id: string): string => services.nameForUser(id);
+
+  useEffect(() => {
+    if (cur) void services.noteComments(cur.id).then(setComments).catch(() => {});
+  }, [services, cur]);
+
+  async function save(): Promise<void> {
+    setErr(null);
+    setBusy(true);
+    try {
+      setCur(cur ? await services.updateNote(cur.id, title, body, cur.version) : await services.createNote(conversationId, title, body));
+    } catch (e) {
+      setErr(messageOf(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function addComment(): Promise<void> {
+    if (!cur || comment.trim() === "") return;
+    try {
+      await services.addNoteComment(cur.id, comment.trim());
+      setComment("");
+      setComments(await services.noteComments(cur.id));
+    } catch (e) {
+      setErr(messageOf(e));
+    }
+  }
+  async function approval(action: "request" | "approve" | "reject"): Promise<void> {
+    if (!cur) return;
+    try {
+      if (action === "request") await services.requestApproval(cur.id);
+      else await services.decideApproval(cur.id, action === "approve");
+      const all = await services.collabNotes(conversationId);
+      setCur(all.find((x) => x.id === cur.id) ?? cur);
+    } catch (e) {
+      setErr(messageOf(e));
+    }
+  }
+
+  return (
+    <div className="sheet-backdrop" role="dialog" aria-modal="true" onClick={onClose}>
+      <div className="sheet collab-editor" onClick={(e) => e.stopPropagation()}>
+        <input className="input" value={title} placeholder="Note title" onChange={(e) => setTitle(e.target.value)} maxLength={200} />
+        <textarea className="input" rows={6} value={body} placeholder="Write…" onChange={(e) => setBody(e.target.value)} />
+        {err ? <p className="error">{err}</p> : null}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn" onClick={() => void save()} disabled={busy}>{busy ? "Saving…" : cur ? `Save (v${cur.version})` : "Create"}</button>
+          {cur ? <span className="row-sub">v{cur.version} · {cur.approval}</span> : null}
+        </div>
+        {cur ? (
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {cur.approval === "none" || cur.approval === "rejected" ? <button className="btn small ghost" onClick={() => void approval("request")}>Request approval</button> : null}
+            {cur.approval === "pending" ? (
+              <>
+                <button className="btn small" onClick={() => void approval("approve")}>Approve</button>
+                <button className="btn small ghost" onClick={() => void approval("reject")}>Reject</button>
+              </>
+            ) : null}
+            <button className="btn small ghost" onClick={() => void services.noteRevisions(cur.id).then(setRevs)}>History</button>
+          </div>
+        ) : null}
+        {revs ? (
+          <div className="collab-revs">
+            <strong style={{ fontSize: "0.8rem" }}>Version history</strong>
+            {revs.map((r) => (
+              <div key={r.version} className="row-sub">v{r.version} · {name(r.author)} · {formatLastSeen(r.created_at_ms)}</div>
+            ))}
+          </div>
+        ) : null}
+        {cur ? (
+          <div className="collab-comments">
+            <strong style={{ fontSize: "0.8rem" }}>Comments</strong>
+            {comments.map((c) => (
+              <div key={c.id} className="row-sub"><b>{name(c.author)}:</b> {c.body}</div>
+            ))}
+            <div style={{ display: "flex", gap: 8 }}>
+              <input className="input" value={comment} placeholder="Add a comment…" onChange={(e) => setComment(e.target.value)} onKeyDown={(e) => e.key === "Enter" && void addComment()} />
+              <button className="btn small" onClick={() => void addComment()}>Send</button>
+            </div>
+          </div>
+        ) : null}
+        <button className="btn ghost" onClick={onClose}>Done</button>
+      </div>
+    </div>
+  );
+}
+
 export function Thread({
   conversationId,
   onBack,
   onGroupInfo,
   onSearchInChat,
+  onCollab,
   focusMsgUuid,
 }: {
   conversationId: string;
   onBack: () => void;
   onGroupInfo: (id: string) => void;
   onSearchInChat?: (id: string) => void;
+  onCollab?: (id: string) => void;
   focusMsgUuid?: string;
 }) {
   const { services } = useServices();
@@ -3960,6 +4178,11 @@ export function Thread({
         <button className="wa-icon" title="Export chat" aria-label="Export chat" onClick={() => void exportChat()}>
           <Icon name="download" size={21} />
         </button>
+        {onCollab ? (
+          <button className="wa-icon" title="Notes & tasks" aria-label="Notes and tasks" onClick={() => onCollab(conversationId)}>
+            <Icon name="copy" size={20} />
+          </button>
+        ) : null}
         {aiOn ? (
           <button className="wa-icon" title="Summarize chat (on-device AI)" aria-label="Summarize chat" onClick={runSummary} style={{ fontSize: 18 }}>
             ✨

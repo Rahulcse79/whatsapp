@@ -688,34 +688,44 @@ export function CallHistory({ onBack }: { onBack: () => void }) {
   }, [services]);
 
   return (
-    <div className="pane">
-      <div className="pane-head">
-        <button className="btn small ghost" onClick={onBack}>
-          ‹ Back
-        </button>
-        <span>Calls</span>
-        <span />
-      </div>
-      <div className="messages">
-        {error ? <p className="muted center">{error}</p> : null}
-        {!error && calls.length === 0 ? <p className="muted center">No calls yet.</p> : null}
-        {calls.map((c) => (
-          <div
-            key={c.id}
-            style={{ display: "flex", alignItems: "center", gap: 8, padding: "10px 14px", borderBottom: "1px solid var(--border, #eee)" }}
-          >
-            <span aria-hidden>{c.kind === 2 ? "📹" : "📞"}</span>
-            <span className="mono" style={{ flex: 1 }}>
-              {(c.participants[0] ?? c.initiator).slice(0, 12)}
-            </span>
-            <span style={{ opacity: 0.7, fontSize: "0.78rem" }}>
-              {c.outcome}
-              {c.startedAt ? ` · ${new Date(c.startedAt).toLocaleString()}` : ""}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <Screen title="Calls" subtitle="Call metadata only — never content" onBack={onBack}>
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
+      {!error && calls.length === 0 ? (
+        <Section flush>
+          <EmptyState
+            icon={<Icon name="phone" size={26} />}
+            title="No calls yet"
+            text="Start a voice or video call from any chat and it will appear here."
+          />
+        </Section>
+      ) : null}
+      {calls.length > 0 ? (
+        <Section flush>
+          <ul className="list">
+            {calls.map((c) => (
+              <li key={c.id} className="row static">
+                <span className={`call-glyph${c.outcome === "missed" ? " missed" : ""}`} aria-hidden>
+                  <Icon name={c.kind === 2 ? "video" : "phone"} size={19} />
+                </span>
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title">{services.nameForUser(c.participants[0] ?? c.initiator)}</span>
+                    <span className="row-time">{c.startedAt ? new Date(c.startedAt).toLocaleString() : ""}</span>
+                  </div>
+                  <div className="row-sub">
+                    {c.kind === 2 ? "Video" : "Voice"} · {c.outcome}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Section>
+      ) : null}
+    </Screen>
   );
 }
 
@@ -2975,13 +2985,22 @@ const CHANNEL_EMOJIS = ["👍", "❤️", "🔥", "😂", "🎉"];
 function channelRow(c: ChannelInfo, onOpen: (id: string) => void): ReactNode {
   return (
     <li key={c.id} className="row" role="button" tabIndex={0} onClick={() => onOpen(c.id)} onKeyDown={onActivate(() => onOpen(c.id))}>
-      <div className="row-title">
-        📢 {c.name} {c.verified && <span title="Verified">✔️</span>}
-        <span className="muted" style={{ fontWeight: 400, fontSize: "0.75rem" }}> · @{c.handle}</span>
-      </div>
-      <div className="row-sub">
-        {c.followers} follower{c.followers === 1 ? "" : "s"}
-        {c.description ? ` · ${c.description}` : ""}
+      <span className="entity-glyph" aria-hidden>
+        <Icon name="channel" size={20} />
+      </span>
+      <div className="row-main">
+        <div className="row-line1">
+          <span className="row-title">{c.name}</span>
+          {c.verified ? (
+            <span className="badge accent" title="Verified">
+              ✔ verified
+            </span>
+          ) : null}
+        </div>
+        <div className="row-sub">
+          @{c.handle} · {c.followers} follower{c.followers === 1 ? "" : "s"}
+          {c.description ? ` · ${c.description}` : ""}
+        </div>
       </div>
     </li>
   );
@@ -3029,64 +3048,102 @@ export function Channels({ onOpen, onBack }: { onOpen: (id: string) => void; onB
   }
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>Channels</h1>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem" }}>
-        <button className={tab === "discover" ? "btn small" : "btn small ghost"} onClick={() => setTab("discover")}>
-          Discover
-        </button>
-        <button className={tab === "create" ? "btn small" : "btn small ghost"} onClick={() => setTab("create")}>
-          ＋ Create
-        </button>
-      </div>
-
+    <Screen
+      title="Channels"
+      subtitle="Broadcast feeds you can follow"
+      onBack={onBack}
+      actions={
+        <span className="segmented">
+          <button className={tab === "discover" ? "active" : ""} onClick={() => setTab("discover")}>
+            Discover
+          </button>
+          <button className={tab === "create" ? "active" : ""} onClick={() => setTab("create")}>
+            Create
+          </button>
+        </span>
+      }
+    >
       {tab === "discover" ? (
         <>
-          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search channels by name…" aria-label="Search channels" />
-          {query.trim().length >= 2 ? (
-            results.length === 0 ? (
-              <p className="muted">No channels found.</p>
-            ) : (
-              <ul className="list">{results.map((c) => channelRow(c, onOpen))}</ul>
-            )
-          ) : (
-            <>
-              <h2 style={{ marginTop: "1rem" }}>Popular</h2>
-              {discover.length === 0 ? <p className="muted">No channels yet — create the first one.</p> : <ul className="list">{discover.map((c) => channelRow(c, onOpen))}</ul>}
-            </>
-          )}
+          <Section title="Find a channel">
+            <input
+              className="input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search channels by name…"
+              aria-label="Search channels"
+            />
+            {query.trim().length >= 2 ? (
+              results.length === 0 ? (
+                <p className="section-desc">No channels match “{query.trim()}”.</p>
+              ) : (
+                <ul className="list">{results.map((c) => channelRow(c, onOpen))}</ul>
+              )
+            ) : null}
+          </Section>
+
+          {query.trim().length < 2 ? (
+            <Section title="Popular">
+              {discover.length === 0 ? (
+                <EmptyState
+                  icon={<Icon name="channel" size={26} />}
+                  title="No channels yet"
+                  text="Channels are one-to-many broadcast feeds. Create the first one."
+                  action={
+                    <button className="btn small" onClick={() => setTab("create")}>
+                      Create a channel
+                    </button>
+                  }
+                />
+              ) : (
+                <ul className="list">{discover.map((c) => channelRow(c, onOpen))}</ul>
+              )}
+            </Section>
+          ) : null}
         </>
       ) : (
-        <>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>Handle (a–z, 0–9, _)</span>
-            <input className="input" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="my_channel" maxLength={30} />
-          </label>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>Name</span>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Channel" maxLength={80} />
-          </label>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>Description</span>
-            <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's it about?" maxLength={500} />
-          </label>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>Visibility</span>
-            <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "public" | "private")}>
+        <Section title="Create a channel" desc="Channel posts are visible to the server so they can be searched and delivered at scale — unlike your chats, they are not end-to-end encrypted.">
+          <div className="field">
+            <label className="field-label" htmlFor="ch-handle">
+              Handle
+            </label>
+            <input id="ch-handle" className="input" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="my_channel" maxLength={30} />
+            <span className="field-help">Lowercase letters, numbers and underscore. This is the channel's public @name.</span>
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="ch-name">
+              Name
+            </label>
+            <input id="ch-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Channel" maxLength={80} />
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="ch-desc">
+              Description
+            </label>
+            <input id="ch-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's it about?" maxLength={500} />
+          </div>
+          <div className="field-row">
+            <label className="field-label" htmlFor="ch-kind">
+              Visibility
+            </label>
+            <select id="ch-kind" className="input" value={kind} onChange={(e) => setKind(e.target.value as "public" | "private")}>
               <option value="public">Public — anyone can find &amp; follow</option>
               <option value="private">Private — invite-only</option>
             </select>
-          </label>
-          {error && <p className="error" role="alert">{error}</p>}
-          <button className="btn" onClick={() => void create()} disabled={busy || !handle.trim() || !name.trim()}>
-            {busy ? "Creating…" : "Create channel"}
-          </button>
-        </>
+          </div>
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="actions end">
+            <button className="btn" onClick={() => void create()} disabled={busy || !handle.trim() || !name.trim()}>
+              {busy ? "Creating…" : "Create channel"}
+            </button>
+          </div>
+        </Section>
       )}
-    </div>
+    </Screen>
   );
 }
 
@@ -3840,70 +3897,110 @@ export function Communities({ onOpen, onBack }: { onOpen: (id: string) => void; 
   }
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>Communities</h1>
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.8rem" }}>
-        <button className={tab === "discover" ? "btn small" : "btn small ghost"} onClick={() => setTab("discover")}>
-          Discover
-        </button>
-        <button className={tab === "create" ? "btn small" : "btn small ghost"} onClick={() => setTab("create")}>
-          ＋ Create
-        </button>
-      </div>
-
+    <Screen
+      title="Communities"
+      subtitle="Groups, announcements and events under one roof"
+      onBack={onBack}
+      actions={
+        <span className="segmented">
+          <button className={tab === "discover" ? "active" : ""} onClick={() => setTab("discover")}>
+            Discover
+          </button>
+          <button className={tab === "create" ? "active" : ""} onClick={() => setTab("create")}>
+            Create
+          </button>
+        </span>
+      }
+    >
       {tab === "discover" ? (
         <>
-          <input className="input" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search communities by name…" aria-label="Search communities" />
-          {query.trim().length >= 2 ? (
-            results.length === 0 ? (
-              <p className="muted">No communities found.</p>
-            ) : (
-              <ul className="list">{results.map((c) => communityRow(c, onOpen))}</ul>
-            )
-          ) : (
-            <>
-              <h2 style={{ marginTop: "1rem" }}>Popular</h2>
-              {discover.length === 0 ? <p className="muted">No communities yet — create the first one.</p> : <ul className="list">{discover.map((c) => communityRow(c, onOpen))}</ul>}
-            </>
-          )}
+          <Section title="Find a community">
+            <input
+              className="input"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search communities by name…"
+              aria-label="Search communities"
+            />
+            {query.trim().length >= 2 ? (
+              results.length === 0 ? (
+                <p className="section-desc">No communities match “{query.trim()}”.</p>
+              ) : (
+                <ul className="list">{results.map((c) => communityRow(c, onOpen))}</ul>
+              )
+            ) : null}
+          </Section>
+
+          {query.trim().length < 2 ? (
+            <Section title="Popular">
+              {discover.length === 0 ? (
+                <EmptyState
+                  icon={<Icon name="community" size={26} />}
+                  title="No communities yet"
+                  text="A community groups related chats together with announcements and a shared calendar."
+                  action={
+                    <button className="btn small" onClick={() => setTab("create")}>
+                      Create a community
+                    </button>
+                  }
+                />
+              ) : (
+                <ul className="list">{discover.map((c) => communityRow(c, onOpen))}</ul>
+              )}
+            </Section>
+          ) : null}
         </>
       ) : (
-        <>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>Name</span>
-            <input className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Community" maxLength={80} />
-          </label>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>Description</span>
-            <input className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's it about?" maxLength={500} />
-          </label>
-          <label style={fieldWrap}>
-            <span className="muted" style={fieldLabel}>Visibility</span>
-            <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "public" | "private")}>
+        <Section title="Create a community">
+          <div className="field">
+            <label className="field-label" htmlFor="co-name">
+              Name
+            </label>
+            <input id="co-name" className="input" value={name} onChange={(e) => setName(e.target.value)} placeholder="My Community" maxLength={80} />
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="co-desc">
+              Description
+            </label>
+            <input id="co-desc" className="input" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="What's it about?" maxLength={500} />
+          </div>
+          <div className="field-row">
+            <label className="field-label" htmlFor="co-kind">
+              Visibility
+            </label>
+            <select id="co-kind" className="input" value={kind} onChange={(e) => setKind(e.target.value as "public" | "private")}>
               <option value="public">Public — anyone can find &amp; join</option>
               <option value="private">Private — invite-only</option>
             </select>
-          </label>
-          {error && <p className="error" role="alert">{error}</p>}
-          <button className="btn" onClick={() => void create()} disabled={busy || !name.trim()}>
-            {busy ? "Creating…" : "Create community"}
-          </button>
-        </>
+          </div>
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="actions end">
+            <button className="btn" onClick={() => void create()} disabled={busy || !name.trim()}>
+              {busy ? "Creating…" : "Create community"}
+            </button>
+          </div>
+        </Section>
       )}
-    </div>
+    </Screen>
   );
 }
 
 function communityRow(c: CommunitySummary, onOpen: (id: string) => void): ReactNode {
   return (
     <li key={c.id} className="row" role="button" tabIndex={0} onClick={() => onOpen(c.id)} onKeyDown={onActivate(() => onOpen(c.id))}>
-      <div className="row-title">🏘️ {c.name}</div>
-      <div className="row-sub">
-        {c.memberCount} member{c.memberCount === 1 ? "" : "s"}
-        {c.description ? ` · ${c.description}` : ""}
+      <span className="entity-glyph" aria-hidden>
+        <Icon name="community" size={20} />
+      </span>
+      <div className="row-main">
+        <div className="row-title">{c.name}</div>
+        <div className="row-sub">
+          {c.memberCount} member{c.memberCount === 1 ? "" : "s"}
+          {c.description ? ` · ${c.description}` : ""}
+        </div>
       </div>
     </li>
   );
@@ -3956,121 +4053,181 @@ export function CommunityScreen({ communityId, onBack, onOpenGroup }: { communit
   }
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>🏘️ {community.name}</h1>
-      <p className="muted" style={{ marginTop: "-0.4rem" }}>
-        {community.kind} · {community.memberCount} member{community.memberCount === 1 ? "" : "s"} · {community.groupCount} group{community.groupCount === 1 ? "" : "s"}
-        {community.myRole ? ` · you: ${community.myRole}` : ""}
-      </p>
-      {community.description ? <p>{community.description}</p> : null}
-      {error && <p className="error" role="alert">{error}</p>}
-
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.5rem" }}>
-        {!isMember ? (
-          <button className="btn small" onClick={guard(() => services.joinCommunity(communityId))}>Join</button>
-        ) : !isOwner ? (
-          <button className="btn small ghost" onClick={guard(() => services.leaveCommunity(communityId))}>Leave</button>
-        ) : null}
-        {isOwner ? (
-          <button className="btn small danger" onClick={() => { if (window.confirm("Delete this community? This can't be undone.")) guard(() => services.deleteCommunity(communityId).then(onBack))(); }}>
-            🗑 Delete
-          </button>
-        ) : null}
-      </div>
-
-      <h2 style={{ marginTop: "1rem" }}>📢 Announcements</h2>
-      <button className="btn small ghost" onClick={() => onOpenGroup(community.announcementGroupId)}>
-        Open announcement group ›
-      </button>
-
-      <h2 style={{ marginTop: "1.2rem" }}>Groups ({groupIds.length})</h2>
-      {groupIds.length === 0 ? <p className="muted" style={{ fontSize: "0.85rem" }}>No groups linked yet.</p> : null}
-      <ul className="list">
-        {groupIds.map((gid) => (
-          <li key={gid} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div className="row-title" style={{ flex: 1, cursor: "pointer" }} role="button" tabIndex={0} onClick={() => onOpenGroup(gid)} onKeyDown={onActivate(() => onOpenGroup(gid))}>
-              👥 {services.groupNameOf(gid) || gid.slice(0, 12)}
-            </div>
-            {isAdmin ? (
-              <button className="btn small ghost" aria-label="Unlink group" onClick={guard(() => services.removeCommunityGroup(communityId, gid))}>
-                Remove
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      {isAdmin ? (
+    <Screen
+      title={community.name}
+      subtitle={`${community.memberCount} member${community.memberCount === 1 ? "" : "s"} · ${community.groupCount} group${community.groupCount === 1 ? "" : "s"}`}
+      onBack={onBack}
+      actions={
         <>
-          <button className="btn small ghost" onClick={() => setAddGroupOpen((v) => !v)}>＋ Add a group</button>
-          {addGroupOpen ? (
-            <GroupLinkPicker
-              excludeIds={groupIds}
-              onPick={(gid) => {
-                setAddGroupOpen(false);
-                guard(() => services.addCommunityGroup(communityId, gid))();
-              }}
-            />
+          {!isMember ? (
+            <button className="btn small" onClick={guard(() => services.joinCommunity(communityId))}>
+              Join
+            </button>
+          ) : !isOwner ? (
+            <button className="btn small ghost" onClick={guard(() => services.leaveCommunity(communityId))}>
+              Leave
+            </button>
           ) : null}
         </>
-      ) : null}
-
-      <h2 style={{ marginTop: "1.2rem" }}>📅 Events</h2>
-      {events.length === 0 ? <p className="muted" style={{ fontSize: "0.85rem" }}>No upcoming events.</p> : null}
-      <ul className="list">
-        {events.map((e) => (
-          <li key={e.id} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="row-title">{e.title}</div>
-              <div className="row-sub">{new Date(e.startsAtMs).toLocaleString()}</div>
-            </div>
-            {isAdmin ? (
-              <button className="btn small ghost" aria-label="Delete event" onClick={guard(() => services.deleteCommunityEvent(communityId, e.id))}>
-                🗑
-              </button>
-            ) : null}
-          </li>
-        ))}
-      </ul>
-      {isAdmin ? (
-        <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
-          <input className="input" placeholder="Event title" value={evTitle} onChange={(e) => setEvTitle(e.target.value)} />
-          <input className="input" type="datetime-local" value={evWhen} style={{ maxWidth: 210 }} onChange={(e) => setEvWhen(e.target.value)} />
-          <button className="btn small" disabled={!evTitle.trim() || !evWhen} onClick={() => void createEvent()}>Add</button>
+      }
+    >
+      <section className="section profile-hero">
+        <span className="entity-glyph" style={{ width: 72, height: 72 }} aria-hidden>
+          <Icon name="community" size={30} />
+        </span>
+        <div className="profile-hero-text">
+          <span className="profile-hero-name">{community.name}</span>
+          <span className="inline">
+            <span className="badge">{community.kind}</span>
+            {community.myRole ? <span className="badge accent">you: {community.myRole}</span> : null}
+          </span>
+          {community.description ? <span className="profile-hero-about">{community.description}</span> : null}
         </div>
+      </section>
+
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
       ) : null}
 
-      {isMember ? (
-        <>
-          <h2 style={{ marginTop: "1.2rem" }}>Members ({members.length})</h2>
+      <Section
+        title="Announcements"
+        desc="The community-wide group every member is in."
+        actions={
+          <button className="btn small secondary" onClick={() => onOpenGroup(community.announcementGroupId)}>
+            Open
+          </button>
+        }
+      />
+
+      <Section
+        title={`Groups (${groupIds.length})`}
+        actions={
+          isAdmin ? (
+            <button className="btn small ghost" onClick={() => setAddGroupOpen((v) => !v)}>
+              {addGroupOpen ? "Cancel" : "Add a group"}
+            </button>
+          ) : null
+        }
+      >
+        {groupIds.length === 0 ? <p className="section-desc">No groups linked yet.</p> : null}
+        {groupIds.length > 0 ? (
           <ul className="list">
-            {members.map((m) => (
-              <li key={m.userId} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="row-title">{services.nameForUser(m.userId)}</div>
-                  <div className="row-sub">{m.role}</div>
+            {groupIds.map((gid) => (
+              <li key={gid} className="row" role="button" tabIndex={0} onClick={() => onOpenGroup(gid)} onKeyDown={onActivate(() => onOpenGroup(gid))}>
+                <Avatar size={40} group />
+                <div className="row-main">
+                  <div className="row-title">{services.groupNameOf(gid) || gid.slice(0, 12)}</div>
                 </div>
-                {isOwner && m.role !== "owner" ? (
+                {isAdmin ? (
                   <button
-                    className="btn small ghost"
-                    onClick={guard(() => services.setCommunityRole(communityId, m.userId, m.role === "admin" ? "member" : "admin"))}
+                    className="btn small ghost danger"
+                    aria-label="Unlink group"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      guard(() => services.removeCommunityGroup(communityId, gid))();
+                    }}
                   >
-                    {m.role === "admin" ? "Demote" : "Make admin"}
-                  </button>
-                ) : null}
-                {isAdmin && m.role !== "owner" ? (
-                  <button className="btn small ghost" aria-label="Remove member" onClick={guard(() => services.removeCommunityMember(communityId, m.userId))}>
                     Remove
                   </button>
                 ) : null}
               </li>
             ))}
           </ul>
-        </>
+        ) : null}
+        {isAdmin && addGroupOpen ? (
+          <GroupLinkPicker
+            excludeIds={groupIds}
+            onPick={(gid) => {
+              setAddGroupOpen(false);
+              guard(() => services.addCommunityGroup(communityId, gid))();
+            }}
+          />
+        ) : null}
+      </Section>
+
+      <Section title="Events">
+        {events.length === 0 ? <p className="section-desc">No upcoming events.</p> : null}
+        {events.length > 0 ? (
+          <ul className="list">
+            {events.map((e) => (
+              <li key={e.id} className="row static">
+                <span className="entity-glyph neutral" aria-hidden>
+                  <Icon name="clock" size={18} />
+                </span>
+                <div className="row-main">
+                  <div className="row-title">{e.title}</div>
+                  <div className="row-sub">{new Date(e.startsAtMs).toLocaleString()}</div>
+                </div>
+                {isAdmin ? (
+                  <button className="wa-icon" aria-label="Delete event" onClick={guard(() => services.deleteCommunityEvent(communityId, e.id))}>
+                    <Icon name="trash" size={17} />
+                  </button>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+        {isAdmin ? (
+          <div className="inline">
+            <input className="input" placeholder="Event title" value={evTitle} style={{ flex: 1, minWidth: 160 }} onChange={(e) => setEvTitle(e.target.value)} />
+            <input className="input" type="datetime-local" value={evWhen} style={{ width: "auto" }} onChange={(e) => setEvWhen(e.target.value)} />
+            <button className="btn small" disabled={!evTitle.trim() || !evWhen} onClick={() => void createEvent()}>
+              Add
+            </button>
+          </div>
+        ) : null}
+      </Section>
+
+      {isMember ? (
+        <Section title={`Members (${members.length})`}>
+          <ul className="list">
+            {members.map((m) => (
+              <li key={m.userId} className="row static">
+                <Avatar size={40} />
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title">{services.nameForUser(m.userId)}</span>
+                    {m.role !== "member" ? <span className="badge accent">{m.role}</span> : null}
+                  </div>
+                </div>
+                <div className="row-right">
+                  {isOwner && m.role !== "owner" ? (
+                    <button
+                      className="btn small ghost"
+                      onClick={guard(() => services.setCommunityRole(communityId, m.userId, m.role === "admin" ? "member" : "admin"))}
+                    >
+                      {m.role === "admin" ? "Demote" : "Make admin"}
+                    </button>
+                  ) : null}
+                  {isAdmin && m.role !== "owner" ? (
+                    <button className="btn small ghost danger" aria-label="Remove member" onClick={guard(() => services.removeCommunityMember(communityId, m.userId))}>
+                      Remove
+                    </button>
+                  ) : null}
+                </div>
+              </li>
+            ))}
+          </ul>
+        </Section>
       ) : null}
-    </div>
+
+      {isOwner ? (
+        <Section title="Danger zone" desc="Deleting removes the community and unlinks its groups for everyone.">
+          <div className="actions">
+            <button
+              className="btn danger"
+              onClick={() => {
+                if (window.confirm("Delete this community? This can't be undone.")) guard(() => services.deleteCommunity(communityId).then(onBack))();
+              }}
+            >
+              Delete community
+            </button>
+          </div>
+        </Section>
+      ) : null}
+    </Screen>
   );
 }
 

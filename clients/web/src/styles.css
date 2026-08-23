@@ -3107,3 +3107,36 @@ body:has(.auth)::before {
   background: color-mix(in srgb, #e5484d 16%, transparent);
   color: #e5484d;
 }
+
+/* ── Call history rows (U4.6) ─────────────────────────────────────────────── */
+.call-glyph {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.call-glyph.missed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+/* ── Entity glyph: the circular icon that stands in for a channel/community
+   avatar in list rows. ────────────────────────────────────────────────────── */
+.entity-glyph {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+.entity-glyph.neutral {
+  background: var(--panel-2);
+  color: var(--muted);
+}

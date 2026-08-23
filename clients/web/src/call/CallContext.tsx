@@ -77,7 +77,17 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const { session, controller, webCam, screenCtrl, effectCtrl, webScreen } = useMemo(() => {
     const token = (): string => services.sessions.current()?.accessJwt ?? "";
-    const selfId = services.sessions.current()?.deviceId ?? "self";
+    // The call's E2EE identity MUST be the user id, not the device id.
+    //
+    // CallCrypto derives sendKey from `selfId` and recvKey from `peerId`, and the
+    // dev root secret is a hash of the sorted (selfId, peerId) pair. `peerId` is
+    // always a USER id — it comes from peerOf(conversationId) when we place a
+    // call and from the offer's callerUserId when we receive one. Using a DEVICE
+    // id here put the two ends in different identity spaces, so neither the root
+    // secret nor the per-sender frame keys matched: every inbound frame failed to
+    // open and was dropped by the transform, and the call connected with no audio
+    // and no video.
+    const selfId = services.myUserId() || services.sessions.current()?.deviceId || "self";
     // One LiveKit session backs the media transport AND the camera/screen
     // publish callbacks, so a track the controllers capture reaches the SFU.
     const rtc = createLiveKitRtc(config.livekitUrl);

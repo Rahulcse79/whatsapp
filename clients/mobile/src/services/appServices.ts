@@ -11,6 +11,7 @@ import {
   OtpClient,
   SessionManager,
   WsClient,
+  b64urlToBytes,
   newId,
   type CallKind,
   type HttpClient,
@@ -99,6 +100,26 @@ export class AppServices {
 
   hasSession(): boolean {
     return this.sessions.current() !== null;
+  }
+
+  /** myUserId decodes the access token's subject (the caller's user id), or ""
+   *  when signed out.
+   *
+   *  This is the identity the call stack must key on: CallCrypto derives its
+   *  send key from `selfId` and its receive key from `peerId`, and `peerId` is
+   *  always a user id. Keying one side on the device id put the peers in
+   *  different identity spaces, so no frame ever decrypted. Uses the shared
+   *  base64url decoder rather than atob, which React Native does not provide. */
+  myUserId(): string {
+    const jwt = this.sessions.current()?.accessJwt;
+    if (!jwt) return "";
+    try {
+      const payload = jwt.split(".")[1] ?? "";
+      const json = new TextDecoder().decode(b64urlToBytes(payload));
+      return (JSON.parse(json) as { sub?: string }).sub ?? "";
+    } catch {
+      return "";
+    }
   }
 
   /** completeLogin persists a verified session and opens the realtime link. */

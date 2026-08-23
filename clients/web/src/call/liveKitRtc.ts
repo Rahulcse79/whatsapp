@@ -18,6 +18,7 @@ class LiveKitRtc implements RtcSession {
   private trackCb: ((r: RTCRtpReceiver) => void) | null = null;
   private readonly pendingReceivers: RTCRtpReceiver[] = [];
   private sink: HTMLDivElement | null = null;
+  private micError: Error | null = null;
 
   constructor(private readonly serverUrl: string) {}
 
@@ -29,7 +30,23 @@ class LiveKitRtc implements RtcSession {
     await room.connect(this.serverUrl, joinToken);
     // Voice is the baseline: publishing the mic makes the call audible even
     // before the camera is turned on. Camera/screen ride publishVideo/Screen.
-    await room.localParticipant.setMicrophoneEnabled(true);
+    //
+    // A denied or absent microphone rejects here. Swallowing that produced a
+    // call that looked connected but was mute with nothing to explain why, so
+    // surface it: the call itself stays up (the user can still HEAR the peer),
+    // but the failure is reported rather than lost.
+    try {
+      await room.localParticipant.setMicrophoneEnabled(true);
+    } catch (err) {
+      this.micError = err instanceof Error ? err : new Error(String(err));
+      console.error("[call] microphone unavailable — joining without publishing audio:", err);
+    }
+  }
+
+  /** micFailure returns the microphone error, if publishing the mic failed. The
+   *  UI uses this to explain a one-way call instead of leaving the user guessing. */
+  micFailure(): Error | null {
+    return this.micError;
   }
 
   private onSubscribed(track: RemoteTrack): void {
@@ -104,6 +121,7 @@ class LiveKitRtc implements RtcSession {
   }
 
   private cleanup(): void {
+    this.micError = null;
     this.sink?.remove();
     this.sink = null;
     this.pendingReceivers.length = 0;

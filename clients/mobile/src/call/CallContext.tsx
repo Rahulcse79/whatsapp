@@ -96,7 +96,14 @@ export function CallProvider({ children }: { children: ReactNode }) {
 
   const { session, bridge, controller, rnCam, screenCtrl, effectCtrl, rtc } = useMemo(() => {
     const token = (): string => services.sessions.current()?.accessJwt ?? "";
-    const selfId = services.sessions.current()?.deviceId ?? "self";
+    // The call's E2EE identity MUST be the user id, not the device id: CallCrypto
+    // derives sendKey from `selfId` and recvKey from `peerId`, and `peerId` is
+    // always a user id (peerOf(conversationId) when placing a call, the offer's
+    // callerUserId when receiving one). A device id here put the two ends in
+    // different identity spaces, so neither the root secret nor the per-sender
+    // frame keys matched and every inbound frame was dropped undecrypted —
+    // a connected call with no audio and no video.
+    const selfId = services.myUserId() || services.sessions.current()?.deviceId || "self";
     // One LiveKit session backs the media transport AND the camera/screen publish
     // callbacks (camera capture is the next RN seam, so publish is a no-op today).
     const rtc = createLiveKitRnRtc(services.config.livekitUrl);

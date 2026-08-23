@@ -19,7 +19,33 @@ interface EncodedStreams {
 }
 type WithEncodedStreams = { createEncodedStreams?: () => EncodedStreams };
 
-function pipe(streams: EncodedStreams, transform: (data: Uint8Array) => Promise<Uint8Array>): void {
+/** Per-direction frame counters, so a call that carries no media can be told
+ *  apart from a silent peer. Dropping every inbound frame is exactly what a key
+ *  mismatch looks like, and it used to be completely invisible: the call showed
+ *  as connected and simply had no sound. */
+export interface FrameStats {
+  ok: number;
+  dropped: number;
+}
+const stats: Record<"send" | "recv", FrameStats> = { send: { ok: 0, dropped: 0 }, recv: { ok: 0, dropped: 0 } };
+
+/** frameStats reports the running seal/open tallies (diagnostics + tests). */
+export function frameStats(): { send: FrameStats; recv: FrameStats } {
+  return { send: { ...stats.send }, recv: { ...stats.recv } };
+}
+
+/** resetFrameStats clears the tallies at the start of a call. */
+export function resetFrameStats(): void {
+  stats.send = { ok: 0, dropped: 0 };
+  stats.recv = { ok: 0, dropped: 0 };
+}
+
+function pipe(
+  streams: EncodedStreams,
+  transform: (data: Uint8Array) => Promise<Uint8Array>,
+  dir: "send" | "recv",
+): void {
+  let warned = false;
   void streams.readable
     .pipeThrough(
       new TransformStream<EncodedFrame, EncodedFrame>({
@@ -27,10 +53,23 @@ function pipe(streams: EncodedStreams, transform: (data: Uint8Array) => Promise<
           try {
             const out = await transform(new Uint8Array(frame.data));
             frame.data = out.buffer.slice(out.byteOffset, out.byteOffset + out.byteLength);
+            stats[dir].ok++;
             controller.enqueue(frame);
-          } catch {
-            // A frame that won't seal/open (e.g. key not yet rotated in) is
-            // dropped, not forwarded in the clear.
+          } catch (err) {
+            // A frame that won't seal/open (e.g. a key not yet rotated in) is
+            // dropped, never forwarded in the clear. That is the right call
+            // security-wise, but it must not be silent: a sustained drop streak
+            // means the peers disagree on a key, not that nobody is talking.
+            stats[dir].dropped++;
+            if (!warned && stats[dir].dropped >= 30 && stats[dir].ok === 0) {
+              warned = true;
+              console.error(
+                `[call] every ${dir} frame failed to ${dir === "send" ? "seal" : "open"} ` +
+                  `(${stats[dir].dropped} dropped, 0 succeeded). The peers have derived ` +
+                  `different keys — check that both ends use the same identity space.`,
+                err,
+              );
+            }
           }
         },
       }),
@@ -43,7 +82,7 @@ function pipe(streams: EncodedStreams, transform: (data: Uint8Array) => Promise<
 export function installSenderE2EE(sender: RTCRtpSender, crypto: CallCrypto): boolean {
   const streams = (sender as RTCRtpSender & WithEncodedStreams).createEncodedStreams?.();
   if (!streams) return false;
-  pipe(streams, (data) => crypto.seal(data));
+  pipe(streams, (data) => crypto.seal(data), "send");
   return true;
 }
 
@@ -51,7 +90,7 @@ export function installSenderE2EE(sender: RTCRtpSender, crypto: CallCrypto): boo
 export function installReceiverE2EE(receiver: RTCRtpReceiver, crypto: CallCrypto): boolean {
   const streams = (receiver as RTCRtpReceiver & WithEncodedStreams).createEncodedStreams?.();
   if (!streams) return false;
-  pipe(streams, (data) => crypto.open(data));
+  pipe(streams, (data) => crypto.open(data), "recv");
   return true;
 }
 

@@ -1825,7 +1825,15 @@ export function Status({ onBack }: { onBack: () => void }) {
             </div>
           </li>
         ))}
-        {others.length === 0 ? <li className="status-empty">No status updates from your contacts yet.</li> : null}
+        {others.length === 0 ? (
+          <li className="status-empty">
+            <EmptyState
+              icon={<Icon name="updates" size={26} />}
+              title="No updates yet"
+              text="Status updates from your contacts appear here and disappear after 24 hours."
+            />
+          </li>
+        ) : null}
       </ul>
     </div>
   );

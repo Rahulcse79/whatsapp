@@ -100,6 +100,11 @@ function NavRail({ active, go }: { active: string; go: (n: Nav) => void }) {
   );
 }
 
+/** Screens that take over the whole window on mobile: inside a conversation or a
+ *  canvas, the bottom tab bar would steal space and invite mis-taps. Every other
+ *  screen keeps the tabs so sections stay reachable on a phone. */
+const IMMERSIVE = new Set<Nav["name"]>(["thread", "board", "collab"]);
+
 /** railSectionOf maps a nav state to the rail section it belongs to, so the rail
  *  highlights correctly even for sub-screens (a thread lives under Chats). */
 function railSectionOf(name: Nav["name"]): string {
@@ -235,7 +240,7 @@ function Router() {
 
   return (
     <>
-      <div className={`wa-shell${nav.name !== "chats" ? " show-detail" : ""}`}>
+      <div className={`wa-shell${nav.name !== "chats" ? " show-detail" : ""}${IMMERSIVE.has(nav.name) ? " immersive" : ""}`}>
         <NavRail active={railSectionOf(nav.name)} go={setNav} />
         <div className="wa-panes">
           <aside className="wa-side">

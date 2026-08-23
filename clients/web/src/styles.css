@@ -483,18 +483,27 @@ a:hover {
   .wa-rail {
     order: 2;
     width: 100%;
-    height: 58px;
+    height: auto;
+    min-height: 58px;
     flex-direction: row;
-    padding: 0;
+    padding: 0 0 env(safe-area-inset-bottom, 0);
     border-right: none;
     border-top: 1px solid var(--line);
   }
   .wa-rail-top,
   .wa-rail-bottom {
     flex-direction: row;
-    flex: 1;
     justify-content: space-around;
     gap: 0;
+    min-width: 0;
+  }
+  /* Five sections on the left, one Settings tab on the right: weight the groups
+     so every tab gets the same slice instead of the sections sharing half. */
+  .wa-rail-top {
+    flex: 5;
+  }
+  .wa-rail-bottom {
+    flex: 1;
   }
   .wa-rail-bottom .rail-avatar {
     display: none; /* profile reachable via list header on mobile */
@@ -503,16 +512,25 @@ a:hover {
     width: auto;
     height: 100%;
     flex: 1;
+    min-width: 0;
+    padding: 0 2px;
     border-radius: 0;
     flex-direction: column;
     gap: 2px;
   }
   .rail-item.active {
     background: transparent;
+    color: var(--accent);
   }
   .rail-label {
     display: block;
-    font-size: 11px;
+    max-width: 100%;
+    font-size: var(--text-2xs);
+    font-weight: var(--weight-medium);
+    line-height: 1.2;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .wa-panes {
     order: 1;
@@ -526,8 +544,10 @@ a:hover {
   .wa-panes .wa-detail {
     display: none;
   }
-  .wa-shell.show-detail .wa-rail {
-    display: none; /* hide bottom tabs inside a chat */
+  /* Only a conversation/canvas hides the tab bar; top-level sections keep it so
+     they stay reachable on a phone. */
+  .wa-shell.show-detail.immersive .wa-rail {
+    display: none;
   }
   .wa-shell.show-detail .wa-side {
     display: none;
@@ -1416,6 +1436,9 @@ body:has(.auth)::before {
   flex-direction: column;
   min-height: 0;
   position: relative; /* positioning context for the locked-chat gate (T10.01) */
+  /* List-style panes (Updates, Discover, Notes) sit on the panel surface; the
+     thread's own .messages layer paints the chat wallpaper over this. */
+  background: var(--panel);
 }
 
 .pane-head {

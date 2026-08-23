@@ -119,10 +119,13 @@ function Welcome() {
   return (
     <div className="wa-welcome">
       <div className="wa-welcome-icon" aria-hidden>
-        💬
+        <Icon name="chats" size={44} />
       </div>
       <h1>WhatsApp V2</h1>
-      <p>Select a chat to start messaging, or use the toolbar to start a new conversation. Your messages are end-to-end encrypted.</p>
+      <p>Select a chat to start messaging, or use the toolbar to start a new conversation.</p>
+      <span className="wa-welcome-hint">
+        <Icon name="info" size={15} /> Your messages are end-to-end encrypted
+      </span>
     </div>
   );
 }

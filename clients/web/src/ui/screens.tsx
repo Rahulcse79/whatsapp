@@ -986,8 +986,8 @@ export function Search({
   return (
     <div className="pane">
       <div className="pane-head">
-        <button className="btn small ghost" onClick={onBack}>
-          ‹ Back
+        <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
+          <Icon name="back" size={24} />
         </button>
         <input
           className="input"
@@ -3239,17 +3239,25 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
   return (
     <div className="pane">
       <div className="pane-head">
-        <button className="btn small ghost" onClick={onBack}>‹ Back</button>
+        <button className="wa-icon wa-back" onClick={onBack} aria-label="Back" title="Back">
+          <Icon name="back" size={24} />
+        </button>
+        <span className="entity-glyph" aria-hidden>
+          <Icon name="channel" size={20} />
+        </span>
         <div className="thread-title">
-          <span>📢 {channel.name} {channel.verified && "✔️"} {channel.premium && <span title={`Premium · ${price}/mo`}>💎</span>}</span>
-          <span className="thread-status" style={{ fontSize: "0.72rem", opacity: 0.7 }}>
+          <span className="thread-name">
+            {channel.name}
+            {channel.verified ? <span className="badge accent" title="Verified">✔</span> : null}
+            {channel.premium ? <span className="badge warning" title={`Premium · ${price}/mo`}>{price}/mo</span> : null}
+          </span>
+          <span className="thread-status">
             @{channel.handle} · {channel.followers} follower{channel.followers === 1 ? "" : "s"} · {channel.kind}
-            {channel.premium ? ` · 💎 ${price}/mo` : ""}
           </span>
         </div>
         {channel.myRole === "owner" ? (
-          <button className="btn small ghost" title="Delete channel" onClick={() => { if (window.confirm("Delete this channel for everyone?")) void services.deleteChannel(channelId).then(onBack); }}>
-            🗑
+          <button className="wa-icon" aria-label="Delete channel" title="Delete channel" onClick={() => { if (window.confirm("Delete this channel for everyone?")) void services.deleteChannel(channelId).then(onBack); }}>
+            <Icon name="trash" size={19} />
           </button>
         ) : isMember ? (
           <button className="btn small ghost" onClick={() => void services.unfollowChannel(channelId).then(load)}>Following ✓</button>
@@ -4957,6 +4965,7 @@ export function Thread({
   const [showSchedule, setShowSchedule] = useState(false); // schedule-message sheet
   const [showTemplates, setShowTemplates] = useState(false); // saved-reply picker
   const [showInteractive, setShowInteractive] = useState(false); // interactive-message composer
+  const [headMenu, setHeadMenu] = useState(false); // thread-header overflow menu
   const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLInputElement>(null);
   const bubbleRefs = useRef<Record<string, HTMLDivElement | null>>({});
@@ -5286,46 +5295,55 @@ export function Thread({
             <Icon name="search" size={21} />
           </button>
         )}
-        <button
-          className="wa-icon"
-          title={muted ? "Unmute notifications" : "Mute notifications"}
-          aria-label={muted ? "Unmute notifications" : "Mute notifications"}
-          onClick={() => {
-            services.toggleMute(conversationId);
-            setMuted(services.isMuted(conversationId));
-          }}
-        >
-          <Icon name={muted ? "mute" : "bell"} size={21} />
-        </button>
-        <button
-          className={`wa-icon${services.disappearingSeconds(conversationId) > 0 ? " on" : ""}`}
-          title="Disappearing messages & privacy"
-          aria-label="Disappearing messages and privacy"
-          onClick={() => setShowSecret(true)}
-        >
-          <Icon name="clock" size={21} />
-        </button>
-        <button className="wa-icon" title="Chat wallpaper" aria-label="Chat wallpaper" onClick={() => setShowWallpaper(true)}>
-          <Icon name="wallpaper" size={21} />
-        </button>
-        <button className="wa-icon" title="Export chat" aria-label="Export chat" onClick={() => void exportChat()}>
-          <Icon name="download" size={21} />
-        </button>
-        {onCollab ? (
-          <button className="wa-icon" title="Notes & tasks" aria-label="Notes and tasks" onClick={() => onCollab(conversationId)}>
-            <Icon name="copy" size={20} />
+        {/* Secondary chat actions live behind one overflow menu so the header
+            stays readable instead of showing eleven icons at once. */}
+        <div className="wa-menu-wrap">
+          <button className="wa-icon" title="More" aria-label="More chat actions" aria-haspopup="menu" aria-expanded={headMenu} onClick={() => setHeadMenu((v) => !v)}>
+            <Icon name="menu" size={21} />
           </button>
-        ) : null}
-        {onBoard ? (
-          <button className="wa-icon" title="Whiteboard" aria-label="Whiteboard" onClick={() => onBoard(conversationId)}>
-            <Icon name="wallpaper" size={21} />
-          </button>
-        ) : null}
-        {aiOn ? (
-          <button className="wa-icon" title="Summarize chat (on-device AI)" aria-label="Summarize chat" onClick={runSummary} style={{ fontSize: 18 }}>
-            ✨
-          </button>
-        ) : null}
+          {headMenu ? (
+            <>
+              <div className="wa-menu-backdrop" onClick={() => setHeadMenu(false)} />
+              <div className="wa-menu" role="menu">
+                <button
+                  className="menu-item"
+                  onClick={() => {
+                    setHeadMenu(false);
+                    services.toggleMute(conversationId);
+                    setMuted(services.isMuted(conversationId));
+                  }}
+                >
+                  <Icon name={muted ? "mute" : "bell"} size={18} /> {muted ? "Unmute notifications" : "Mute notifications"}
+                </button>
+                <button className="menu-item" onClick={() => { setHeadMenu(false); setShowSecret(true); }}>
+                  <Icon name="clock" size={18} /> Disappearing &amp; privacy
+                  {services.disappearingSeconds(conversationId) > 0 ? <span className="badge accent">on</span> : null}
+                </button>
+                <button className="menu-item" onClick={() => { setHeadMenu(false); setShowWallpaper(true); }}>
+                  <Icon name="wallpaper" size={18} /> Chat wallpaper
+                </button>
+                <button className="menu-item" onClick={() => { setHeadMenu(false); void exportChat(); }}>
+                  <Icon name="download" size={18} /> Export chat
+                </button>
+                {onCollab ? (
+                  <button className="menu-item" onClick={() => { setHeadMenu(false); onCollab(conversationId); }}>
+                    <Icon name="copy" size={18} /> Notes &amp; tasks
+                  </button>
+                ) : null}
+                {onBoard ? (
+                  <button className="menu-item" onClick={() => { setHeadMenu(false); onBoard(conversationId); }}>
+                    <Icon name="wallpaper" size={18} /> Whiteboard
+                  </button>
+                ) : null}
+                {aiOn ? (
+                  <button className="menu-item" onClick={() => { setHeadMenu(false); runSummary(); }}>
+                    <span aria-hidden>✨</span> Summarize chat
+                  </button>
+                ) : null}
+              </div>
+            </>
+          ) : null}
+        </div>
       </div>
       {services.isLocked(conversationId) && !unlocked ? <LockGate onUnlock={() => setUnlocked(true)} /> : null}
       <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>

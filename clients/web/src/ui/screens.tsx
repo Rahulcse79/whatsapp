@@ -1053,7 +1053,9 @@ export function Search({
           </select>
         </label>
       </div>
-      {searched && hits.length === 0 ? <p className="muted center">No matches.</p> : null}
+      {searched && hits.length === 0 ? (
+        <EmptyState icon={<Icon name="search" size={26} />} title="No matches" text="Try a different word, or search a specific chat." />
+      ) : null}
       <ul className="list">
         {hits.map((h) => (
           <li
@@ -4601,7 +4603,11 @@ export function CollabScreen({ conversationId, onBack }: { conversationId: strin
                 </button>
               </li>
             ))}
-            {tasks.length === 0 ? <li className="status-empty">No tasks yet.</li> : null}
+            {tasks.length === 0 ? (
+              <li className="status-empty">
+                <EmptyState icon={<Icon name="check" size={26} />} title="No tasks yet" text="Add a task above — everyone in this chat can see and tick it off." />
+              </li>
+            ) : null}
           </ul>
         </>
       ) : tab === "notes" ? (
@@ -4623,7 +4629,11 @@ export function CollabScreen({ conversationId, onBack }: { conversationId: strin
                 </div>
               </li>
             ))}
-            {notes.length === 0 ? <li className="status-empty">No notes yet.</li> : null}
+            {notes.length === 0 ? (
+              <li className="status-empty">
+                <EmptyState icon={<Icon name="copy" size={26} />} title="No notes yet" text="Shared notes keep decisions in one place, with revisions and comments." />
+              </li>
+            ) : null}
           </ul>
         </>
       ) : (
@@ -4640,7 +4650,11 @@ export function CollabScreen({ conversationId, onBack }: { conversationId: strin
               </div>
             </li>
           ))}
-          {activity.length === 0 ? <li className="status-empty">No activity yet.</li> : null}
+          {activity.length === 0 ? (
+            <li className="status-empty">
+              <EmptyState icon={<Icon name="clock" size={26} />} title="No activity yet" text="Edits, comments and approvals show up here." />
+            </li>
+          ) : null}
         </ul>
       )}
       {editing ? <NoteEditor conversationId={conversationId} note={editing === "new" ? null : editing} onClose={() => { setEditing(null); reload(); }} /> : null}
@@ -4704,11 +4718,15 @@ export function DiscoverScreen({ onBack, onOpenChannel, onOpenCommunity }: { onB
         ))}
       </div>
       {query.trim().length < 2 ? (
-        <p className="muted center">Search public channels, communities, and usernames.</p>
+        <EmptyState
+          icon={<Icon name="search" size={26} />}
+          title="Discover"
+          text="Search public channels, communities and usernames. Only public metadata is searched — your chats stay private."
+        />
       ) : searching && results.length === 0 ? (
         <p className="muted center">Searching…</p>
       ) : results.length === 0 ? (
-        <p className="muted center">No results for “{query.trim()}”.</p>
+        <EmptyState title="No results" text={`Nothing public matches “${query.trim()}”.`} />
       ) : (
         <ul className="list">
           {results.map((r) => (

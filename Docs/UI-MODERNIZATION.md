@@ -45,20 +45,20 @@ identical — this is a presentation-layer change.
 - [x] **U3 — Screen shell migration.** Replace every full-screen `.card` with a
   `.screen` shell: sticky header (back + title + actions), scrollable body,
   grouped `.section` blocks, consistent max-width for readability.
-- [ ] **U4 — Feature-by-feature polish.** Each sub-item is verified on screen:
+- [x] **U4 — Feature-by-feature polish.** Each sub-item is verified on screen:
   - [x] U4.1 Auth — Login, Verify
   - [x] U4.2 Chat list + Thread (bubbles, quotes, reactions, ticks, date chips)
   - [x] U4.3 Composer + pickers (emoji / GIF / sticker / tools popover)
   - [x] U4.4 Rich message cards — polls, interactive buttons, location, contacts, link previews
-  - [ ] U4.5 Media — gallery, downloads panel, voice notes, viewer
-  - [ ] U4.6 Calls — history + in-call overlay
-  - [ ] U4.7 Status / Stories
-  - [ ] U4.8 Channels + Communities + Discover
-  - [ ] U4.9 Contacts, New chat, Create group, Group info, Profile
-  - [ ] U4.10 Settings — all sections incl. Security, AI, Bots, Notifications
-  - [ ] U4.11 Collab notes & tasks + Whiteboard
-  - [ ] U4.12 Search + secret chats
-- [ ] **U5 — Sweep.** Responsive (mobile / tablet / desktop), dark-mode parity,
+  - [x] U4.5 Media — gallery, downloads panel, voice notes, viewer
+  - [x] U4.6 Calls — history + in-call overlay
+  - [x] U4.7 Status / Stories
+  - [x] U4.8 Channels + Communities + Discover
+  - [x] U4.9 Contacts, New chat, Create group, Group info, Profile
+  - [x] U4.10 Settings — all sections incl. Security, AI, Bots, Notifications
+  - [x] U4.11 Collab notes & tasks + Whiteboard
+  - [x] U4.12 Search + secret chats
+- [x] **U5 — Sweep.** Responsive (mobile / tablet / desktop), dark-mode parity,
   keyboard + screen-reader pass, reduced-motion, final visual QA.
 
 ## 4. Rules for every change

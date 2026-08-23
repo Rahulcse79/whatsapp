@@ -50,6 +50,19 @@ type Objects interface {
 	Remove(ctx context.Context, key string) error
 }
 
+// Delivery mints the URL a client actually fetches an object from (T15.04). It
+// is split from Objects because the read path is the one a CDN fronts: with no
+// CDN configured this is a MinIO presigned GET exactly as before, and with one
+// it is an edge URL carrying a signed token. Blobs are E2EE ciphertext, so an
+// intermediate cache never sees plaintext.
+type Delivery interface {
+	// DownloadURL returns a URL granting a time-limited GET of key.
+	DownloadURL(ctx context.Context, key string, expires time.Duration) (string, error)
+	// Cacheable reports whether an edge cache serves the URLs, so callers can
+	// tell clients a URL is worth holding on to.
+	Cacheable() bool
+}
+
 // Sessions holds transient pending-upload state (the MinIO handle) out-of-band
 // (Valkey, 24h TTL) since media_objects has no upload-handle column.
 type Sessions interface {
@@ -81,6 +94,7 @@ type Events interface {
 type Service struct {
 	store    Store
 	objects  Objects
+	delivery Delivery
 	sessions Sessions
 	quota    Quota
 	rate     Rate
@@ -89,8 +103,29 @@ type Service struct {
 }
 
 func NewService(store Store, objects Objects, sessions Sessions, quota Quota, rate Rate, events Events) *Service {
-	return &Service{store: store, objects: objects, sessions: sessions, quota: quota, rate: rate, events: events, now: time.Now}
+	s := &Service{store: store, objects: objects, sessions: sessions, quota: quota, rate: rate, events: events, now: time.Now}
+	s.delivery = directDelivery{objects} // no CDN configured: presign as before
+	return s
 }
+
+// WithDelivery swaps the download-URL minter — this is how a CDN is put in
+// front of MinIO without touching the upload path (T15.04). Passing nil keeps
+// the direct presign.
+func (s *Service) WithDelivery(d Delivery) *Service {
+	if d != nil {
+		s.delivery = d
+	}
+	return s
+}
+
+// directDelivery is the no-CDN default: a MinIO presigned GET, i.e. exactly the
+// behaviour before T15.04.
+type directDelivery struct{ objects Objects }
+
+func (d directDelivery) DownloadURL(ctx context.Context, key string, expires time.Duration) (string, error) {
+	return d.objects.PresignGet(ctx, key, expires)
+}
+func (directDelivery) Cacheable() bool { return false }
 
 // CreateUpload validates + rate-limits + reserves quota, opens a multipart
 // upload, and returns presigned PUT URLs (POST /uploads).
@@ -201,11 +236,17 @@ func (s *Service) DownloadURLs(ctx context.Context, ident auth.Identity, keys []
 		if err != nil {
 			return nil, httpx.Transient()
 		}
-		url, err := s.objects.PresignGet(ctx, key, DownloadTTL)
+		url, err := s.delivery.DownloadURL(ctx, key, DownloadTTL)
 		if err != nil {
 			return nil, httpx.Transient()
 		}
-		out = append(out, DownloadURL{Key: key, URL: url, Expires: expiresMS})
+		out = append(out, DownloadURL{
+			Key:       key,
+			URL:       url,
+			Expires:   expiresMS,
+			SizeBytes: obj.SizeBytes,
+			Cached:    s.delivery.Cacheable(),
+		})
 	}
 	// NOTE: membership-of-referencing-conversation check is enforced when the
 	// chat gRPC surface is wired (media-stories-api.md).

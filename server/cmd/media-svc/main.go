@@ -133,6 +133,23 @@ func main() {
 		events,
 	)
 
+	// CDN delivery (T15.04): when an edge is configured, download URLs point at
+	// it with a signed token instead of at MinIO with a presigned GET. Media is
+	// E2EE ciphertext, so the cache never sees plaintext. Unset = direct
+	// presign, unchanged. Misconfiguring only one half is fatal rather than
+	// silently minting URLs the edge would reject.
+	if base, key := os.Getenv("WA_CDN_BASE_URL"), os.Getenv("WA_CDN_SIGNING_KEY"); base != "" || key != "" {
+		cdn, err := mediaadapters.NewCDNDelivery(base, key)
+		if err != nil {
+			log.Error("CDN delivery misconfigured", "err", err)
+			os.Exit(1)
+		}
+		svc = svc.WithDelivery(cdn)
+		log.Info("media download URLs served via CDN", "base_url", base)
+	} else {
+		log.Info("no CDN configured — media download URLs are direct MinIO presigns")
+	}
+
 	// media.lifecycle consumer: apply inbound dereference commands (delete-for-
 	// everyone with media, account purge) to the refcount (media-svc-lld §4).
 	// Queue-grouped so exactly one pod handles each event; idempotent via a

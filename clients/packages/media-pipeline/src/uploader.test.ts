@@ -184,3 +184,84 @@ describe("ResumableUploader", () => {
     expect(partCount(25 * MB + 1, 5 * MB)).toBe(6); // a trailing byte spills into one more part
   });
 });
+
+// ── Part-upload concurrency (T15.04) ────────────────────────────────────────
+// Parts used to be PUT strictly one at a time, so a multi-part upload was bound
+// by per-request latency rather than bandwidth. These cover the window without
+// weakening any of the resume guarantees above.
+
+/** Records how many PUTs are in flight simultaneously so the cap is observable. */
+class ConcurrencyProbeTransport implements UploadTransport {
+  maxInFlight = 0;
+  private inFlight = 0;
+  readonly stored = new Map<number, Uint8Array>();
+  readonly numParts: number;
+
+  constructor(
+    readonly ciphertextLen: number,
+    readonly partSize: number,
+    private readonly delayMs = 5,
+  ) {
+    this.numParts = Math.max(1, Math.ceil(ciphertextLen / partSize));
+  }
+
+  postJSON<T>(path: string, _body: unknown): Promise<T> {
+    if (path.endsWith("/complete")) return Promise.resolve({ media_id: "m1" } as T);
+    if (path.endsWith("/presign")) return Promise.resolve({ part_urls: [] } as T);
+    const part_urls: PartURL[] = [];
+    for (let n = 1; n <= this.numParts; n++) part_urls.push({ part_number: n, url: `put://part/${n}` });
+    return Promise.resolve({ upload_id: "u1", object_key: "k1", part_urls, part_size: this.partSize } as T);
+  }
+
+  async putPart(url: string, bytes: Uint8Array): Promise<string> {
+    this.inFlight++;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    try {
+      await new Promise((r) => setTimeout(r, this.delayMs));
+      const n = Number(url.split("/").pop());
+      this.stored.set(n, bytes);
+      return `etag-${n}`;
+    } finally {
+      this.inFlight--;
+    }
+  }
+}
+
+describe("part upload concurrency", () => {
+  it("uploads parts in parallel up to the configured window", async () => {
+    const t = new ConcurrencyProbeTransport(1000, 100); // 10 parts
+    await new ResumableUploader(t, 3, 4).upload(new Uint8Array(1000), "h", "application/octet-stream");
+    expect(t.stored.size).toBe(10);
+    expect(t.maxInFlight).toBeGreaterThan(1); // actually parallel
+    expect(t.maxInFlight).toBeLessThanOrEqual(4); // and capped
+  });
+
+  it("never exceeds a window of 1 (serial) when asked", async () => {
+    const t = new ConcurrencyProbeTransport(500, 100); // 5 parts
+    await new ResumableUploader(t, 3, 1).upload(new Uint8Array(500), "h", "application/octet-stream");
+    expect(t.maxInFlight).toBe(1);
+    expect(t.stored.size).toBe(5);
+  });
+
+  it("still stores every part when the window is wider than the part count", async () => {
+    const t = new ConcurrencyProbeTransport(150, 100); // 2 parts, window 8
+    await new ResumableUploader(t, 3, 8).upload(new Uint8Array(150), "h", "application/octet-stream");
+    expect(t.stored.size).toBe(2);
+    expect(t.maxInFlight).toBeLessThanOrEqual(2);
+  });
+
+  it("reports missing parts in ascending order despite out-of-order completion", async () => {
+    // Parts 2 and 4 fail forever; the uploader must surface them sorted so
+    // retries and logs stay deterministic.
+    const fails = new Map([
+      [2, Number.MAX_SAFE_INTEGER],
+      [4, Number.MAX_SAFE_INTEGER],
+    ]);
+    const t = new FakeTransport(500, 100, fails); // 5 parts
+    await expect(
+      new ResumableUploader(t, 1, 4).upload(new Uint8Array(500), "h", "application/octet-stream"),
+    ).rejects.toThrow(/unrecoverable/);
+    // Each presign round asks for exactly the still-missing parts, in order.
+    for (const call of t.presignCalls) expect(call).toEqual([...call].sort((a, b) => a - b));
+  });
+});

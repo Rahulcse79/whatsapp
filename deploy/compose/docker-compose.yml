@@ -79,6 +79,35 @@ services:
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
 
   # ── offline profile (HLD §17.5): self-hosted push / OTP / CA ──────────────
+
+  # Media edge cache (T15.04): validates the HMAC token media-svc mints, pulls
+  # from MinIO on a miss, caches immutable E2EE ciphertext, and passes Range
+  # through so video plays progressively. Opt-in — media-svc only points clients
+  # here when WA_CDN_BASE_URL/WA_CDN_SIGNING_KEY are set.
+  media-cdn:
+    image: nginx:1.27-alpine
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      # Must equal media-svc's WA_CDN_SIGNING_KEY.
+      CDN_SIGNING_KEY: ${WA_CDN_SIGNING_KEY:-dev-edge-signing-key}
+      MINIO_BUCKET: ${MINIO_BUCKET:-media}
+    ports:
+      - "8088:8088"
+    volumes:
+      # Main context first: `load_module` for njs is only valid there, so the
+      # server block cannot load it from conf.d.
+      - ./config/cdn/nginx-main.conf:/etc/nginx/nginx.conf:ro
+      - ./config/cdn/nginx.conf:/etc/nginx/templates/default.conf.template:ro
+      - ./config/cdn/verify.js:/etc/nginx/njs/verify.js:ro
+      - cdncache:/var/cache/nginx/media
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8088/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   ntfy:
     profiles: ["offline"]
     image: binwiederhier/ntfy:latest
@@ -150,6 +179,7 @@ services:
     # Tempo (traces) + provisioned dashboards land with task T0.23.
 
 volumes:
+  cdncache:
   pgdata:
   natsdata:
   miniodata:

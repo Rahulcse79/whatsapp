@@ -61,4 +61,11 @@ type DownloadURL struct {
 	Key     string `json:"key"`
 	URL     string `json:"url"`
 	Expires int64  `json:"expires_ms"`
+	// SizeBytes lets a client choose between a progressive/ranged fetch and a
+	// plain download without a HEAD round-trip. The server cannot report a
+	// content type — the blob is ciphertext and only the envelope knows.
+	SizeBytes int64 `json:"size_bytes"`
+	// Cached is true when an edge cache serves the URL, so a client may reuse
+	// it for its whole TTL instead of re-minting per attempt.
+	Cached bool `json:"cached,omitempty"`
 }

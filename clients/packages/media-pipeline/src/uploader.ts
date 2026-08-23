@@ -51,11 +51,21 @@ const CREATE_PATH = "/v1/media/uploads";
 
 /** ResumableUploader drives one ciphertext blob to completion over the transport. */
 export class ResumableUploader {
+  private readonly partConcurrency: number;
+
   constructor(
     private readonly transport: UploadTransport,
     /** How many times to re-presign-and-retry the still-missing parts. */
     private readonly maxResumes = 3,
-  ) {}
+    /** How many part PUTs may be in flight at once (T15.04 upload tuning).
+     *  Parts were previously uploaded strictly one at a time, which left a
+     *  multi-part upload bound by per-request latency rather than by
+     *  bandwidth. A small window keeps a mobile radio busy without starving
+     *  the rest of the app or tripping per-connection limits. */
+    partConcurrency = 4,
+  ) {
+    this.partConcurrency = Math.max(1, partConcurrency);
+  }
 
   /** upload stores `ciphertext` and returns the finalized media identity.
    *  `contentHashB64` and `size` must describe exactly these bytes — media-svc
@@ -106,19 +116,36 @@ export class ResumableUploader {
     partSize: number,
     etags: Map<number, string>,
   ): Promise<number[]> {
+    // Only the parts still outstanding; an already-stored part is never re-PUT,
+    // which is what makes a resume cheap.
+    const todo = parts.filter((p) => !etags.has(p.part_number));
     const missing: number[] = [];
-    for (const part of parts) {
-      if (etags.has(part.part_number)) continue;
-      const start = (part.part_number - 1) * partSize;
-      const slice = ciphertext.subarray(start, Math.min(start + partSize, ciphertext.length));
-      try {
-        const etag = await this.transport.putPart(part.url, slice);
-        etags.set(part.part_number, etag);
-      } catch {
-        missing.push(part.part_number);
+
+    // A fixed pool of workers drains the queue, so at most `partConcurrency`
+    // PUTs are in flight regardless of how many parts the blob has. Failures
+    // are collected rather than thrown: the caller re-presigns exactly the
+    // missing parts and loops.
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      for (;;) {
+        const i = next++;
+        const part = todo[i];
+        if (!part) return;
+        const start = (part.part_number - 1) * partSize;
+        const slice = ciphertext.subarray(start, Math.min(start + partSize, ciphertext.length));
+        try {
+          const etag = await this.transport.putPart(part.url, slice);
+          etags.set(part.part_number, etag);
+        } catch {
+          missing.push(part.part_number);
+        }
       }
-    }
-    return missing;
+    };
+    await Promise.all(Array.from({ length: Math.min(this.partConcurrency, todo.length) }, worker));
+
+    // Ascending order keeps retries and logs deterministic even though the
+    // parts completed out of order.
+    return missing.sort((a, b) => a - b);
   }
 }
 

@@ -1,0 +1,17 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowEdgeReadOnly",
+      "Effect": "Allow",
+      "Principal": { "AWS": ["*"] },
+      "Action": ["s3:GetObject"],
+      "Resource": ["arn:aws:s3:::media/*"],
+      "Condition": {
+        "IpAddress": {
+          "aws:SourceIp": ["172.16.0.0/12", "10.0.0.0/8"]
+        }
+      }
+    }
+  ]
+}

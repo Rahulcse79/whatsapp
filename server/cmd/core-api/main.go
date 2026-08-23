@@ -57,6 +57,8 @@ import (
 	keyadapters "github.com/whatsapp-v2/server/internal/keys/adapters"
 	"github.com/whatsapp-v2/server/internal/notifyprefs"
 	notifyprefsadapters "github.com/whatsapp-v2/server/internal/notifyprefs/adapters"
+	"github.com/whatsapp-v2/server/internal/payments"
+	paymentsadapters "github.com/whatsapp-v2/server/internal/payments/adapters"
 	"github.com/whatsapp-v2/server/internal/platform/config"
 	"github.com/whatsapp-v2/server/internal/platform/flags"
 	"github.com/whatsapp-v2/server/internal/platform/logging"
@@ -319,6 +321,27 @@ func main() {
 	botsSvc := bots.NewService(botsadapters.NewStore(pool), botsadapters.NewHTTPDispatcher())
 	// Multi-channel notification preferences (T14.01): server-authoritative channels/quiet-hours/snooze/scheduled reminders.
 	notifyPrefsSvc := notifyprefs.NewService(notifyprefsadapters.NewStore(pool))
+	// Payments (T15.05). No processor configured = the disabled PSP, which
+	// refuses rather than pretending: a no-op that "succeeds" would hand out paid
+	// entitlements for free. P2P transfers stay off unless a licensed provider is
+	// injected. No card data ever reaches this process — see internal/payments.
+	var psp payments.PSP = paymentsadapters.NewDisabledPSP()
+	if base, secret := os.Getenv("WA_PSP_CHECKOUT_URL"), os.Getenv("WA_PSP_WEBHOOK_SECRET"); base != "" || secret != "" {
+		hosted, err := paymentsadapters.NewHostedPSP(paymentsadapters.HostedConfig{
+			Name:          envOr("WA_PSP_NAME", "hosted"),
+			CheckoutBase:  base,
+			WebhookSecret: secret,
+		})
+		if err != nil {
+			log.Error("payment provider misconfigured", "err", err)
+			os.Exit(1)
+		}
+		psp = hosted
+		log.Info("payments enabled", "provider", psp.Name())
+	} else {
+		log.Info("payments disabled — no provider configured")
+	}
+	paymentsSvc := payments.NewService(paymentsadapters.NewStore(pool), psp, paymentsadapters.NewDisabledTransfers(), log)
 	profileSvc := profile.NewService(profileadapters.NewStore(pool))
 	// Scheduled-post sweep: flip due channel posts to published and broadcast
 	// them. 15 s cadence; a plain UPDATE…RETURNING so overlap across pods only
@@ -442,6 +465,7 @@ func main() {
 	// separate hostname, IP allowlist, hardware-key 2FA — are enforced at Envoy.
 	var adminSvc *admin.Service
 	var adminFlags *admin.FlagConsole
+	var adminPayments *admin.PaymentsConsole
 	if iss, jwksJSON := os.Getenv("WA_ADMIN_OIDC_ISSUER"), os.Getenv("WA_ADMIN_OIDC_JWKS"); iss != "" && jwksJSON != "" {
 		keySet, err := admin.NewKeySet([]byte(jwksJSON))
 		if err != nil {
@@ -453,6 +477,8 @@ func main() {
 		adminSvc = admin.NewService(verifier, adminStore, adminStore, adminStore)
 		// Feature-flag management rides the admin plane (RBAC + audit + OIDC).
 		adminFlags = admin.NewFlagConsole(flagStore, adminStore, flagCache)
+		// Payments console (T15.05): ledger for support, refunds for owners only.
+		adminPayments = admin.NewPaymentsConsole(payments.NewAdminBridge(paymentsSvc), adminStore)
 		log.Info("admin plane enabled", "issuer", iss)
 	} else {
 		log.Warn("admin plane disabled — WA_ADMIN_OIDC_ISSUER/JWKS unset (no IdP configured)")
@@ -504,11 +530,13 @@ func main() {
 	discovery.Routes(mux, discoverySvc, issuer)     // /v1/discover: public metadata search (channels/communities/usernames) (T13.01)
 	bots.Routes(mux, botsSvc, issuer)               // /v1/bots: bot framework — register + HMAC webhook (T13.02)
 	notifyprefs.Routes(mux, notifyPrefsSvc, issuer) // /v1/notifications: prefs, snooze, scheduled reminders (T14.01)
+	payments.Routes(mux, paymentsSvc, issuer)       // /v1/payments: subscriptions, channel monetization, PSP webhook (T15.05)
 	chat.Routes(mux, chatStore, issuer)             // POST /v1/conversations/direct (start a 1:1)
 	profile.Routes(mux, profileSvc, issuer)         // /v1/me, /v1/users/{id}, /v1/blocks (T5.07)
 	if adminSvc != nil {
 		admin.Routes(mux, adminSvc)
 		admin.FlagRoutes(mux, adminSvc, adminFlags)
+		admin.PaymentsRoutes(mux, adminSvc, adminPayments)
 	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {

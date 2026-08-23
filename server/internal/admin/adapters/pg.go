@@ -244,6 +244,23 @@ func appendAudit(ctx context.Context, tx pgx.Tx, e admin.AuditEntry) error {
 	return err
 }
 
+// AppendAudit writes a standalone audit row.
+//
+// Every other mutation in this package audits inside its own transaction, and
+// that co-transactionality is the security guarantee — an action cannot land
+// without its trace. This one is the documented exception: a payment refund's
+// effect happens at the payment processor, outside any database transaction we
+// control, so there is nothing to be co-transactional WITH. The console calls
+// this only after the processor has accepted the reversal, and surfaces a
+// failure here to the operator rather than swallowing it, so a refund that went
+// unlogged is visible immediately instead of discovered in an audit.
+func (s *Store) AppendAudit(ctx context.Context, e admin.AuditEntry) error {
+	_, err := s.pool.Exec(ctx,
+		`INSERT INTO audit_log (actor, action, target, reason) VALUES ($1, $2, $3, $4)`,
+		e.Actor, e.Action, nullIfEmpty(e.Target), nullIfEmpty(e.Reason))
+	return err
+}
+
 // List returns the newest audit rows for owner review.
 func (s *Store) List(ctx context.Context, limit int) ([]admin.AuditRecord, error) {
 	rows, err := s.pool.Query(ctx,

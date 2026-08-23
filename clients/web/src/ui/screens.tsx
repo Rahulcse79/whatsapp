@@ -226,6 +226,12 @@ function fmtRowTime(ms: number): string {
   return d.toLocaleDateString([], { day: "2-digit", month: "2-digit", year: "2-digit" });
 }
 
+/** isUuidLike spots an unresolved id being used as a display title, so the UI can
+ *  fall back to a human label instead of showing a raw UUID to the user. */
+function isUuidLike(v: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+}
+
 /** fmtClock renders a bubble timestamp (h:mm). */
 function fmtClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
@@ -786,7 +792,11 @@ export function ChatList({
     const fav = services.isFavorite(id);
     const archived = services.isArchived(id);
     const isGroup = !!services.groupNameOf(id);
-    const name = nameOf(id) || c.title || id.slice(0, 12);
+    // Fall back to a human label rather than dumping a conversation UUID as a
+    // person's name when the peer's profile hasn't resolved yet (the summary's
+    // own title is the conversation id until a name is known).
+    const rawTitle = c.title && !isUuidLike(c.title) ? c.title : "";
+    const name = nameOf(id) || rawTitle || (isGroup ? "Group" : "Unknown contact");
     const stop = (fn: () => void) => (e: { stopPropagation: () => void }) => {
       e.stopPropagation();
       fn();
@@ -804,9 +814,17 @@ export function ChatList({
         <div className="row-main">
           <div className="row-line1">
             <span className="row-title">
-              {fav && <span title="Favorite" style={{ marginRight: 4 }}>⭐</span>}
+              {fav ? (
+                <span className="row-flag" title="Favorite" aria-label="Favorite">
+                  <Icon name="star" size={13} />
+                </span>
+              ) : null}
               {name}
-              {muted && <span title="Muted" style={{ marginLeft: 6, opacity: 0.6 }}>🔇</span>}
+              {muted ? (
+                <span className="row-flag" title="Muted" aria-label="Muted">
+                  <Icon name="mute" size={13} />
+                </span>
+              ) : null}
             </span>
             <span className="row-time">{fmtRowTime(c.updatedAt)}</span>
           </div>
@@ -814,16 +832,16 @@ export function ChatList({
             <span className="row-sub">{c.lastPreview || "No messages yet"}</span>
             <span className="row-right">
               {unread > 0 && (
-                <span className="unread-badge" aria-label={`${unread} unread`} style={muted ? { background: "#8696a0" } : undefined}>
+                <span className={`unread-badge${muted ? " muted" : ""}`} aria-label={`${unread} unread`}>
                   {unread > 99 ? "99+" : unread}
                 </span>
               )}
               <span className="row-actions">
                 <button className={`icon-btn${fav ? " on" : ""}`} title={fav ? "Unfavorite" : "Favorite"} aria-label="Toggle favorite" onClick={stop(() => services.toggleFavorite(id))}>
-                  {fav ? "★" : "☆"}
+                  <Icon name="star" size={15} />
                 </button>
                 <button className={`icon-btn${archived ? " on" : ""}`} title={archived ? "Unarchive" : "Archive"} aria-label="Toggle archive" onClick={stop(() => services.toggleArchive(id))}>
-                  🗄
+                  <Icon name="archive" size={15} />
                 </button>
               </span>
             </span>
@@ -881,7 +899,16 @@ export function ChatList({
         />
       </div>
       {items.length === 0 ? (
-        <p className="muted center">No conversations yet. Start one with the ✏️ button.</p>
+        <EmptyState
+          icon={<Icon name="chats" size={26} />}
+          title="No conversations yet"
+          text="Start a chat with someone, or create a group to get going."
+          action={
+            <button className="btn small" onClick={onNew}>
+              Start a new chat
+            </button>
+          }
+        />
       ) : shown.length === 0 ? (
         <p className="muted center">No chats match “{filter}”.</p>
       ) : (
@@ -5265,8 +5292,8 @@ export function Thread({
           onKeyDown={group ? onActivate(() => onGroupInfo(conversationId)) : undefined}
           title={group ? "Group info" : undefined}
         >
-          <span className={group || services.peerNameOf(conversationId) ? "thread-name" : "thread-name mono"}>
-            {group ? group.name : services.peerNameOf(conversationId) || conversationId.slice(0, 12)}
+          <span className="thread-name" title={group ? group.name : services.peerNameOf(conversationId) || conversationId}>
+            {group ? group.name : services.peerNameOf(conversationId) || "Unknown contact"}
           </span>
           {group ? (
             <span className="thread-status">
@@ -5347,7 +5374,9 @@ export function Thread({
       </div>
       {services.isLocked(conversationId) && !unlocked ? <LockGate onUnlock={() => setUnlocked(true)} /> : null}
       <div className="messages" style={wallpaper ? { background: WALLPAPERS[wallpaper] ?? undefined } : undefined}>
-        {messages.length === 0 ? <p className="muted center">Say hello 👋</p> : null}
+        {messages.length === 0 ? (
+          <EmptyState title="No messages yet" text="Say hello — messages in this chat are end-to-end encrypted." />
+        ) : null}
         {messages.map((m) => {
           // Collapse a live-location share to its latest sample (one moving pin).
           const lv = parseLiveLocation(m.body);

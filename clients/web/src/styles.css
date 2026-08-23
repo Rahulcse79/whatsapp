@@ -1694,7 +1694,7 @@ body:has(.auth)::before {
   background-size: 300px;
 }
 :root[data-theme="dark"] .messages {
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='none' stroke='%23fff' stroke-opacity='0.03' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='30' cy='30' r='11'/%3E%3Cpath d='M90 18v16M82 26h16'/%3E%3Cpath d='M18 98q11-15 22 0'/%3E%3Crect x='94' y='90' width='20' height='20' rx='5'/%3E%3Cpath d='M60 70l8 8 8-8'/%3E%3C/g%3E%3C/svg%3E");
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140' viewBox='0 0 140 140'%3E%3Cg fill='none' stroke='%23fff' stroke-opacity='0.018' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='30' cy='30' r='11'/%3E%3Cpath d='M90 18v16M82 26h16'/%3E%3Cpath d='M18 98q11-15 22 0'/%3E%3Crect x='94' y='90' width='20' height='20' rx='5'/%3E%3Cpath d='M60 70l8 8 8-8'/%3E%3C/g%3E%3C/svg%3E");
 }
 
 .bubble {
@@ -1775,25 +1775,30 @@ body:has(.auth)::before {
 .composer {
   display: flex;
   align-items: center;
-  gap: 3px;
-  padding: 8px 14px;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-4);
   background: var(--header);
+  border-top: 1px solid var(--line);
 }
 
 .composer .input {
   flex: 1;
-  border: none;
-  border-radius: 22px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-xl);
   background: var(--panel);
-  padding: 11px 16px;
+  padding: 11px var(--space-4);
+  font-size: var(--text-lg);
+  box-shadow: var(--shadow-xs);
 }
 .composer .input:focus {
   outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
   color: var(--muted);
 }
 
@@ -1812,13 +1817,18 @@ body:has(.auth)::before {
    URI carried in the envelope; nothing is fetched to render it. */
 .link-preview {
   display: block;
-  margin-top: 6px;
-  border-radius: 8px;
+  margin-top: var(--space-2);
+  border-radius: var(--radius-sm);
   overflow: hidden;
   text-decoration: none;
   color: inherit;
-  background: rgba(0, 0, 0, 0.05);
-  border-left: 3px solid #128c7e;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  border-left: 3px solid var(--accent);
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.link-preview:hover {
+  background: color-mix(in srgb, var(--text) 11%, transparent);
+  text-decoration: none;
 }
 .head-actions {
   display: inline-flex;
@@ -2392,11 +2402,28 @@ body:has(.auth)::before {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 8px 14px;
-  background: var(--brand-dark);
-  color: #fff;
-  font-size: 14px;
+  gap: var(--space-3);
+  margin: 0 var(--space-4) var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-full);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow-md);
+  color: var(--text);
+  font-size: var(--text-base);
+  animation: toast-in var(--dur-base) var(--ease-out);
+}
+.undo-bar button {
+  background: transparent;
+  border: none;
+  color: var(--accent-strong);
+  font-weight: var(--weight-semibold);
+  cursor: pointer;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+}
+.undo-bar button:hover {
+  background: var(--accent-soft);
 }
 .undo-bar button {
   background: rgba(255, 255, 255, 0.18);
@@ -2868,12 +2895,20 @@ body:has(.auth)::before {
   border: none;
   border-radius: 50%;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   margin-left: 2px;
+  box-shadow: var(--shadow-sm);
+  transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
+}
+.wa-send:hover {
+  background: var(--accent-strong);
+}
+.wa-send:active {
+  transform: scale(0.94);
 }
 .wa-send:hover {
   background: var(--accent-strong);
@@ -3227,4 +3262,21 @@ body:has(.auth)::before {
 .entity-glyph.neutral {
   background: var(--panel-2);
   color: var(--muted);
+}
+
+/* ── Chat-list row flags (favourite / muted) ──────────────────────────────── */
+.row-flag {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+.row-title .row-flag:first-child {
+  margin-right: 4px;
+}
+.row-title .row-flag:last-child {
+  margin-left: 5px;
+}
+.unread-badge.muted {
+  background: var(--muted);
 }

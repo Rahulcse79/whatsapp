@@ -55,7 +55,7 @@ func (s *Service) Post(ctx context.Context, ident auth.Identity, kindStr string,
 
 	now := s.now()
 	story := Story{
-		ID: s.newID(), AuthorID: ident.UserID, MediaRef: mediaRef,
+		ID: s.newID(), AuthorID: ident.UserID, Kind: kind, MediaRef: mediaRef,
 		Audience: aud, ExpiresAt: domain.ExpiryFrom(now), CreatedAt: now,
 	}
 	if err := s.store.Create(ctx, story); err != nil {
@@ -72,9 +72,15 @@ func (s *Service) Feed(ctx context.Context, ident auth.Identity) ([]FeedItem, er
 	}
 	out := make([]FeedItem, 0, len(list))
 	for _, st := range list {
+		ref := ""
+		if st.MediaRef != nil {
+			ref = *st.MediaRef
+		}
 		out = append(out, FeedItem{
 			StoryID: st.ID, Author: st.AuthorID,
-			ExpiresAt: st.ExpiresAt.UnixMilli(), KeyAvailable: st.MediaRef != nil,
+			Kind: st.Kind.String(), MediaRef: ref,
+			ExpiresAt: st.ExpiresAt.UnixMilli(), CreatedAt: st.CreatedAt.UnixMilli(),
+			KeyAvailable: st.MediaRef != nil,
 		})
 	}
 	return out, nil

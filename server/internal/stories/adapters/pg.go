@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/whatsapp-v2/server/internal/stories"
+	"github.com/whatsapp-v2/server/internal/stories/domain"
 )
 
 // Store implements stories.Store over the stories + story_views tables
@@ -21,17 +22,21 @@ func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Create(ctx context.Context, st stories.Story) error {
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO stories (id, author_id, media_ref, audience_snapshot, expires_at, created_at)
-		 VALUES ($1, $2, $3, $4::uuid[], $5, $6)`,
-		st.ID, st.AuthorID, st.MediaRef, st.Audience, st.ExpiresAt, st.CreatedAt)
+		`INSERT INTO stories (id, author_id, kind, media_ref, audience_snapshot, expires_at, created_at)
+		 VALUES ($1, $2, $3, $4, $5::uuid[], $6, $7)`,
+		st.ID, st.AuthorID, int16(st.Kind), st.MediaRef, st.Audience, st.ExpiresAt, st.CreatedAt)
 	return err
 }
 
-const selectStory = `SELECT id, author_id, media_ref, audience_snapshot, expires_at, created_at FROM stories`
+const selectStory = `SELECT id, author_id, kind, media_ref, audience_snapshot, expires_at, created_at FROM stories`
 
 func scanStory(row pgx.Row) (stories.Story, error) {
-	var st stories.Story
-	err := row.Scan(&st.ID, &st.AuthorID, &st.MediaRef, &st.Audience, &st.ExpiresAt, &st.CreatedAt)
+	var (
+		st   stories.Story
+		kind int16
+	)
+	err := row.Scan(&st.ID, &st.AuthorID, &kind, &st.MediaRef, &st.Audience, &st.ExpiresAt, &st.CreatedAt)
+	st.Kind = domain.Kind(kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return stories.Story{}, stories.ErrNotFound
 	}

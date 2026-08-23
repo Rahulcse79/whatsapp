@@ -127,7 +127,7 @@ Two things are missing, and both are needed:
 
 Ordered so the highest-impact, most-verifiable fix lands first.
 
-- [ ] **Phase A — Calling: make media flow.** Unify the call identity space on
+- [x] **Phase A — Calling: make media flow.** Unify the call identity space on
   user ids in both clients (C1). Add a decrypt-failure counter and a one-line
   warning so this class of bug is visible next time (C2). Handle a rejected
   mic/camera permission and surface it in the call state (C3). Verify on the
@@ -135,7 +135,7 @@ Ordered so the highest-impact, most-verifiable fix lands first.
 - [ ] **Phase B — Calling: media plumbing.** Attach remote tracks into the call
   overlay instead of `document.body` (C4), and make hangup/teardown release
   every track.
-- [ ] **Phase C — Status: make content reach viewers.** Return `kind` and
+- [~] **Phase C — Status: make content reach viewers.** *(server half done: the feed now returns `kind` + `media_ref` + `created_at`, verified live. Client half — distributing the per-story payload/key to the audience — is next.)* Return `kind` and
   `media_ref` from the feed so a viewer can locate the content, and distribute
   the per-story payload/key to the audience over the existing E2EE message
   channel at post time. Viewers cache what they receive and render it (S1).

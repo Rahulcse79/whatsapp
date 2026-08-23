@@ -234,3 +234,78 @@ func TestPurgeExpired(t *testing.T) {
 	}
 	_ = domain.TTL // keep domain imported
 }
+
+// The defect this covers: the feed used to return only
+// {story_id, author, expires_at, key_available}. A viewer therefore had no idea
+// whether a story was text or video, and no way to locate its ciphertext — so
+// every status except the author's own (cached locally on the posting device)
+// rendered as an empty placeholder. The feed must carry enough for a viewer to
+// fetch and render.
+func TestFeedCarriesWhatAViewerNeedsToRender(t *testing.T) {
+	h := newHarness()
+	svc := h.svc
+	ctx := context.Background()
+	author, viewer := who("author"), who("viewer")
+
+	ref := "media/story-blob.bin"
+	if _, err := svc.Post(ctx, author, "image", &ref, []string{"viewer"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.Post(ctx, author, "text", nil, []string{"viewer"}); err != nil {
+		t.Fatal(err)
+	}
+
+	feed, err := svc.Feed(ctx, viewer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feed) != 2 {
+		t.Fatalf("viewer should see both stories, got %d", len(feed))
+	}
+
+	var sawImage, sawText bool
+	for _, f := range feed {
+		switch f.Kind {
+		case "image":
+			sawImage = true
+			if f.MediaRef != ref {
+				t.Errorf("an image story must carry its object key so the viewer can fetch it, got %q", f.MediaRef)
+			}
+			if !f.KeyAvailable {
+				t.Error("an image story carries media, so key_available must be true")
+			}
+		case "text":
+			sawText = true
+			if f.MediaRef != "" {
+				t.Errorf("a text story has no blob, got media_ref %q", f.MediaRef)
+			}
+		default:
+			t.Errorf("unexpected kind %q — the feed must tell the viewer what to render", f.Kind)
+		}
+		if f.CreatedAt == 0 {
+			t.Error("created_at is needed to order a viewer's ring")
+		}
+	}
+	if !sawImage || !sawText {
+		t.Fatalf("expected one image and one text story, got image=%v text=%v", sawImage, sawText)
+	}
+}
+
+// Privacy is unchanged by the above: someone outside the audience still sees
+// nothing, so returning the object key cannot leak to a non-viewer.
+func TestFeedStillExcludesNonAudience(t *testing.T) {
+	h := newHarness()
+	svc := h.svc
+	ctx := context.Background()
+	ref := "media/secret.bin"
+	if _, err := svc.Post(ctx, who("author"), "image", &ref, []string{"friend"}); err != nil {
+		t.Fatal(err)
+	}
+	feed, err := svc.Feed(ctx, who("stranger"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(feed) != 0 {
+		t.Fatalf("a non-audience viewer must see nothing, got %+v", feed)
+	}
+}

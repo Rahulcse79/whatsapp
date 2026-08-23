@@ -21,3 +21,4 @@ We need durable at-least-once transit for message delivery, push dispatch, and d
 - ✅ Three tiny pods, ms latency, subject-per-device fits routing exactly.
 - ⚠️ Smaller ecosystem than Kafka; fewer connectors (we need none).
 - Revisit trigger: sustained > 50k msg/s or a hard event-archival requirement.
+- **Re-evaluated post-build by [ADR-007](ADR-007-kafka-reevaluation.md) (T15.02): NATS stays.** That ADR replaces the trigger above with conditions observable from instrumentation.

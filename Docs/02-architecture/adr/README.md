@@ -10,6 +10,7 @@ Decisions are immutable once **Accepted**; to change one, write a new ADR that s
 | [ADR-004](ADR-004-livekit-sfu.md) | LiveKit SFU — operate, don't build | Accepted |
 | [ADR-005](ADR-005-client-side-search.md) | Client-side content search; no OpenSearch | Accepted |
 | [ADR-006](ADR-006-client-stack.md) | React Native + Vite PWA (Flutter/Next.js rejected) | Accepted |
+| [ADR-007](ADR-007-kafka-reevaluation.md) | Kafka re-evaluated post-build — NATS stays (T15.02) | Accepted |
 
 ## Template
 

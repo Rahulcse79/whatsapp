@@ -1,0 +1,32 @@
+# gitleaks configuration.
+#
+# The CI secret scan runs over the FULL history, which is what makes it useful —
+# a credential committed and later deleted is still leaked. The consequence is
+# that a finding cannot be fixed by editing the working tree: the allowlist has
+# to name the specific value.
+#
+# Rules for adding anything here:
+#   1. Only ever allowlist a value that is provably NOT a credential — a
+#      deterministic test vector, a documented example, a fixture. If there is
+#      any doubt, the answer is to rotate the secret and rewrite history, not to
+#      add a line here.
+#   2. Pin the exact value. Do NOT allowlist a commit or a path: allowlisting a
+#      whole commit hides every other finding in it, and a blanket
+#      "ignore *_test.go" would hide a real key committed in a test.
+#   3. Say why, next to the entry.
+
+# Start from gitleaks' bundled rules; this file only adds exceptions.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Reviewed non-secrets, pinned by exact value"
+regexes = [
+  # The CDN edge-token test vector (T15.04,
+  # server/internal/media/domain/cdn_test.go). This is the deterministic
+  # HMAC-SHA256 output for fixed inputs under a throwaway key that exists only
+  # in that test file. It is checked in deliberately: recomputing it inside the
+  # test would assert nothing, and the njs edge implementation has to be
+  # verified against these exact bytes or a drift would 403 every media fetch.
+  '''ugG7yTvA2gryHvSkWpxZN9LD8RIJInVjtYSiNGtw-vc''',
+]

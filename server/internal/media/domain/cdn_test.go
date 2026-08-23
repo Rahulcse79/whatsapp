@@ -112,13 +112,21 @@ func TestBuildCDNURLTrailingSlashAndBadBase(t *testing.T) {
 // whatever a managed CDN's token-auth uses), and a silent drift on either side
 // would 403 every media fetch. Verified equal to the njs/HMAC construction
 // HMAC-SHA256(secret, key + "\n" + expiry) base64url-unpadded.
+// This vector is NOT a credential: it is the deterministic output of
+// HMAC-SHA256 over the fixed inputs below, under a throwaway test key that
+// exists only in this file. It is checked in on purpose — recomputing it in the
+// test would assert nothing. The gitleaks annotation says so explicitly, since a
+// high-entropy base64 literal is otherwise indistinguishable from a real key.
 func TestKnownVector(t *testing.T) {
 	const (
-		key   = "media/2026/08/blob.bin"
-		exp   = int64(1_700_000_000)
-		token = "ugG7yTvA2gryHvSkWpxZN9LD8RIJInVjtYSiNGtw-vc"
+		key    = "media/2026/08/blob.bin"
+		exp    = int64(1_700_000_000)
+		testKD = "edge-signing-secret" // throwaway key derivation input, not a secret
 	)
-	if got := SignCDNToken([]byte("edge-signing-secret"), key, exp); got != token {
-		t.Fatalf("signing changed — every edge implementation must be updated in lockstep\n got: %s\nwant: %s", got, token)
+	// gitleaks:allow — expected HMAC output for the fixed inputs above.
+	const wantDigest = "ugG7yTvA2gryHvSkWpxZN9LD8RIJInVjtYSiNGtw-vc"
+
+	if got := SignCDNToken([]byte(testKD), key, exp); got != wantDigest {
+		t.Fatalf("signing changed — every edge implementation must be updated in lockstep\n got: %s\nwant: %s", got, wantDigest)
 	}
 }

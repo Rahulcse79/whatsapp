@@ -2115,69 +2115,64 @@ function SecuritySection() {
 
   return (
     <>
-      <h2 style={{ marginTop: "1.5rem" }}>Security</h2>
-      <p className="muted" style={{ fontSize: "0.8rem" }}>
-        Passkeys (Face ID / Touch ID / Windows Hello) add a phishing-resistant second factor and unlock your locked chats. The key stays on this device.
-      </p>
-      {services.passkeysSupported() ? (
-        <button className="btn small" onClick={() => void addPasskey()} disabled={busy}>
-          {busy ? "Waiting for authenticator…" : "＋ Add a passkey"}
-        </button>
-      ) : (
-        <p className="muted" style={{ fontSize: "0.8rem" }}>Passkeys aren’t supported in this browser.</p>
-      )}
-      {err ? <p className="error">{err}</p> : null}
-      {passkeys.length > 0 ? (
-        <ul className="list">
-          {passkeys.map((p) => (
-            <li key={p.id} className="row" style={{ cursor: "default" }}>
-              <span className="avatar avatar-default" style={{ width: 40, height: 40 }}>
-                <Icon name="settings" size={22} />
-              </span>
-              <div className="row-main">
-                <div className="row-line1">
-                  <span className="row-title">{p.name}</span>
-                </div>
-                <div className="row-line2">
-                  <span className="row-sub">
+      <Section
+        title="Passkeys"
+        desc="Passkeys (Face ID / Touch ID / Windows Hello) add a phishing-resistant second factor and unlock your locked chats. The key never leaves this device."
+        actions={
+          services.passkeysSupported() ? (
+            <button className="btn small" onClick={() => void addPasskey()} disabled={busy}>
+              {busy ? "Waiting…" : "Add a passkey"}
+            </button>
+          ) : null
+        }
+      >
+        {!services.passkeysSupported() ? <p className="field-help">Passkeys aren't supported in this browser.</p> : null}
+        {err ? <p className="error">{err}</p> : null}
+        {passkeys.length > 0 ? (
+          <ul className="list">
+            {passkeys.map((p) => (
+              <li key={p.id} className="row static">
+                <span className="avatar avatar-default" style={{ width: 40, height: 40 }}>
+                  <Icon name="settings" size={22} />
+                </span>
+                <div className="row-main">
+                  <div className="row-title">{p.name}</div>
+                  <div className="row-sub">
                     Added {fmt(p.created_at_ms)}
                     {p.last_used_at_ms ? ` · used ${fmt(p.last_used_at_ms)}` : ""}
-                  </span>
-                  <span className="row-right">
-                    <button className="btn small ghost" onClick={() => void services.deletePasskey(p.id).then(load)}>
-                      Remove
-                    </button>
-                  </span>
+                  </div>
                 </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+                <button className="btn small ghost danger" onClick={() => void services.deletePasskey(p.id).then(load)}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <p className="field-help">No passkeys yet.</p>
+        )}
+      </Section>
 
-      <h3 style={{ marginTop: "1rem" }}>Recent sign-ins</h3>
-      {logins.length === 0 ? (
-        <p className="muted" style={{ fontSize: "0.8rem" }}>No recent sign-ins recorded yet.</p>
-      ) : (
-        <ul className="list">
-          {logins.map((l, i) => (
-            <li key={i} className="row" style={{ cursor: "default" }}>
-              <div className="row-main">
-                <div className="row-line1">
-                  <span className="row-title">
-                    {l.ip || "unknown IP"}
-                    {l.suspicious ? <span className="login-flag">new location</span> : null}
-                  </span>
-                  <span className="row-time">{fmt(l.at_ms)}</span>
+      <Section title="Recent sign-ins" desc="Every sign-in to your account. Anything you don't recognise is worth revoking in Devices.">
+        {logins.length === 0 ? (
+          <p className="section-desc">No recent sign-ins recorded yet.</p>
+        ) : (
+          <ul className="list">
+            {logins.map((l, i) => (
+              <li key={i} className="row static">
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title">{l.ip || "unknown IP"}</span>
+                    {l.suspicious ? <span className="badge warning">new location</span> : null}
+                    <span className="row-time">{fmt(l.at_ms)}</span>
+                  </div>
+                  <div className="row-sub">{l.user_agent || "unknown device"}</div>
                 </div>
-                <div className="row-line2">
-                  <span className="row-sub">{l.user_agent || "unknown device"}</span>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
     </>
   );
 }
@@ -2195,10 +2190,9 @@ function AiSection() {
 
   if (!services.aiKillSwitchOn()) {
     return (
-      <>
-        <h2 style={{ marginTop: "1.5rem" }}>AI features</h2>
-        <p className="muted" style={{ fontSize: "0.8rem" }}>AI features have been turned off by your administrator.</p>
-      </>
+      <Section title="AI features">
+        <p className="section-desc">AI features have been turned off by your administrator.</p>
+      </Section>
     );
   }
 
@@ -2208,35 +2202,50 @@ function AiSection() {
     if (mode === "on-device") services.setAiConsent("onDevice", true);
     rerender();
   };
+  const modes: { key: AiMode; title: string; desc: string }[] = [
+    { key: "off", title: "Off", desc: "No AI features run." },
+    { key: "on-device", title: "On this device only", desc: "Everything stays local — nothing is sent anywhere." },
+    ...(services.aiServerAvailable()
+      ? [{ key: "server" as AiMode, title: "On a server (opt-in)", desc: "Content you use with AI leaves your device for that request." }]
+      : []),
+  ];
 
   return (
-    <>
-      <h2 style={{ marginTop: "1.5rem" }}>AI features</h2>
-      <p className="muted" style={{ fontSize: "0.8rem" }}>{disclosureFor(s.mode)}</p>
-      <div className="secret-toggles" style={{ borderTop: "none", paddingTop: 0 }}>
-        <label className="secret-toggle">
-          <span>Off</span>
-          <input type="radio" name="ai-mode" checked={s.mode === "off"} onChange={() => pick("off")} />
-        </label>
-        <label className="secret-toggle">
-          <span>On this device only</span>
-          <input type="radio" name="ai-mode" checked={s.mode === "on-device"} onChange={() => pick("on-device")} />
-        </label>
-        {services.aiServerAvailable() ? (
-          <label className="secret-toggle">
-            <span>On a server (opt-in)</span>
-            <input type="radio" name="ai-mode" checked={s.mode === "server"} onChange={() => pick("server")} />
+    <Section title="AI features" desc={disclosureFor(s.mode)}>
+      <div className="choice-group" role="radiogroup" aria-label="AI mode">
+        {modes.map((m) => (
+          <label key={m.key} className={`choice${s.mode === m.key ? " on" : ""}`}>
+            <input type="radio" name="ai-mode" checked={s.mode === m.key} onChange={() => pick(m.key)} />
+            <span className="choice-text">
+              <span className="choice-title">{m.title}</span>
+              <span className="choice-desc">{m.desc}</span>
+            </span>
           </label>
-        ) : null}
+        ))}
       </div>
       {s.mode === "server" ? (
-        <label className="secret-toggle">
-          <span>I understand the content I use with AI is sent to the AI service and isn’t end-to-end encrypted for that request.</span>
-          <input type="checkbox" checked={s.consent.server} onChange={(e) => { services.setAiConsent("server", e.target.checked); rerender(); }} />
+        <label className="setting">
+          <span className="setting-text">
+            <span className="setting-title">I understand what leaves my device</span>
+            <span className="setting-desc">
+              Content I use with AI is sent to the AI service and isn't end-to-end encrypted for that request.
+            </span>
+          </span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={s.consent.server}
+            onChange={(e) => {
+              services.setAiConsent("server", e.target.checked);
+              rerender();
+            }}
+          />
         </label>
       ) : null}
-      <p className="muted" style={{ fontSize: "0.75rem" }}>Specific AI features (smart replies, summaries, translation) arrive next — this controls whether they may run.</p>
-    </>
+      <p className="field-help">
+        Smart replies, summaries and translation respect this setting — it controls whether they may run at all.
+      </p>
+    </Section>
   );
 }
 
@@ -2296,45 +2305,87 @@ function BotsSection() {
 
   return (
     <>
-      <h2 style={{ marginTop: "1.5rem" }}>Bots ({bots.length})</h2>
-      <p className="muted" style={{ fontSize: "0.8rem" }}>
-        Register a bot with a public @handle and an https webhook. We deliver events signed with a
-        shared secret (<code>X-WA-Signature</code>: HMAC-SHA256) so your bot can trust they came from us.
-      </p>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 420 }}>
-        <input className="input" placeholder="handle (a–z, 0–9, _)" value={handle} maxLength={32} onChange={(e) => setHandle(e.target.value.toLowerCase())} />
-        <input className="input" placeholder="Display name" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
-        <input className="input" placeholder="https://your-bot.example/webhook" value={webhook} onChange={(e) => setWebhook(e.target.value)} />
-        {error ? <span className="muted" style={{ color: "var(--danger, #c0392b)", fontSize: "0.8rem" }}>{error}</span> : null}
-        <button className="btn" disabled={busy || handle.trim() === "" || name.trim() === "" || webhook.trim() === ""} onClick={() => void register()}>
-          Register bot
-        </button>
-      </div>
-      {secret ? (
-        <div className="row" style={{ marginTop: 10, background: "rgba(18,140,126,0.08)", borderRadius: 8, padding: "8px 10px" }}>
-          <div>
-            <strong>Shared secret (copy it now — shown once):</strong>
-            <br />
-            <code style={{ wordBreak: "break-all", fontSize: "0.78rem" }}>{secret.value}</code>
-            <br />
-            <button className="btn small ghost" onClick={() => void navigator.clipboard?.writeText(secret.value).catch(() => {})}>⧉ Copy</button>
-            <button className="btn small ghost" onClick={() => setSecret(null)}>Dismiss</button>
+      <Section
+        title="Register a bot"
+        desc="Give your bot a public @handle and an https webhook. We deliver events signed with a shared secret (X-WA-Signature: HMAC-SHA256) so your bot can verify they came from us."
+      >
+        <div className="stack tight">
+          <div className="field">
+            <label className="field-label" htmlFor="bot-handle">
+              Handle
+            </label>
+            <input
+              id="bot-handle"
+              className="input"
+              placeholder="news_bot"
+              value={handle}
+              maxLength={32}
+              onChange={(e) => setHandle(e.target.value.toLowerCase())}
+            />
+            <span className="field-help">Lowercase letters, numbers and underscore, 3–32 characters.</span>
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="bot-name">
+              Display name
+            </label>
+            <input id="bot-name" className="input" placeholder="News Bot" value={name} maxLength={60} onChange={(e) => setName(e.target.value)} />
+          </div>
+          <div className="field">
+            <label className="field-label" htmlFor="bot-hook">
+              Webhook URL
+            </label>
+            <input id="bot-hook" className={`input${error ? " invalid" : ""}`} placeholder="https://your-bot.example/webhook" value={webhook} onChange={(e) => setWebhook(e.target.value)} />
+            {error ? <span className="field-error">{error}</span> : <span className="field-help">Must be https — events are POSTed here.</span>}
           </div>
         </div>
-      ) : null}
-      <ul className="list">
-        {bots.map((b) => (
-          <li key={b.id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-            <span style={{ flex: 1 }}>
-              @{b.handle} · {b.name}
-              <br />
-              <span className="muted" style={{ fontSize: "0.72rem", wordBreak: "break-all" }}>{b.webhook_url}</span>
-            </span>
-            <button className="btn small ghost" onClick={() => void rotate(b.id)}>Rotate secret</button>
-            <button className="btn small ghost danger" onClick={() => void remove(b.id)}>Delete</button>
-          </li>
-        ))}
-      </ul>
+        <div className="actions end">
+          <button className="btn" disabled={busy || handle.trim() === "" || name.trim() === "" || webhook.trim() === ""} onClick={() => void register()}>
+            Register bot
+          </button>
+        </div>
+        {secret ? (
+          <div className="callout accent">
+            <div className="callout-title">Shared secret — copy it now, it's shown once</div>
+            <code className="callout-code">{secret.value}</code>
+            <div className="actions">
+              <button className="btn small secondary" onClick={() => void navigator.clipboard?.writeText(secret.value).catch(() => {})}>
+                Copy secret
+              </button>
+              <button className="btn small ghost" onClick={() => setSecret(null)}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </Section>
+
+      <Section title={`Your bots${bots.length ? ` (${bots.length})` : ""}`}>
+        {bots.length === 0 ? (
+          <p className="section-desc">You haven't registered any bots yet.</p>
+        ) : (
+          <ul className="list">
+            {bots.map((b) => (
+              <li key={b.id} className="row static">
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title">@{b.handle}</span>
+                    <span className="badge">{b.name}</span>
+                  </div>
+                  <div className="row-sub mono">{b.webhook_url}</div>
+                </div>
+                <div className="row-right">
+                  <button className="btn small ghost" onClick={() => void rotate(b.id)}>
+                    Rotate secret
+                  </button>
+                  <button className="btn small ghost danger" onClick={() => void remove(b.id)}>
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
     </>
   );
 }
@@ -2414,76 +2465,126 @@ function NotificationsSection() {
   }
 
   const channel = (key: "email" | "sms" | "desktop", label: string, hint: string): ReactNode => (
-    <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.4rem" }}>
-      <input type="checkbox" checked={prefs[key]} onChange={(e) => set(key, e.target.checked)} />
-      <span>
-        {label}
-        <br />
-        <span className="muted" style={{ fontSize: "0.72rem" }}>{hint}</span>
+    <label className="setting">
+      <span className="setting-text">
+        <span className="setting-title">{label}</span>
+        <span className="setting-desc">{hint}</span>
       </span>
+      <input type="checkbox" className="switch" checked={prefs[key]} onChange={(e) => set(key, e.target.checked)} />
     </label>
   );
 
   return (
     <>
-      <h2 style={{ marginTop: "1.5rem" }}>Notification channels</h2>
-      <p className="muted" style={{ fontSize: "0.8rem" }}>
-        Extra ways to be alerted when you're away. Email and SMS are content-free nudges — they only
-        say you have new activity, never the message itself.
-      </p>
-      {channel("desktop", "Desktop notifications", "Browser notifications while a client is open.")}
-      {channel("email", "Email nudge", "A generic email when you have unread activity (requires a configured mail relay).")}
-      {channel("sms", "SMS nudge", "A last-resort text when you have unread activity (requires a configured SMS gateway).")}
-
-      <h3 style={{ marginTop: "1rem" }}>Quiet hours</h3>
-      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-        <input type="checkbox" checked={quietOn} onChange={(e) => { setQuietOn(e.target.checked); setSaved(false); }} />
-        <span>Silence alerts during a daily window (calls still ring)</span>
-      </label>
-      {quietOn ? (
-        <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 6 }}>
-          <label style={{ fontSize: "0.85rem" }}>From <input className="input" type="time" value={minToHHMM(prefs.quiet_start_min < 0 ? 1320 : prefs.quiet_start_min)} onChange={(e) => set("quiet_start_min", hhmmToMin(e.target.value))} /></label>
-          <label style={{ fontSize: "0.85rem" }}>to <input className="input" type="time" value={minToHHMM(prefs.quiet_end_min < 0 ? 420 : prefs.quiet_end_min)} onChange={(e) => set("quiet_end_min", hhmmToMin(e.target.value))} /></label>
-        </div>
-      ) : null}
-
-      <h3 style={{ marginTop: "1rem" }}>Sound &amp; vibration</h3>
-      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-        <input type="checkbox" checked={prefs.sound} onChange={(e) => set("sound", e.target.checked)} />
-        <span>Play a sound for new messages</span>
-      </label>
-      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.4rem" }}>
-        <input type="checkbox" checked={prefs.vibrate} onChange={(e) => set("vibrate", e.target.checked)} />
-        <span>Vibrate (where supported)</span>
-      </label>
-
-      <div style={{ marginTop: 10, display: "flex", gap: 8, alignItems: "center" }}>
-        <button className="btn" onClick={() => void save()}>Save notification settings</button>
-        {saved ? <span className="muted" style={{ fontSize: "0.8rem" }}>✓ Saved</span> : null}
-      </div>
-
-      <h3 style={{ marginTop: "1.25rem" }}>Scheduled reminders</h3>
-      <p className="muted" style={{ fontSize: "0.8rem" }}>Get a content-free nudge to yourself at a set time.</p>
-      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-        <input className="input" placeholder="Reminder title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} style={{ maxWidth: 220 }} />
-        <input className="input" type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} />
-        <button className="btn small" onClick={() => void addReminder()}>Add</button>
-      </div>
-      {err ? <span className="muted" style={{ color: "var(--danger, #c0392b)", fontSize: "0.8rem" }}>{err}</span> : null}
-      {scheduled.length > 0 ? (
-        <ul className="list">
-          {scheduled.map((n) => (
-            <li key={n.id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-              <span style={{ flex: 1 }}>
-                {n.title}
-                <br />
-                <span className="muted" style={{ fontSize: "0.72rem" }}>{new Date(n.due_at_ms).toLocaleString()}{n.fired ? " · fired" : ""}</span>
+      <Section
+        title="Delivery channels"
+        desc="Extra ways to be alerted when you're away. Email and SMS are content-free nudges — they only say you have new activity, never the message itself."
+        actions={
+          <>
+            {saved ? (
+              <span className="badge accent" role="status">
+                ✓ Saved
               </span>
-              <button className="btn small ghost danger" onClick={() => void services.cancelScheduledNotification(n.id).then(loadScheduled).catch((e) => window.alert(messageOf(e)))}>Cancel</button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+            ) : null}
+            <button className="btn small" onClick={() => void save()}>
+              Save
+            </button>
+          </>
+        }
+      >
+        {channel("desktop", "Desktop notifications", "Browser notifications while a client is open.")}
+        {channel("email", "Email nudge", "A generic email when you have unread activity. Requires a configured mail relay.")}
+        {channel("sms", "SMS nudge", "A last-resort text when you have unread activity. Requires a configured SMS gateway.")}
+
+        <label className="setting">
+          <span className="setting-text">
+            <span className="setting-title">Quiet hours</span>
+            <span className="setting-desc">Silence alerts during a daily window. Calls still ring through.</span>
+          </span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={quietOn}
+            onChange={(e) => {
+              setQuietOn(e.target.checked);
+              setSaved(false);
+            }}
+          />
+        </label>
+        {quietOn ? (
+          <div className="inline">
+            <label className="field-label" htmlFor="quiet-from">
+              From
+            </label>
+            <input
+              id="quiet-from"
+              className="input"
+              type="time"
+              style={{ width: "auto" }}
+              value={minToHHMM(prefs.quiet_start_min < 0 ? 1320 : prefs.quiet_start_min)}
+              onChange={(e) => set("quiet_start_min", hhmmToMin(e.target.value))}
+            />
+            <label className="field-label" htmlFor="quiet-to">
+              to
+            </label>
+            <input
+              id="quiet-to"
+              className="input"
+              type="time"
+              style={{ width: "auto" }}
+              value={minToHHMM(prefs.quiet_end_min < 0 ? 420 : prefs.quiet_end_min)}
+              onChange={(e) => set("quiet_end_min", hhmmToMin(e.target.value))}
+            />
+          </div>
+        ) : null}
+
+        <label className="setting">
+          <span className="setting-text">
+            <span className="setting-title">Sound</span>
+            <span className="setting-desc">Play a short tone for new messages.</span>
+          </span>
+          <input type="checkbox" className="switch" checked={prefs.sound} onChange={(e) => set("sound", e.target.checked)} />
+        </label>
+        <label className="setting">
+          <span className="setting-text">
+            <span className="setting-title">Vibration</span>
+            <span className="setting-desc">Where the device supports it.</span>
+          </span>
+          <input type="checkbox" className="switch" checked={prefs.vibrate} onChange={(e) => set("vibrate", e.target.checked)} />
+        </label>
+      </Section>
+
+      <Section title="Scheduled reminders" desc="Get a content-free nudge to yourself at a set time.">
+        <div className="inline">
+          <input className="input" placeholder="Reminder title" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)} style={{ flex: 1, minWidth: 180 }} />
+          <input className="input" type="datetime-local" value={due} onChange={(e) => setDue(e.target.value)} style={{ width: "auto" }} />
+          <button className="btn small" onClick={() => void addReminder()}>
+            Add
+          </button>
+        </div>
+        {err ? <span className="field-error">{err}</span> : null}
+        {scheduled.length > 0 ? (
+          <ul className="list">
+            {scheduled.map((n) => (
+              <li key={n.id} className="row static">
+                <div className="row-main">
+                  <div className="row-line1">
+                    <span className="row-title">{n.title}</span>
+                    {n.fired ? <span className="badge">fired</span> : null}
+                  </div>
+                  <div className="row-sub">{new Date(n.due_at_ms).toLocaleString()}</div>
+                </div>
+                <button
+                  className="btn small ghost danger"
+                  onClick={() => void services.cancelScheduledNotification(n.id).then(loadScheduled).catch((e) => window.alert(messageOf(e)))}
+                >
+                  Cancel
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </Section>
     </>
   );
 }
@@ -2573,223 +2674,301 @@ export function Settings({ onBack, onSignedOut }: { onBack: () => void; onSigned
   }
 
   return (
-    <div className="card">
-      <button type="button" className="btn small" onClick={onBack}>
-        ‹ Back
-      </button>
-      <h1>Settings</h1>
+    <Screen title="Settings" subtitle="Appearance, privacy, notifications and devices" onBack={onBack} wide>
+      <nav className="settings-nav" aria-label="Settings sections">
+        {SETTINGS_SECTIONS.map((s) => (
+          <button key={s.id} className="chip" onClick={() => document.getElementById(s.id)?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+            {s.label}
+          </button>
+        ))}
+      </nav>
 
-      <h2>Appearance</h2>
-      <label className="row-flags" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span>Theme</span>
-        <span className="segmented">
-          {(["system", "light", "dark"] as ThemeChoice[]).map((t) => (
+      {error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
+
+      <section className="section" id="set-appearance">
+        <div className="section-head">
+          <h2 className="section-title">Appearance</h2>
+        </div>
+        <div className="setting">
+          <span className="setting-text">
+            <span className="setting-title">Theme</span>
+            <span className="setting-desc">System follows your operating system's light/dark setting.</span>
+          </span>
+          <span className="segmented">
+            {(["system", "light", "dark"] as ThemeChoice[]).map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={theme === t ? "active" : ""}
+                onClick={() => {
+                  setTheme(t);
+                  setThemeState(t);
+                }}
+              >
+                {t === "system" ? "System" : t === "light" ? "Light" : "Dark"}
+              </button>
+            ))}
+          </span>
+        </div>
+      </section>
+
+      <div id="set-notifications">
+        <section className="section">
+          <div className="section-head">
+            <h2 className="section-title">Notifications</h2>
+          </div>
+          <label className="setting">
+            <span className="setting-text">
+              <span className="setting-title">Push notifications on this device</span>
+              <span className="setting-desc">Wake this browser when a message arrives while it's closed.</span>
+            </span>
+            <input type="checkbox" className="switch" checked={pushOn} onChange={() => void togglePush()} />
+          </label>
+          <label className="setting">
+            <span className="setting-text">
+              <span className="setting-title">Mute all chats</span>
+              <span className="setting-desc">Silence in-app alerts everywhere without changing per-chat settings.</span>
+            </span>
+            <input
+              type="checkbox"
+              className="switch"
+              checked={globalMute}
+              onChange={(e) => {
+                services.setGlobalMute(e.target.checked);
+                setGlobalMute(e.target.checked);
+              }}
+            />
+          </label>
+        </section>
+
+        <NotificationsSection />
+
+        <Section
+          title="Recent notifications"
+          actions={
+            notifs.length > 0 ? (
+              <button
+                className="btn small ghost"
+                onClick={() => {
+                  services.clearNotifications();
+                  setNotifs([]);
+                }}
+              >
+                Clear history
+              </button>
+            ) : null
+          }
+        >
+          {notifs.length === 0 ? (
+            <p className="section-desc">Nothing recent.</p>
+          ) : (
+            <ul className="list">
+              {notifs.slice(0, 20).map((n) => (
+                <li key={n.id} className="row static">
+                  <div className="row-main">
+                    <div className="row-title">{n.title}</div>
+                    <div className="row-sub">
+                      {n.preview} · {formatLastSeen(n.ts)}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      </div>
+
+      <div id="set-privacy">
+        <SecuritySection />
+      </div>
+
+      <div id="set-ai">
+        <AiSection />
+      </div>
+
+      <div id="set-messaging">
+        <Section title="Saved replies" desc="Reusable messages you can insert from a chat's tools menu.">
+          <div className="inline">
+            <input className="input" placeholder="Title" value={tplTitle} style={{ maxWidth: 160 }} onChange={(e) => setTplTitle(e.target.value)} />
+            <input className="input" placeholder="Message text" value={tplText} style={{ flex: 1, minWidth: 180 }} onChange={(e) => setTplText(e.target.value)} />
             <button
-              key={t}
-              type="button"
-              className={theme === t ? "active" : ""}
+              className="btn small"
+              disabled={tplText.trim() === ""}
               onClick={() => {
-                setTheme(t);
-                setThemeState(t);
+                services.addTemplate(tplTitle.trim() || tplText.trim().slice(0, 20), tplText.trim());
+                setTplTitle("");
+                setTplText("");
               }}
             >
-              {t === "system" ? "System" : t === "light" ? "Light" : "Dark"}
+              Add
             </button>
-          ))}
-        </span>
-      </label>
+          </div>
+          {services.listTemplates().length === 0 ? (
+            <p className="section-desc">No saved replies yet.</p>
+          ) : (
+            <ul className="list">
+              {services.listTemplates().map((t) => (
+                <li key={t.id} className="row static">
+                  <div className="row-main">
+                    <div className="row-title">{t.title}</div>
+                    <div className="row-sub">{t.text}</div>
+                  </div>
+                  <button className="wa-icon" aria-label="Delete saved reply" title="Delete" onClick={() => services.removeTemplate(t.id)}>
+                    <Icon name="trash" size={17} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
 
-      <SecuritySection />
-      <AiSection />
-      <BotsSection />
+        <Section title="Auto-reply" desc="When on, incoming messages get one automatic reply per chat per hour. Chats you're actively viewing are skipped.">
+          <label className="setting">
+            <span className="setting-text">
+              <span className="setting-title">Away auto-reply</span>
+              <span className="setting-desc">Let people know you're away.</span>
+            </span>
+            <input
+              type="checkbox"
+              className="switch"
+              checked={autoReply.enabled}
+              onChange={(e) => {
+                const next = { ...autoReply, enabled: e.target.checked };
+                setAutoReplyState(next);
+                services.setAutoReply(next.enabled, next.text);
+              }}
+            />
+          </label>
+          <input
+            className="input"
+            placeholder="Away message (e.g. I'm away, back soon)"
+            value={autoReply.text}
+            onChange={(e) => {
+              const next = { ...autoReply, text: e.target.value };
+              setAutoReplyState(next);
+              services.setAutoReply(next.enabled, next.text);
+            }}
+          />
+        </Section>
 
-      <h2 style={{ marginTop: "1.5rem" }}>Linked devices ({devices.length})</h2>
-      <p className="muted" style={{ fontSize: "0.8rem" }}>
-        Devices signed in to your account. Revoke any you don't recognise.
-      </p>
-      <ul className="list">
-        {devices.map((d) => (
-          <li key={d.id} className="row" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem" }}>
-            {editing === d.id ? (
-              <>
-                <input className="input" value={editName} onChange={(e) => setEditName(e.target.value)} aria-label="Device name" maxLength={60} style={{ flex: 1 }} />
-                <button className="btn small" onClick={() => void saveName(d.id)}>
-                  Save
-                </button>
-                <button className="btn small ghost" onClick={() => setEditing(null)}>
-                  ✕
-                </button>
-              </>
-            ) : (
-              <>
-                <span style={{ flex: 1 }}>
-                  {d.name || d.platform || "Device"}
-                  {d.id === myId && <span className="muted" style={{ fontSize: "0.75rem" }}> · this device</span>}
-                  {d.isPrimary && <span className="muted" style={{ fontSize: "0.75rem" }}> · primary</span>}
-                  <br />
-                  <span className="muted" style={{ fontSize: "0.72rem" }}>
-                    {d.platform}
-                    {d.lastActiveMs ? ` · active ${formatLastSeen(d.lastActiveMs)}` : ""}
-                  </span>
-                </span>
-                <button
-                  className="btn small ghost"
-                  onClick={() => {
-                    setEditing(d.id);
-                    setEditName(d.name);
-                  }}
-                >
-                  Rename
-                </button>
-                <button className="btn small ghost" onClick={() => void revoke(d.id)}>
-                  {d.id === myId ? "Sign out" : "Revoke"}
-                </button>
-              </>
-            )}
-          </li>
-        ))}
-      </ul>
+        <Section title="Scheduled messages">
+          {services.scheduledMessages().length === 0 ? (
+            <p className="section-desc">Nothing scheduled. Type a message in a chat and pick Schedule from the tools menu.</p>
+          ) : (
+            <ul className="list">
+              {services.scheduledMessages().map((m) => (
+                <li key={m.id} className="row static">
+                  <div className="row-main">
+                    <div className="row-title">{m.text.slice(0, 60)}</div>
+                    <div className="row-sub">{new Date(m.sendAtMs).toLocaleString()}</div>
+                  </div>
+                  <button className="btn small ghost" aria-label="Cancel scheduled message" onClick={() => services.cancelScheduled(m.id)}>
+                    Cancel
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Section>
+      </div>
 
-      <h2 style={{ marginTop: "1.5rem" }}>Link a device</h2>
-      <p className="muted" style={{ fontSize: "0.85rem" }}>
-        On the new device, open WhatsApp V2 → Link a device, then scan its QR here. The primary device signs
-        the new device's key into your <span className="mono">signed device list</span> so all your devices trust
-        it. QR scanning + the device-list signature are wired through <span className="mono">@wa/crypto-wrapper</span>{" "}
-        (deviceList) — the on-device linking seam.
-      </p>
-
-      <h2 style={{ marginTop: "1.5rem" }}>Notifications</h2>
-      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
-        <input type="checkbox" checked={pushOn} onChange={() => void togglePush()} />
-        <span>Push notifications on this device</span>
-      </label>
-      <label style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.4rem" }}>
-        <input type="checkbox" checked={globalMute} onChange={(e) => { services.setGlobalMute(e.target.checked); setGlobalMute(e.target.checked); }} />
-        <span>Mute all chats (no in-app alerts)</span>
-      </label>
-
-      <h3 style={{ marginTop: "1rem" }}>Recent notifications</h3>
-      {notifs.length === 0 ? (
-        <p className="muted" style={{ fontSize: "0.85rem" }}>Nothing recent.</p>
-      ) : (
-        <>
+      <div id="set-devices">
+        <Section title={`Linked devices (${devices.length})`} desc="Devices signed in to your account. Revoke any you don't recognise.">
           <ul className="list">
-            {notifs.slice(0, 20).map((n) => (
-              <li key={n.id} className="row">
-                <div className="row-title">{n.title}</div>
-                <div className="row-sub">
-                  {n.preview} · {formatLastSeen(n.ts)}
-                </div>
+            {devices.map((d) => (
+              <li key={d.id} className="row static">
+                {editing === d.id ? (
+                  <>
+                    <input className="input" value={editName} onChange={(e) => setEditName(e.target.value)} aria-label="Device name" maxLength={60} style={{ flex: 1 }} />
+                    <button className="btn small" onClick={() => void saveName(d.id)}>
+                      Save
+                    </button>
+                    <button className="wa-icon" aria-label="Cancel" onClick={() => setEditing(null)}>
+                      <Icon name="close" size={17} />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="row-main">
+                      <div className="row-line1">
+                        <span className="row-title">{d.name || d.platform || "Device"}</span>
+                        {d.id === myId ? <span className="badge accent">this device</span> : null}
+                        {d.isPrimary ? <span className="badge">primary</span> : null}
+                      </div>
+                      <div className="row-sub">
+                        {d.platform}
+                        {d.lastActiveMs ? ` · active ${formatLastSeen(d.lastActiveMs)}` : ""}
+                      </div>
+                    </div>
+                    <div className="row-right">
+                      <button
+                        className="btn small ghost"
+                        onClick={() => {
+                          setEditing(d.id);
+                          setEditName(d.name);
+                        }}
+                      >
+                        Rename
+                      </button>
+                      <button className="btn small ghost danger" onClick={() => void revoke(d.id)}>
+                        {d.id === myId ? "Sign out" : "Revoke"}
+                      </button>
+                    </div>
+                  </>
+                )}
               </li>
             ))}
           </ul>
-          <button className="btn small ghost" onClick={() => { services.clearNotifications(); setNotifs([]); }}>
-            Clear history
-          </button>
-        </>
-      )}
+        </Section>
 
-      <NotificationsSection />
-
-      <h2 style={{ marginTop: "1.5rem" }}>Saved replies</h2>
-      <p className="muted" style={{ fontSize: "0.85rem" }}>Reusable messages you can insert from a chat's 📋 button.</p>
-      <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-        <input className="input" placeholder="Title" value={tplTitle} style={{ maxWidth: 140 }} onChange={(e) => setTplTitle(e.target.value)} />
-        <input className="input" placeholder="Message text" value={tplText} onChange={(e) => setTplText(e.target.value)} />
-        <button
-          className="btn small"
-          disabled={tplText.trim() === ""}
-          onClick={() => {
-            services.addTemplate(tplTitle.trim() || tplText.trim().slice(0, 20), tplText.trim());
-            setTplTitle("");
-            setTplText("");
-          }}
-        >
-          Add
-        </button>
+        <Section title="Link a device">
+          <p className="section-desc">
+            On the new device, open WhatsApp V2 → Link a device, then scan its QR here. Your primary device signs
+            the new device's key into your <span className="mono">signed device list</span> so all your devices
+            trust it.
+          </p>
+          <p className="field-help">
+            QR scanning and the device-list signature are wired through <span className="mono">@wa/crypto-wrapper</span>{" "}
+            (deviceList) — the on-device linking seam.
+          </p>
+        </Section>
       </div>
-      <ul className="list">
-        {services.listTemplates().map((t) => (
-          <li key={t.id} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div className="row-title">{t.title}</div>
-              <div className="row-sub">{t.text}</div>
-            </div>
-            <button className="btn small ghost" aria-label="Delete saved reply" onClick={() => services.removeTemplate(t.id)}>
-              🗑
-            </button>
-          </li>
-        ))}
-        {services.listTemplates().length === 0 ? <li className="row muted">No saved replies yet.</li> : null}
-      </ul>
 
-      <h2 style={{ marginTop: "1.5rem" }}>Auto-reply (away)</h2>
-      <p className="muted" style={{ fontSize: "0.85rem" }}>
-        When on, incoming messages get one automatic reply per chat per hour (skips chats you're viewing).
-      </p>
-      <label style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}>
-        <input
-          type="checkbox"
-          checked={autoReply.enabled}
-          onChange={(e) => {
-            const next = { ...autoReply, enabled: e.target.checked };
-            setAutoReplyState(next);
-            services.setAutoReply(next.enabled, next.text);
-          }}
-        />
-        Enable auto-reply
-      </label>
-      <input
-        className="input"
-        placeholder="Away message (e.g. I'm away, back soon)"
-        value={autoReply.text}
-        onChange={(e) => {
-          const next = { ...autoReply, text: e.target.value };
-          setAutoReplyState(next);
-          services.setAutoReply(next.enabled, next.text);
-        }}
-      />
+      <div id="set-bots">
+        <BotsSection />
+      </div>
 
-      <h2 style={{ marginTop: "1.5rem" }}>Scheduled messages</h2>
-      {services.scheduledMessages().length === 0 ? (
-        <p className="muted" style={{ fontSize: "0.85rem" }}>Nothing scheduled. Type a message in a chat and tap 🕒 to schedule it.</p>
-      ) : (
-        <ul className="list">
-          {services.scheduledMessages().map((m) => (
-            <li key={m.id} className="row" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div className="row-title">{m.text.slice(0, 40)}</div>
-                <div className="row-sub">{new Date(m.sendAtMs).toLocaleString()}</div>
-              </div>
-              <button className="btn small ghost" aria-label="Cancel scheduled message" onClick={() => services.cancelScheduled(m.id)}>
-                Cancel
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      <div id="set-account">
+        <Section title="Chat backup" desc="End-to-end encrypted backups upload to your own storage, keyed by a password only you hold (Argon2id).">
+          <p className="field-help">
+            Create and restore are wired server-side (<span className="mono">/v1/backups</span>) — the client archive
+            and key-derivation UI is the next step.
+          </p>
+        </Section>
 
-      <h2 style={{ marginTop: "1.5rem" }}>Chat backup</h2>
-      <p className="muted" style={{ fontSize: "0.85rem" }}>
-        End-to-end encrypted backups upload to your own storage, keyed by a password only you hold (Argon2id).
-        Create/restore is wired server-side (<span className="mono">/v1/backups</span>) — the client archive +
-        key-derivation UI is the next step.
-      </p>
-
-      <h2 style={{ marginTop: "1.5rem" }}>Account</h2>
-      <p className="muted" style={{ fontSize: "0.85rem" }}>
-        Export your data or delete your account — the account-lifecycle endpoints aren't exposed yet, so these
-        remain on the roadmap.
-      </p>
-
-      {error && (
-        <p className="error" role="alert" style={{ marginTop: "1rem" }}>
-          {error}
-        </p>
-      )}
-    </div>
+        <Section title="Account" desc="Export your data or delete your account.">
+          <p className="field-help">The account-lifecycle endpoints aren't exposed yet, so these remain on the roadmap.</p>
+        </Section>
+      </div>
+    </Screen>
   );
 }
+
+/** The Settings sub-nav: jump targets for the grouped sections below. */
+const SETTINGS_SECTIONS: { id: string; label: string }[] = [
+  { id: "set-appearance", label: "Appearance" },
+  { id: "set-notifications", label: "Notifications" },
+  { id: "set-privacy", label: "Privacy & security" },
+  { id: "set-ai", label: "AI" },
+  { id: "set-messaging", label: "Messaging" },
+  { id: "set-devices", label: "Devices" },
+  { id: "set-bots", label: "Bots" },
+  { id: "set-account", label: "Account" },
+];
 
 const CHANNEL_EMOJIS = ["👍", "❤️", "🔥", "😂", "🎉"];
 

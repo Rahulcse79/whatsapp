@@ -790,6 +790,50 @@ select.input {
   line-height: var(--leading-snug);
 }
 
+/* ── Choice group: radio cards for a small set of mutually exclusive modes. ── */
+.choice-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.choice {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out);
+}
+.choice:hover {
+  background: var(--hover);
+}
+.choice.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.choice input {
+  margin: 3px 0 0;
+  accent-color: var(--accent);
+  flex-shrink: 0;
+}
+.choice-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.choice-title {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-medium);
+}
+.choice-desc {
+  font-size: var(--text-sm);
+  color: var(--muted);
+  line-height: var(--leading-snug);
+}
+
 /* ── Chips + badges ────────────────────────────────────────────────────────── */
 .chip {
   display: inline-flex;
@@ -844,6 +888,42 @@ select.input {
 .badge.info {
   background: var(--info-soft);
   color: var(--info);
+}
+
+/* ── Callout: a highlighted note inside a section (secrets, warnings, tips). ── */
+.callout {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.callout.accent {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.callout.danger {
+  background: var(--danger-soft);
+  border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+}
+.callout.warning {
+  background: var(--warning-soft);
+  border-color: color-mix(in srgb, var(--warning) 30%, transparent);
+}
+.callout-title {
+  font-size: var(--text-base);
+  font-weight: var(--weight-semibold);
+}
+.callout-code {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  word-break: break-all;
+  padding: var(--space-2) var(--space-3);
+  background: var(--panel);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--line);
 }
 
 /* ── Empty state: one consistent "nothing here yet" block (A8). ────────────── */
@@ -1118,6 +1198,30 @@ body:has(.auth)::before {
 }
 .section > .list > .row:last-child {
   border-bottom: none;
+}
+
+/* Settings sub-nav: sticky jump-links over the grouped sections. */
+.settings-nav {
+  position: sticky;
+  top: calc(var(--space-5) * -1);
+  z-index: var(--z-sticky);
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  padding: var(--space-3) 0;
+  margin-bottom: calc(var(--space-1) * -1);
+  background: var(--page);
+}
+
+/* A settings category wrapper holding several sections. */
+.screen-inner > div[id^="set-"] {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  scroll-margin-top: var(--space-9);
+}
+.screen-inner > section[id^="set-"] {
+  scroll-margin-top: var(--space-9);
 }
 
 /* A group of buttons at the end of a section/form. */

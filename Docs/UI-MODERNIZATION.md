@@ -1,7 +1,7 @@
 # Web UI modernization — audit + implementation plan
 
-Status: in progress. Scope: `clients/web` (the React + Vite PWA). Mobile (Expo)
-rides T5.01 and is out of scope here.
+Status: **complete** (U0–U5). Scope: `clients/web` (the React + Vite PWA).
+Mobile (Expo) rides T5.01 and is out of scope here.
 
 Goal: a modern, clean, professional interface — consistent spacing, type, colour,
 elevation and motion across **every** screen, tab and feature, in both light and
@@ -71,3 +71,24 @@ identical — this is a presentation-layer change.
 4. **Both themes, every time.** Every new rule is checked in light *and* dark.
 5. **Verify green.** `tsc --noEmit` clean (apart from the two known pre-existing
    `wsTransport.ts` errors) and the app rendered on screen before each commit.
+
+## 5. Outcome
+
+| Metric | Before | After |
+|---|---|---|
+| Inline `style={{…}}` in `screens.tsx` | 234 | 99 (the rest carry genuinely dynamic values — widths, data colours, wallpapers) |
+| Full screens rendered inside the 420px login `.card` | 9 | 0 |
+| Design tokens | colour only | colour + space + radius + type + elevation + motion + z-index |
+| `:focus { outline: none }` with no replacement | yes | none — every one now paints a visible ring |
+| Shared empty-state component | none | used by chat list, thread, calls, updates, channels, communities, discover, search, notes/tasks |
+
+Verified on screen (light **and** dark, desktop and 375px): login, verify, chat
+list, thread + composer + overflow menu, new chat, profile, settings (all eight
+groups), channels, communities, calls, updates, discover, notes & tasks,
+whiteboard. `tsc --noEmit` clean throughout apart from the two pre-existing
+`wsTransport.ts` errors from the stale T7.04 proto generation.
+
+Known follow-ups (not regressions, pre-existing gaps):
+- Peer display names are unresolved in the dev rig, so chats show the
+  "Unknown contact" fallback rather than a name.
+- The mobile (Expo) client still carries the old styling — it rides T5.01.

@@ -1027,8 +1027,8 @@ export function Search({
         />
       </div>
       <div className="search-filters" style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap", padding: "0.4rem 0.6rem", alignItems: "center" }}>
-        {conversationTitle && <span className="muted" style={{ fontSize: "0.78rem" }}>in {conversationTitle} ·</span>}
-        <label className="muted" style={{ fontSize: "0.78rem" }}>
+        {conversationTitle && <span className="muted t-md">in {conversationTitle} ·</span>}
+        <label className="muted t-md">
           From{" "}
           <select value={from} onChange={(e) => setFrom(e.target.value as typeof from)}>
             <option value="any">anyone</option>
@@ -1036,7 +1036,7 @@ export function Search({
             <option value="others">others</option>
           </select>
         </label>
-        <label className="muted" style={{ fontSize: "0.78rem" }}>
+        <label className="muted t-md">
           When{" "}
           <select value={when} onChange={(e) => setWhen(e.target.value as typeof when)}>
             <option value="any">any time</option>
@@ -1045,7 +1045,7 @@ export function Search({
             <option value="30d">last 30 days</option>
           </select>
         </label>
-        <label className="muted" style={{ fontSize: "0.78rem" }}>
+        <label className="muted t-md">
           Type{" "}
           <select value={type} onChange={(e) => setType(e.target.value as typeof type)}>
             <option value="all">all</option>
@@ -3328,7 +3328,7 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
           ].map(([label, val]) => (
             <div key={label} style={{ textAlign: "center", padding: "0.4rem", border: "1px solid var(--border, #e2e2e2)", borderRadius: 8 }}>
               <div style={{ fontSize: "1.2rem", fontWeight: 700 }}>{val}</div>
-              <div className="muted" style={{ fontSize: "0.72rem" }}>{label}</div>
+              <div className="muted t-xs">{label}</div>
             </div>
           ))}
         </div>
@@ -3338,7 +3338,7 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
         <div style={{ padding: "0.6rem 0.8rem", borderBottom: "1px solid var(--border, #e2e2e2)" }}>
           <textarea className="input" rows={2} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder="Broadcast to your followers…" aria-label="New post" />
           <div style={{ display: "flex", gap: "0.5rem", alignItems: "center", marginTop: "0.4rem", flexWrap: "wrap" }}>
-            <label className="muted" style={{ fontSize: "0.75rem" }}>
+            <label className="muted t-sm">
               Schedule <input type="datetime-local" value={scheduleAt} onChange={(e) => setScheduleAt(e.target.value)} />
             </label>
             <button className="btn small" onClick={() => void publish()} disabled={!draft.trim()}>
@@ -3354,7 +3354,7 @@ export function ChannelScreen({ channelId, onBack }: { channelId: string; onBack
           <div style={{ fontSize: "2rem" }}>🔒</div>
           <h2>Premium channel</h2>
           <p className="muted">Subscribe for {price}/month to read {channel.name}'s posts.</p>
-          <p className="muted" style={{ fontSize: "0.75rem" }}>Payments run through your provider — this dev build uses a no-op gateway (no charge).</p>
+          <p className="muted t-sm">Payments run through your provider — this dev build uses a no-op gateway (no charge).</p>
           {error && <p className="error" role="alert">{error}</p>}
           <button className="btn" onClick={() => void subscribe()}>Subscribe · {price}/mo</button>
         </div>
@@ -3411,7 +3411,7 @@ function ChannelPostCard({ post, canDelete, onChanged }: { post: ChannelPost; ca
 
   return (
     <div className="bubble theirs" style={{ maxWidth: "100%", position: "relative" }}>
-      {post.scheduled && <div className="muted" style={{ fontSize: "0.72rem" }}>⏰ scheduled for {new Date(post.publishAtMs).toLocaleString()}</div>}
+      {post.scheduled && <div className="muted t-xs">⏰ scheduled for {new Date(post.publishAtMs).toLocaleString()}</div>}
       <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{post.body}</div>
       <div className="muted" style={{ fontSize: "0.7rem", marginTop: 4 }}>{new Date(post.createdAtMs).toLocaleString()}</div>
       <div style={{ display: "flex", gap: "0.3rem", flexWrap: "wrap", marginTop: 6, alignItems: "center" }}>
@@ -3429,7 +3429,7 @@ function ChannelPostCard({ post, canDelete, onChanged }: { post: ChannelPost; ca
       </div>
       {open && (
         <div style={{ marginTop: 8, borderTop: "1px solid var(--border, #e2e2e2)", paddingTop: 8 }}>
-          {comments.length === 0 ? <p className="muted" style={{ fontSize: "0.8rem" }}>No comments yet.</p> : null}
+          {comments.length === 0 ? <p className="muted t-md">No comments yet.</p> : null}
           {comments.map((c) => (
             <div key={c.id} style={{ fontSize: "0.82rem", marginBottom: 4 }}>
               <strong className="mono">{services.nameForUser(c.authorId)}</strong> {c.body}
@@ -3873,7 +3873,7 @@ function InteractiveComposer({ onSend, onClose }: { onSend: (text: string, butto
       <div className="sheet" onClick={(e) => e.stopPropagation()}>
         <strong>Interactive message</strong>
         <textarea className="input" rows={2} placeholder="Message text" value={text} autoFocus onChange={(e) => setText(e.target.value)} />
-        <span className="muted" style={{ fontSize: "0.8rem" }}>Buttons (1–3) — tapping one sends its label back as a reply.</span>
+        <span className="muted t-md">Buttons (1–3) — tapping one sends its label back as a reply.</span>
         {labels.map((l, i) => (
           <div key={i} style={{ display: "flex", gap: 6 }}>
             <input className="input" placeholder={`Button ${i + 1}`} value={l} maxLength={40} onChange={(e) => setLabel(i, e.target.value)} />
@@ -4287,7 +4287,7 @@ function GroupLinkPicker({ excludeIds, onPick }: { excludeIds: string[]; onPick:
     }).catch(() => {});
   }, [services]);
   const groups = items.filter((c) => services.groupNameOf(c.conversationId) && !excludeIds.includes(c.conversationId));
-  if (groups.length === 0) return <p className="muted" style={{ fontSize: "0.85rem" }}>No groups of yours to add.</p>;
+  if (groups.length === 0) return <p className="muted">No groups of yours to add.</p>;
   return (
     <ul className="list" style={{ maxHeight: "30vh" }}>
       {groups.map((c) => (
@@ -5459,7 +5459,7 @@ export function Thread({
                 ))}
               </div>
             ) : null}
-            <p className="muted" style={{ fontSize: "0.72rem" }}>Generated on your device — nothing was sent anywhere.</p>
+            <p className="muted t-xs">Generated on your device — nothing was sent anywhere.</p>
             <button className="btn" onClick={() => setSummary(null)}>Done</button>
           </div>
         </div>

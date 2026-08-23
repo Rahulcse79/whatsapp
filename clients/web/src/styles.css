@@ -3354,3 +3354,21 @@ body:has(.auth)::before {
 .unread-badge.muted {
   background: var(--muted);
 }
+
+/* ── Type utilities: for the few places that only need a smaller size, so the
+   scale stays the single source of truth instead of one-off inline rem values. */
+.t-xs {
+  font-size: var(--text-xs);
+}
+.t-sm {
+  font-size: var(--text-sm);
+}
+.t-md {
+  font-size: var(--text-md);
+}
+.t-lg {
+  font-size: var(--text-lg);
+}
+.t-3xl {
+  font-size: var(--text-3xl);
+}

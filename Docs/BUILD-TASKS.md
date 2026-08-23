@@ -206,6 +206,38 @@ The backend for all of this exists; these wire the mobile + web UI end-to-end.
   PROMPT> internal/payments: premium subscriptions, channel monetization, P2P transfer seam (PSP integration behind a port, never handling raw card data). Server + admin.
   DONE. **`internal/payments`** + migration **000031** (`payments`, `subscriptions`, `payment_events`). **The invariant the context exists to enforce: no raw card data, ever.** We integrate a PSP in *hosted/tokenised* mode — the payer enters details on the processor's own surface, we store only opaque references, amounts and statuses (PCI-DSS SAQ-A). Consequences that are deliberate: **no endpoint accepts a card number**, nothing is charged synchronously (we create an intent and learn the outcome from a *signed* webhook), and the schema has no PAN/expiry/CVV/last-4 column. Enforced, not just intended: **`domain.RejectsCardData`** (Luhn + 12–19-digit runs incl. spaced/dashed, plus labelled CVV) runs on every free-text field the API accepts, tested against real scheme test-PANs *and* against ordinary text (order numbers, phones, dates, UUIDs) so callers aren't driven to route around it. **Domain:** integer-minor-unit `Money` with an allow-listed currency + `MaxAmountCents` blast-radius cap; a payment **state machine** where `same→same` is an idempotent no-op (a PSP redelivers) but every illegal edge is refused; HMAC-SHA256 webhook sign/verify over the **raw** body. **Service:** StartPremium / StartChannelSubscription (records the intent *before* calling the PSP, and on a PSP error leaves the row **pending** rather than guessing "failed" — we don't know what the processor did); `HandleWebhook` gets the three things a PSP will exercise right — signature (a forged event must grant nothing), idempotency (event-id gate before any side effect), and ordering (an illegal transition is logged and ignored, so a late `failed` can't undo a settled payment); entitlements are written **in the same transaction** as the status change. **P2P is a SEAM, disabled by default** — money transmission is a licensed activity, so the shipped build returns 501 and a deployment must inject a licensed provider. **Adapters:** PG store (renewal *extends* one entitlement instead of stacking, via a partial unique index), `DisabledPSP` (refuses rather than a no-op that would hand out paid access for free), `HostedPSP` (hosted-checkout shape every major processor supports; an **unrecognised provider event is an error, never an optimistic "succeeded"**). **Admin:** `/admin/v1/payments` (Agent+, support read) and `/admin/v1/payments/{id}/refund` (**Owner-only**, reason required, audited). The audit write here is the codebase's one documented non-co-transactional exception — a refund's effect happens at the processor, so there is nothing to be co-transactional *with*; `adapters.Store.AppendAudit` says so and the failure is surfaced to the operator rather than swallowed. Wired in core-api behind `WA_PSP_CHECKOUT_URL`/`WA_PSP_WEBHOOK_SECRET` (unset = payments disabled). **A test caught a real bug:** `AdminRefund` used `Transition`, whose same→same no-op let a refunded payment be refunded again; it now uses `CanTransition`. gofmt + vet + all payments/admin tests green; PG integration tests added for the atomic status+entitlement write, renewal-not-stacking, cancel-keeps-paid-period, and the webhook idempotency gate.
 
+# PHASE 16 — Mobile parity (T5.01 completion)
+
+Plan + audit: **`Docs/MOBILE-PARITY.md`**. The measured gap: web has ~21 screens
+and 207 `appServices` methods; mobile has 5 and 10. Mobile already has the
+binary protobuf WS transport, the call stack (CallKeep/VoIP/LiveKit), and its
+platform adapters — the gap is the service layer and the UI.
+
+Phase 16 starts by **extracting the shared service layer** rather than porting
+197 methods a second time: duplication would double the surface permanently and
+the gap is already widening (T13.02, T14.01 and T15.05 all landed web-only).
+Coupling was measured — 38 call sites behind three small ports to share ~2,400
+lines.
+
+- [ ] **M1  Shared service layer**
+  PROMPT> add KeyValueStore + DeviceCapabilities ports to @wa/client-core; move appServices into a shared @wa/app-services behind them; switch web over with NO behaviour change.
+- [ ] **M2  Mobile adapters + wiring**
+  PROMPT> implement the new ports for Expo; wire the shared service into mobile; prove the existing 5 screens still work.
+- [ ] **M3  Mobile design system**
+  PROMPT> port the U1 token layer to React Native + build RN Screen/Section/EmptyState/buttons/fields/switches/rows.
+- [ ] **M4  Messaging parity**
+  PROMPT> contacts, new chat, create group, group info, profile, settings on mobile.
+- [ ] **M5  Rich messaging**
+  PROMPT> composer tools, media, polls, location, contact cards, interactive messages, reactions, replies, search.
+- [ ] **M6  Calls + status**
+  PROMPT> wire the existing mobile call stack to parity UI; stories/status.
+- [ ] **M7  Communities surface**
+  PROMPT> channels, communities, discover on mobile.
+- [ ] **M8  Long tail**
+  PROMPT> collab notes/tasks, whiteboard, multi-device, notification prefs, payments surface.
+- [ ] **M9  Cross-client verification**
+  PROMPT> run web + mobile against one backend; verify cross-client delivery; device/simulator pass.
+
 # GATES
 
 - **After Phase 5:** the app is a fully usable WhatsApp-class messenger (all V2 features tappable).

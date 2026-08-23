@@ -1,0 +1,21 @@
+{
+  "name": "@wa/app-services",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The shared application service layer used by BOTH the web and mobile clients: conversations, contacts, groups, channels, communities, stories, calls control, collaboration, notifications, payments and the rest. Platform differences arrive through the @wa/client-core ports (HttpClient, SecureStore, KeyValueStore, DeviceCapabilities, Scheduler) so this package has no DOM and no React-Native imports. Extracted from the web client in M1 so a feature lands on both clients at once instead of web-only.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "typecheck": "tsc -p .",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@wa/call-engine": "workspace:*",
+    "@wa/client-core": "workspace:*",
+    "@wa/crypto-wrapper": "workspace:*",
+    "@wa/media-pipeline": "workspace:*",
+    "@wa/proto-types": "workspace:*",
+    "@wa/sync-engine": "workspace:*"
+  }
+}

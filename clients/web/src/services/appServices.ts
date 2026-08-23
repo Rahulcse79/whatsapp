@@ -28,6 +28,8 @@ import {
 } from "@wa/client-core";
 import { MediaPipeline, ResumableUploader, encodeContactCard, encodeLiveLocation, encodeLocation, encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
+import { webDeviceCapabilities } from "../platform/deviceCapabilities";
+import { localKeyValueStore } from "../platform/keyValueStore";
 import { createHttpClient } from "../platform/httpClient";
 import { webHtmlFetcher } from "../platform/linkPreview";
 import { webUploadTransport } from "../platform/mediaUpload";
@@ -392,6 +394,11 @@ export class AppServices {
   readonly db: DbApi;
 
   private readonly http = createHttpClient(config.apiBaseUrl);
+  // Platform seams (M1). Direct localStorage/navigator/AudioContext calls were
+  // replaced by these ports so this service can move into @wa/app-services and
+  // be shared with mobile; the web adapters preserve the previous behaviour.
+  private readonly kv = localKeyValueStore;
+  private readonly caps = webDeviceCapabilities;
   private ws: WsClient | null = null;
   private cursorMirror: ConversationCursor[] = [];
   private readonly changeListeners = new Set<() => void>();
@@ -469,9 +476,9 @@ export class AppServices {
 
   private loadMuteState(): void {
     try {
-      const convs = localStorage.getItem("wa.mute.convs");
+      const convs = this.kv.get("wa.mute.convs");
       if (convs) for (const id of JSON.parse(convs) as string[]) this.mutedConvs.add(id);
-      this.globalMuted = localStorage.getItem("wa.mute.global") === "1";
+      this.globalMuted = this.kv.get("wa.mute.global") === "1";
     } catch {
       /* no persisted prefs — defaults (unmuted) */
     }
@@ -479,29 +486,29 @@ export class AppServices {
 
   private loadChatPrefs(): void {
     try {
-      const fav = localStorage.getItem("wa.fav.convs");
+      const fav = this.kv.get("wa.fav.convs");
       if (fav) for (const id of JSON.parse(fav) as string[]) this.favoriteConvs.add(id);
-      const arch = localStorage.getItem("wa.archive.convs");
+      const arch = this.kv.get("wa.archive.convs");
       if (arch) for (const id of JSON.parse(arch) as string[]) this.archivedConvs.add(id);
-      const wp = localStorage.getItem("wa.wallpaper");
+      const wp = this.kv.get("wa.wallpaper");
       if (wp) for (const [id, key] of Object.entries(JSON.parse(wp) as Record<string, string>)) this.wallpaperByConv.set(id, key);
-      const dr = localStorage.getItem("wa.drafts");
+      const dr = this.kv.get("wa.drafts");
       if (dr) for (const [id, text] of Object.entries(JSON.parse(dr) as Record<string, string>)) this.draftByConv.set(id, text);
-      const sch = localStorage.getItem("wa.scheduled");
+      const sch = this.kv.get("wa.scheduled");
       if (sch) this.scheduledMsgs = JSON.parse(sch) as ScheduledMessage[];
-      const tpl = localStorage.getItem("wa.templates");
+      const tpl = this.kv.get("wa.templates");
       if (tpl) this.msgTemplates = JSON.parse(tpl) as MessageTemplate[];
-      const ar = localStorage.getItem("wa.autoreply");
+      const ar = this.kv.get("wa.autoreply");
       if (ar) this.autoReplyCfg = JSON.parse(ar) as { enabled: boolean; text: string };
-      const dis = localStorage.getItem("wa.disappearing");
+      const dis = this.kv.get("wa.disappearing");
       if (dis) for (const [id, ttl] of Object.entries(JSON.parse(dis) as Record<string, number>)) this.disappearingTtl.set(id, ttl);
-      const lk = localStorage.getItem("wa.locked");
+      const lk = this.kv.get("wa.locked");
       if (lk) for (const id of JSON.parse(lk) as string[]) this.lockedConvs.add(id);
-      const hd = localStorage.getItem("wa.hidden");
+      const hd = this.kv.get("wa.hidden");
       if (hd) for (const id of JSON.parse(hd) as string[]) this.hiddenConvs.add(id);
-      const ss = localStorage.getItem("wa.ssprotect");
+      const ss = this.kv.get("wa.ssprotect");
       if (ss) for (const id of JSON.parse(ss) as string[]) this.screenshotProtected.add(id);
-      const aiRaw = localStorage.getItem("wa.ai");
+      const aiRaw = this.kv.get("wa.ai");
       if (aiRaw) {
         const parsed = JSON.parse(aiRaw) as Partial<AiSettings>;
         this.aiSettings = {
@@ -516,14 +523,14 @@ export class AppServices {
 
   private persistSet(key: string, set: Set<string>): void {
     try {
-      localStorage.setItem(key, JSON.stringify([...set]));
+      this.kv.set(key, JSON.stringify([...set]));
     } catch {
       /* ignore */
     }
   }
   private persistMap(key: string, map: Map<string, string>): void {
     try {
-      localStorage.setItem(key, JSON.stringify(Object.fromEntries(map)));
+      this.kv.set(key, JSON.stringify(Object.fromEntries(map)));
     } catch {
       /* ignore */
     }
@@ -790,7 +797,7 @@ export class AppServices {
   setAutoReply(enabled: boolean, text: string): void {
     this.autoReplyCfg = { enabled, text };
     try {
-      localStorage.setItem("wa.autoreply", JSON.stringify(this.autoReplyCfg));
+      this.kv.set("wa.autoreply", JSON.stringify(this.autoReplyCfg));
     } catch {
       /* ignore */
     }
@@ -816,14 +823,14 @@ export class AppServices {
 
   private persistScheduled(): void {
     try {
-      localStorage.setItem("wa.scheduled", JSON.stringify(this.scheduledMsgs));
+      this.kv.set("wa.scheduled", JSON.stringify(this.scheduledMsgs));
     } catch {
       /* ignore */
     }
   }
   private persistTemplates(): void {
     try {
-      localStorage.setItem("wa.templates", JSON.stringify(this.msgTemplates));
+      this.kv.set("wa.templates", JSON.stringify(this.msgTemplates));
     } catch {
       /* ignore */
     }
@@ -1428,7 +1435,7 @@ export class AppServices {
   }
   private persistAi(): void {
     try {
-      localStorage.setItem("wa.ai", JSON.stringify(this.aiSettings));
+      this.kv.set("wa.ai", JSON.stringify(this.aiSettings));
     } catch {
       /* ignore */
     }
@@ -1810,7 +1817,7 @@ export class AppServices {
   async deleteStory(storyId: string): Promise<void> {
     await this.authedRequest("DELETE", `/v1/stories/${storyId}`);
     try {
-      localStorage.removeItem(`wa.story.${storyId}`);
+      this.kv.remove(`wa.story.${storyId}`);
     } catch {
       /* ignore */
     }
@@ -1821,7 +1828,7 @@ export class AppServices {
    *  real content rides the E2EE STORY_KEY channel to each viewer). */
   saveStoryContent(storyId: string, content: StoryContent): void {
     try {
-      localStorage.setItem(`wa.story.${storyId}`, JSON.stringify(content));
+      this.kv.set(`wa.story.${storyId}`, JSON.stringify(content));
     } catch {
       /* quota/full — the placeholder renders instead */
     }
@@ -1831,7 +1838,7 @@ export class AppServices {
    *  without the STORY_KEY sees the encrypted placeholder). */
   loadStoryContent(storyId: string): StoryContent | null {
     try {
-      const raw = localStorage.getItem(`wa.story.${storyId}`);
+      const raw = this.kv.get(`wa.story.${storyId}`);
       return raw ? (JSON.parse(raw) as StoryContent) : null;
     } catch {
       return null;
@@ -1905,7 +1912,7 @@ export class AppServices {
     if (this.mutedConvs.has(conversationId)) this.mutedConvs.delete(conversationId);
     else this.mutedConvs.add(conversationId);
     try {
-      localStorage.setItem("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
+      this.kv.set("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
     } catch {
       /* ignore */
     }
@@ -1919,7 +1926,7 @@ export class AppServices {
   setGlobalMute(on: boolean): void {
     this.globalMuted = on;
     try {
-      localStorage.setItem("wa.mute.global", on ? "1" : "0");
+      this.kv.set("wa.mute.global", on ? "1" : "0");
     } catch {
       /* ignore */
     }
@@ -1953,7 +1960,7 @@ export class AppServices {
   async snoozeConversation(conversationId: string, untilMs: number): Promise<void> {
     this.mutedConvs.add(conversationId);
     try {
-      localStorage.setItem("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
+      this.kv.set("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
     } catch {
       /* ignore */
     }
@@ -1966,7 +1973,7 @@ export class AppServices {
   async clearConversationSnooze(conversationId: string): Promise<void> {
     this.mutedConvs.delete(conversationId);
     try {
-      localStorage.setItem("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
+      this.kv.set("wa.mute.convs", JSON.stringify([...this.mutedConvs]));
     } catch {
       /* ignore */
     }
@@ -2010,34 +2017,13 @@ export class AppServices {
     return s < e ? min >= s && min < e : min >= s || min < e;
   }
 
-  /** alertCues plays a short sound and/or vibrates per the user's prefs. Best-
-   *  effort: silently no-ops where the browser blocks autoplay/vibration. */
+  /** alertCues plays a short sound and/or vibrates per the user's prefs. Both
+   *  go through the DeviceCapabilities port, so the same code drives a phone's
+   *  haptics on mobile; the adapters no-op where the platform blocks them. */
   private alertCues(): void {
     const p = this.notifPrefsCache;
-    if (p.vibrate && typeof navigator !== "undefined" && "vibrate" in navigator) {
-      try {
-        navigator.vibrate(80);
-      } catch {
-        /* ignore */
-      }
-    }
-    if (p.sound) {
-      try {
-        const Ctx = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-        if (!Ctx) return;
-        const ac = new Ctx();
-        const osc = ac.createOscillator();
-        const gain = ac.createGain();
-        osc.frequency.value = 880;
-        gain.gain.value = 0.05;
-        osc.connect(gain).connect(ac.destination);
-        osc.start();
-        osc.stop(ac.currentTime + 0.12);
-        osc.onended = () => void ac.close();
-      } catch {
-        /* ignore */
-      }
-    }
+    if (p.vibrate) this.caps.vibrate(80);
+    if (p.sound) this.caps.playNotificationSound();
   }
 
   // ── chat conveniences (T5.15) ─────────────────────────────────────────────

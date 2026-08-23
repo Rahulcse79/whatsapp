@@ -64,3 +64,40 @@ export interface SecureStore {
   set(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
 }
+
+/**
+ * KeyValueStore is synchronous, non-secret, client-local preference storage —
+ * drafts, mutes, favourites, saved replies, wallpaper choice and the like.
+ *
+ * Deliberately separate from SecureStore: these values are conveniences, not
+ * secrets, and the split keeps anything sensitive out of a store that has no
+ * encryption guarantee. Deliberately synchronous because the service layer
+ * reads these on the render path (an async draft lookup would flicker); the
+ * mobile adapter therefore hydrates once at startup and writes through.
+ *
+ * Every method must tolerate a failing backing store (private browsing, a full
+ * disk) by behaving as if the key were absent — a preference is never worth
+ * throwing over.
+ */
+export interface KeyValueStore {
+  get(key: string): string | null;
+  set(key: string, value: string): void;
+  remove(key: string): void;
+}
+
+/**
+ * DeviceCapabilities covers the small platform affordances the service layer
+ * reaches for that are neither storage nor network: haptics, the clipboard, and
+ * a notification sound.
+ *
+ * All three are best-effort. An implementation that cannot do one should no-op
+ * rather than throw: a missing buzz must never fail a message send.
+ */
+export interface DeviceCapabilities {
+  /** Short haptic/vibration pulse. No-op where unsupported. */
+  vibrate(ms: number): void;
+  /** Play the short new-message tone. No-op where unsupported or blocked. */
+  playNotificationSound(): void;
+  /** Copy text to the system clipboard. Resolves false if unavailable. */
+  copyToClipboard(text: string): Promise<boolean>;
+}

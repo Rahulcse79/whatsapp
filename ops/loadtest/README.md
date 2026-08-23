@@ -17,6 +17,8 @@ ACKed (durable in the PG inbox) that never reaches a recipient fails the run
 | **Media flood** | [`mediaflood.js`](mediaflood.js) | 500 parallel 25 MB uploads + downloads | presign p95 ≤ 500 ms · API pods unaffected (isolation) |
 | **Call surge** | [`callsurge.js`](callsurge.js) | 300 simultaneous call setups | call setup p95 ≤ 3 s (GATE P2) · every setup opens a ring |
 | **PTT floor** | [`ptt.js`](ptt.js) | 1 speaker + 200 listeners, contended floor | floor-grant p95 ≤ 200 ms (GATE P3) · every ACQUIRE resolves |
+| **Channel broadcast** | [`channel.js`](channel.js) | 1 publisher → N polling followers (server-visible fan-out) | publish p95 ≤ 500 ms · feed read p95 ≤ 300 ms · zero publish failures |
+| **Webinar** | [`webinar.js`](webinar.js) | N attendees join one room at once, then Q&A | join p95 ≤ 1 s · roster p95 ≤ 500 ms · Q&A write p95 ≤ 500 ms · zero join failures |
 
 **GATE P4 / launch** requires the sustained profile green for two consecutive
 weeks with the §2 chaos scenarios enabled — the whole suite, audited, is what
@@ -54,6 +56,17 @@ k6 run \
 `TOKENS` is a comma-separated list of bearer JWTs (one per sender VU); the group
 must already have 1,024 members so the accept path branches to the async fan-out
 worker (`internal/fanout`).
+
+## Which profiles run today
+
+`channel.js`, `webinar.js`, `callsurge.js`, `mediaflood.js` and `ptt.js` run as
+they are. The five profiles that import `./codec/wsv1.js` — `sustained.js`,
+`burst.js`, `reconnectstorm.js`, `fanout.js`, `inboxsoak.js` — **cannot start**
+until that bundle exists (see the next section); k6 fails at module resolution,
+so they produce nothing rather than a partial result. That currently includes
+GATE P1 (`fanout.js`) and GATE P4 (`sustained.js`).
+See [`Docs/07-scalability/capacity-baseline-T15.01.md`](../../Docs/07-scalability/capacity-baseline-T15.01.md)
+for the full baseline status and the run plan.
 
 ## The wsv1 codec seam
 

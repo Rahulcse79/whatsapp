@@ -34,6 +34,8 @@ const HOST_TOKEN = __ENV.HOST_TOKEN || "";
 const TOKENS = (__ENV.TOKENS || "").split(",").filter(Boolean); // one attendee bearer per VU
 const ATTENDEES = Number(__ENV.ATTENDEES || 500); // simultaneous joins ("doors open")
 const RAMP = __ENV.RAMP || "30s"; // how fast the audience arrives
+const HOLD = __ENV.HOLD || "90s"; // how long the audience stays
+const DURATION = __ENV.DURATION || "2m"; // host-poll window; shorten for a smoke run
 
 // ── metrics ──────────────────────────────────────────────────────────────
 const joinLatency = new Trend("webinar_join_ms", true);
@@ -54,7 +56,7 @@ export const options = {
       startVUs: 0,
       stages: [
         { duration: RAMP, target: ATTENDEES },
-        { duration: "90s", target: ATTENDEES },
+        { duration: HOLD, target: ATTENDEES },
       ],
       gracefulRampDown: "10s",
     },
@@ -63,7 +65,7 @@ export const options = {
       executor: "constant-vus",
       exec: "hostPoll",
       vus: 1,
-      duration: "2m",
+      duration: DURATION,
     },
   },
   thresholds: {

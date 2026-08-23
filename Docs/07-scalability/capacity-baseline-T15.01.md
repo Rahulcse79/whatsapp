@@ -142,10 +142,10 @@ human/infrastructure gates.
 
 ## 4. What was actually executed
 
-See §6 for the recorded results. Only the HTTP profiles were exercised, against
-the local development rig, at smoke scale — enough to prove the new scripts are
-correct against the real API contracts, and **not** enough to say anything about
-capacity. Every assertion in the new profiles was verified against the handlers:
+See §6 for the recorded results. Only the two new HTTP profiles were exercised,
+against the local development rig, at smoke scale — enough to prove the new
+scripts are correct against the real API contracts (and to catch two defects in
+them), and **not** enough to say anything about capacity. Every assertion in the new profiles was verified against the handlers:
 
 | Profile assertion | Verified against |
 |---|---|
@@ -183,13 +183,67 @@ _This section is the only place numbers belong. It records what was measured,
 at what scale, on what hardware — so a laptop smoke run can never be mistaken
 for a capacity baseline._
 
-### 6.1 Local smoke — new profiles (not a capacity result)
+### 6.1 Local smoke — new profiles (NOT a capacity result)
 
-Environment: single developer machine (macOS, colima), all four services on
-localhost, PostgreSQL/Valkey/NATS/MinIO in containers on the same host.
-Scale: a handful of VUs. **These numbers characterise a laptop, not the system.**
+**Read this section as "the scripts are correct", never as "the system is fast".**
+A 4-core / 8 GB laptop running the app, the database, the broker and the load
+generator on the same kernel tells you nothing about capacity — there is no
+network, no contention, and no realistic concurrency. It only proves the
+profiles talk to the real API correctly and their thresholds evaluate.
 
-<!-- filled in by the smoke run; see the commit that adds them -->
+| | |
+|---|---|
+| Host | macOS 12.7.6, 4 CPU, 8 GB, all services + infra + k6 on the same machine |
+| k6 | v2.2.0 |
+| Stack | core-api/ws-gateway/media-svc/notification-svc on localhost; PostgreSQL 17, Valkey, NATS, MinIO in colima containers |
+| Date | 2026-08-23 |
+
+**`channel.js`** — 1 publisher × 6 posts, 5 follower VUs, 20 s window:
+
+```
+published ok=6 fail=0
+publish p95=10ms (target ≤ 500)
+feed read p95=28ms (target ≤ 300)
+react p95=10ms
+visibility p95=1024ms (budget 5000) OK
+feed failures=0 (must be 0)
+```
+
+Exit 0 — all thresholds pass. The visibility figure (~1 s) is dominated by the
+follower's own 1 Hz poll cadence, which is the expected floor for a polling
+reader, not a server latency.
+
+**`webinar.js`** — 12 attendee VUs ramped over 5 s, 10 s hold, host polling:
+
+```
+joins ok=54 fail=0 (fail must be 0)
+join p95=5ms (target ≤ 1000)
+roster p95=13ms (target ≤ 500)
+question p95=36ms (target ≤ 500)
+upvote p95=5ms · hand p95=66ms
+```
+
+Exit 0 — all thresholds pass; the hand, question and upvote branches were all
+exercised.
+
+**Two defects the smoke run caught**, both now fixed in the profiles:
+- `channel.js` originally sampled the newest post's age on *every* poll, which
+  measures "time since the publisher last posted" and climbs without bound once
+  publishing stops (it read 19 s on the first run). It now samples visibility on
+  **first sighting only**.
+- Both profiles had hard-coded 2-minute windows; `DURATION`/`HOLD` are now env
+  vars so a smoke run finishes in seconds while staging keeps the long window.
+
+### 6.1.1 Finding 1, reproduced
+
+```
+$ k6 run ops/loadtest/fanout.js
+level=error msg="could not initialize 'ops/loadtest/fanout.js':
+  The moduleSpecifier \"./codec/wsv1.js\" couldn't be found on local disk."
+```
+
+The GATE P1 profile does not run. `sustained.js` (GATE P4), `burst.js`,
+`reconnectstorm.js` and `inboxsoak.js` fail identically.
 
 ### 6.2 Staging capacity baseline
 

@@ -34,6 +34,7 @@ const TOKENS = (__ENV.TOKENS || "").split(",").filter(Boolean); // one follower 
 const POSTS = Number(__ENV.POSTS || 30); // posts the publisher fires
 const READERS = Number(__ENV.READERS || 200); // concurrent follower VUs
 const VISIBILITY_BUDGET_MS = Number(__ENV.VISIBILITY_BUDGET_MS || 5000);
+const DURATION = __ENV.DURATION || "2m"; // follower window; shorten for a smoke run
 
 // ── metrics ──────────────────────────────────────────────────────────────
 const publishLatency = new Trend("channel_publish_ms", true);
@@ -61,7 +62,7 @@ export const options = {
       executor: "constant-vus",
       exec: "follow",
       vus: READERS,
-      duration: "2m",
+      duration: DURATION,
       startTime: "5s", // let the publisher get ahead
     },
   },
@@ -73,6 +74,10 @@ export const options = {
     checks: ["rate==1.0"],
   },
 };
+
+// Post ids this VU has already counted for the visibility metric (per-VU, since
+// each k6 VU is its own JS runtime).
+const seen = new Set();
 
 function authHeaders(token) {
   return { headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" } };
@@ -134,11 +139,14 @@ export function follow() {
   }
 
   const newest = posts[0];
-  if (newest && newest.created_at_ms) {
-    // How long after publication a follower actually sees the post. Compared
-    // against VISIBILITY_BUDGET_MS in the summary rather than as a hard k6
-    // threshold, because a follower polling on a 1 s cadence already carries up
-    // to a poll interval of skew.
+  // Visibility is measured on FIRST SIGHTING only. Sampling the newest post's
+  // age on every poll would instead measure "how long since the publisher last
+  // posted", which climbs forever once publishing stops — a meaningless number.
+  if (newest && newest.created_at_ms && !seen.has(newest.id)) {
+    seen.add(newest.id);
+    // Compared against VISIBILITY_BUDGET_MS in the summary rather than as a hard
+    // k6 threshold, because a follower polling on a 1 s cadence already carries
+    // up to a poll interval of skew.
     visibility.add(Math.max(0, Date.now() - newest.created_at_ms));
 
     const rStart = Date.now();

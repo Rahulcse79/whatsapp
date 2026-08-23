@@ -11,6 +11,7 @@ Decisions are immutable once **Accepted**; to change one, write a new ADR that s
 | [ADR-005](ADR-005-client-side-search.md) | Client-side content search; no OpenSearch | Accepted |
 | [ADR-006](ADR-006-client-stack.md) | React Native + Vite PWA (Flutter/Next.js rejected) | Accepted |
 | [ADR-007](ADR-007-kafka-reevaluation.md) | Kafka re-evaluated post-build — NATS stays (T15.02) | Accepted |
+| [ADR-008](ADR-008-cassandra-reevaluation.md) | Cassandra re-evaluated post-build — partitioned Postgres inbox stays (T15.03) | Accepted |
 
 ## Template
 

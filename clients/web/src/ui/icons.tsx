@@ -94,14 +94,20 @@ const PATHS: Record<IconName, ReactNode> = {
     </>
   ),
   community: (
+    // A group of people. The previous glyph was a rounded rect with stray
+    // strokes and a dot, which read as nothing in particular at rail size.
     <>
-      <rect x="3" y="8" width="9" height="12" rx="2.5" />
-      <path d="M12 11h5a2 2 0 0 1 2 2v7" />
-      <path d="M7.5 4.2l3.5 2v2.8" />
-      <circle cx="7.5" cy="14" r="1.3" fill="currentColor" stroke="none" />
+      <circle cx="9" cy="8.5" r="3.1" />
+      <path d="M3.4 19.4c0-3.1 2.5-4.9 5.6-4.9s5.6 1.8 5.6 4.9" />
+      <circle cx="17.2" cy="10.2" r="2.2" />
+      <path d="M15.6 14.9c2.7-.4 5 1.1 5 4.5" />
     </>
   ),
-  updates: <circle cx="12" cy="12" r="9" strokeDasharray="3.6 3" />,
+  updates: (
+    // WhatsApp's Status mark is a ring of a few long arcs, not a dotted line:
+    // longer dashes with round caps read as segments at 20-24px.
+    <circle cx="12" cy="12" r="9" strokeDasharray="8.6 3.6" strokeWidth={2.1} />
+  ),
   channel: (
     <>
       <path d="M4 10v4a1 1 0 0 0 1 1h3l5 4V5L9 9H5a1 1 0 0 0-1 1z" />

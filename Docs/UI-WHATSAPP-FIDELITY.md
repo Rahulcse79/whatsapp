@@ -64,7 +64,7 @@ composer's structure all landed in pass 1 and hold up against WhatsApp.
   means changing the shared type and both repos in `@wa/client-core` — the
   package the parallel session is mid-extraction on. Not worth the collision for
   a tick in a preview.
-- [ ] **Phase 3 — Icons.** Replace the inaccurate rail and action icons with
+- [x] **Phase 3 — Icons.** Replace the inaccurate rail and action icons with
   shapes that match WhatsApp (I1).
 - [ ] **Phase 4 — Chrome.** Wallpaper fidelity and the thread-header presence
   line (C1, C2), plus transition polish.

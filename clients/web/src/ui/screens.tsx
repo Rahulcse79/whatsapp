@@ -761,6 +761,17 @@ export function CallHistory({ onBack }: { onBack: () => void }) {
   );
 }
 
+/** The chat-list filter tabs, mirroring WhatsApp's. Each narrows the list using
+ *  state the client already tracks (unread counts, favourites, group names), so
+ *  this is a surface for existing data rather than new bookkeeping. */
+type ChatFilter = "all" | "unread" | "favorites" | "groups";
+const CHAT_FILTERS: { key: ChatFilter; label: string; empty: string }[] = [
+  { key: "all", label: "All", empty: "No chats yet" },
+  { key: "unread", label: "Unread", empty: "No unread chats" },
+  { key: "favorites", label: "Favourites", empty: "No favourite chats" },
+  { key: "groups", label: "Groups", empty: "No group chats" },
+];
+
 export function ChatList({
   onOpen,
   onNew,
@@ -781,6 +792,7 @@ export function ChatList({
   const [showArchived, setShowArchived] = useState(false);
   const [showHidden, setShowHidden] = useState(false);
   const [filter, setFilter] = useState("");
+  const [tab, setTab] = useState<ChatFilter>("all"); // WhatsApp's All/Unread/Favourites/Groups
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -882,7 +894,21 @@ export function ChatList({
     q === "" || nameOf(c.conversationId).toLowerCase().includes(q) || (c.title || "").toLowerCase().includes(q) || (c.lastPreview || "").toLowerCase().includes(q);
   // Hidden chats (T10.01) are kept out of the main sections, in a collapsible
   // group at the bottom.
-  const shown = items.filter(match).filter((c) => !services.isHidden(c.conversationId));
+  // The tab narrows the same set the search already matched, so the two compose
+  // rather than fight: searching inside "Unread" stays inside "Unread".
+  const inTab = (c: ChatSummary): boolean => {
+    switch (tab) {
+      case "unread":
+        return services.unreadCount(c.conversationId) > 0;
+      case "favorites":
+        return services.isFavorite(c.conversationId);
+      case "groups":
+        return !!services.groupNameOf(c.conversationId);
+      default:
+        return true;
+    }
+  };
+  const shown = items.filter(match).filter(inTab).filter((c) => !services.isHidden(c.conversationId));
   const hidden = items.filter(match).filter((c) => services.isHidden(c.conversationId));
   const favorites = shown.filter((c) => services.isFavorite(c.conversationId) && !services.isArchived(c.conversationId));
   const archived = shown.filter((c) => services.isArchived(c.conversationId));
@@ -924,6 +950,23 @@ export function ChatList({
           aria-label="Search chats"
         />
       </div>
+      <div className="chat-filters" role="tablist" aria-label="Filter chats">
+        {CHAT_FILTERS.map((f) => {
+          const count = f.key === "unread" ? items.filter((c) => services.unreadCount(c.conversationId) > 0).length : 0;
+          return (
+            <button
+              key={f.key}
+              role="tab"
+              aria-selected={tab === f.key}
+              className={`chat-filter${tab === f.key ? " on" : ""}`}
+              onClick={() => setTab(f.key)}
+            >
+              {f.label}
+              {count > 0 ? <span className="chat-filter-count">{count}</span> : null}
+            </button>
+          );
+        })}
+      </div>
       {items.length === 0 ? (
         <EmptyState
           icon={<Icon name="chats" size={26} />}
@@ -936,7 +979,14 @@ export function ChatList({
           }
         />
       ) : shown.length === 0 ? (
-        <p className="muted center">No chats match “{filter}”.</p>
+        filter.trim() ? (
+          <p className="muted center">No chats match “{filter}”.</p>
+        ) : (
+          <EmptyState
+            title={CHAT_FILTERS.find((f) => f.key === tab)?.empty ?? "No chats"}
+            text={tab === "favorites" ? "Star a chat to keep it here." : "Nothing here right now."}
+          />
+        )
       ) : (
         <ul className="list">
           {favorites.length > 0 && <li className="list-section">Favorites</li>}

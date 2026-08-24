@@ -58,8 +58,12 @@ composer's structure all landed in pass 1 and hold up against WhatsApp.
 - [x] **Phase 1 — Message surface.** *(M1–M4 done and verified in the DOM; M5's styling is in place but the unread divider is not yet wired to a read watermark.)* Date separators (M1), sender/time grouping
   with a single tail per run (M2, M3), correct meta float so time+ticks never
   collide with wrapped text (M4), and the unread divider (M5).
-- [ ] **Phase 2 — Chat list.** Filter chips wired to the existing unread /
-  favourite / group state (L1) and the delivery tick in the row preview (L2).
+- [x] **Phase 2 — Chat list.** Filter chips wired to the existing unread /
+  favourite / group state (L1). **L2 deferred:** the delivery tick in the row
+  preview needs `ChatSummary` to carry the last message's `mine`/`state`, which
+  means changing the shared type and both repos in `@wa/client-core` — the
+  package the parallel session is mid-extraction on. Not worth the collision for
+  a tick in a preview.
 - [ ] **Phase 3 — Icons.** Replace the inaccurate rail and action icons with
   shapes that match WhatsApp (I1).
 - [ ] **Phase 4 — Chrome.** Wallpaper fidelity and the thread-header presence

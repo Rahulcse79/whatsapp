@@ -3448,3 +3448,59 @@ body:has(.auth)::before {
   height: 1px;
   background: color-mix(in srgb, var(--accent) 40%, transparent);
 }
+
+/* ── Chat-list filter tabs (WhatsApp) ─────────────────────────────────────
+   A row of pills under the search field: All / Unread / Favourites / Groups.
+   Horizontally scrollable so a narrow pane never wraps them onto two lines. */
+.chat-filters {
+  display: flex;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) var(--space-3);
+  background: var(--panel);
+  border-bottom: 1px solid var(--line);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chat-filters::-webkit-scrollbar {
+  display: none;
+}
+.chat-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  padding: 5px var(--space-3);
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: var(--text-md);
+  font-weight: var(--weight-medium);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+.chat-filter:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+.chat-filter.on {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+/* The unread tab carries its count, like WhatsApp. */
+.chat-filter-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-bold);
+}
+.chat-filter.on .chat-filter-count {
+  background: var(--accent-strong);
+}

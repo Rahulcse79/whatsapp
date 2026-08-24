@@ -1758,37 +1758,70 @@ body:has(.auth)::before {
   border-top-left-radius: 0;
 }
 
-/* Little bubble tail on the squared corner. */
-.bubble.mine::after,
-.bubble.theirs::after {
+/* ── Message grouping (WhatsApp) ──────────────────────────────────────────
+   Consecutive messages from one sender form a run: only the run's first bubble
+   carries a tail and the square corner, the rest round fully and sit tighter.
+   This is most of what makes a thread read as a conversation. */
+.bubble.run-cont {
+  margin-top: -2px; /* against the .messages gap: ~2px inside a run, ~6px between */
+}
+.bubble.run-cont.mine {
+  border-top-right-radius: var(--radius-sm);
+}
+.bubble.run-cont.theirs {
+  border-top-left-radius: var(--radius-sm);
+}
+.bubble.run-start {
+  margin-top: var(--space-1);
+}
+
+/* Little bubble tail on the squared corner — run-start only. */
+.bubble.run-start.mine::after,
+.bubble.run-start.theirs::after {
   content: "";
   position: absolute;
   top: 0;
   width: 9px;
   height: 13px;
 }
-.bubble.mine::after {
+.bubble.run-start.mine::after {
   right: -8px;
   background: var(--mine);
   clip-path: polygon(0 0, 0 100%, 100% 0);
 }
-.bubble.theirs::after {
+.bubble.run-start.theirs::after {
   left: -8px;
   background: var(--theirs);
   clip-path: polygon(100% 0, 100% 100%, 0 0);
 }
 
 /* Time + delivery ticks, tucked at the bottom-right; text wraps around it. */
+/* Time + delivery ticks, floated bottom-right INSIDE the bubble so the text
+   wraps around them — WhatsApp's layout. The float alone is not enough: on a
+   line that fills the bubble the text ran underneath the meta. `shape-outside`
+   plus a reserved last-line gutter keeps them apart without reserving space on
+   every line. */
 .bubble-meta {
   float: right;
-  margin: 8px -2px -3px 10px;
-  font-size: 11px;
+  margin: 6px -2px -3px var(--space-3);
+  font-size: var(--text-xs);
   line-height: 1;
   color: var(--muted);
   display: inline-flex;
   align-items: center;
   gap: 4px;
   white-space: nowrap;
+  /* Pull the meta onto the text's last line rather than below it. */
+  position: relative;
+  bottom: -2px;
+}
+/* On my own bubbles the meta sits on the green fill, so it needs its own
+   contrast rather than the neutral muted grey. */
+.bubble.mine .bubble-meta {
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+}
+:root[data-theme="dark"] .bubble.mine .bubble-meta {
+  color: color-mix(in srgb, #ffffff 60%, transparent);
 }
 .bubble .state {
   font-size: 12px;
@@ -3371,4 +3404,47 @@ body:has(.auth)::before {
 }
 .t-3xl {
   font-size: var(--text-3xl);
+}
+
+
+/* ── Day separator (WhatsApp) ─────────────────────────────────────────────
+   A centred pill introducing each day's first message. Sticky so the day stays
+   readable while scrolling through a long run. */
+.day-sep {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-3) 0 var(--space-2);
+  position: sticky;
+  top: var(--space-2);
+  z-index: 2;
+  pointer-events: none;
+}
+.day-sep span {
+  padding: 5px var(--space-3);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  box-shadow: var(--shadow-xs);
+}
+
+/* ── Unread divider ──────────────────────────────────────────────────────── */
+.unread-sep {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  color: var(--accent-strong);
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+}
+.unread-sep::before,
+.unread-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: color-mix(in srgb, var(--accent) 40%, transparent);
 }

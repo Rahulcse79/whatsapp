@@ -44,7 +44,7 @@ import {
   type PollBody,
   type QuotedRef,
 } from "@wa/media-pipeline";
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type ChangeEvent, type CSSProperties, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { registerWebPush } from "../push";
 import { getTheme, setTheme, type ThemeChoice } from "../theme";
 import { RichText } from "./RichText";
@@ -230,6 +230,32 @@ function fmtRowTime(ms: number): string {
  *  fall back to a human label instead of showing a raw UUID to the user. */
 function isUuidLike(v: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.trim());
+}
+
+/** GROUP_WINDOW_MS is how close two messages from the same sender must be to
+ *  belong to one visual run. WhatsApp groups a burst but separates messages sent
+ *  minutes apart, so the run also breaks on a gap, not just on sender change. */
+const GROUP_WINDOW_MS = 5 * 60 * 1000;
+
+/** sameDay reports whether two timestamps fall on the same calendar day. */
+function sameDay(a: number, b: number): boolean {
+  const x = new Date(a);
+  const y = new Date(b);
+  return x.getFullYear() === y.getFullYear() && x.getMonth() === y.getMonth() && x.getDate() === y.getDate();
+}
+
+/** fmtDaySeparator labels a day the way WhatsApp does: TODAY / YESTERDAY for the
+ *  two most recent days, a weekday within the last week, else a full date. */
+function fmtDaySeparator(ms: number): string {
+  const d = new Date(ms);
+  const now = new Date();
+  if (sameDay(ms, now.getTime())) return "Today";
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (sameDay(ms, yesterday.getTime())) return "Yesterday";
+  const weekAgo = now.getTime() - 6 * 24 * 60 * 60 * 1000;
+  if (ms >= weekAgo) return d.toLocaleDateString([], { weekday: "long" });
+  return d.toLocaleDateString([], { day: "numeric", month: "long", year: d.getFullYear() === now.getFullYear() ? undefined : "numeric" });
 }
 
 /** fmtClock renders a bubble timestamp (h:mm). */
@@ -5403,23 +5429,37 @@ export function Thread({
         {messages.length === 0 ? (
           <EmptyState title="No messages yet" text="Say hello — messages in this chat are end-to-end encrypted." />
         ) : null}
-        {messages.map((m) => {
+        {messages.map((m, i) => {
           // Collapse a live-location share to its latest sample (one moving pin).
           const lv = parseLiveLocation(m.body);
           if (lv && liveLatest.get(lv.shareId) !== m.msgUuid) return null;
+
+          // WhatsApp reads as days, not a flat list: a centred pill introduces
+          // each day's first message.
+          const prev = messages[i - 1];
+          const newDay = !prev || !sameDay(prev.createdAt, m.createdAt);
+
+          // Grouping: consecutive messages from the same side, close in time,
+          // form one run. Only the run's FIRST bubble gets a tail, and the rest
+          // sit tighter — the difference between "a conversation" and "a list".
+          const runStart = newDay || !prev || prev.mine !== m.mine || m.createdAt - prev.createdAt > GROUP_WINDOW_MS;
+
           return (
-            <MessageBubble
-              key={m.msgUuid}
-              message={m}
-              actions={actions}
-              onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })}
-              bubbleRef={(el) => {
-                bubbleRefs.current[m.msgUuid] = el;
-              }}
-              flash={flashId === m.msgUuid}
-              onJump={jumpTo}
-              onQuickReply={sendQuick}
-            />
+            <Fragment key={m.msgUuid}>
+              {newDay ? <div className="day-sep"><span>{fmtDaySeparator(m.createdAt)}</span></div> : null}
+              <MessageBubble
+                message={m}
+                actions={actions}
+                runStart={runStart}
+                onOpen={(env) => setGallery({ items: visuals, startKey: env.objectKey })}
+                bubbleRef={(el) => {
+                  bubbleRefs.current[m.msgUuid] = el;
+                }}
+                flash={flashId === m.msgUuid}
+                onJump={jumpTo}
+                onQuickReply={sendQuick}
+              />
+            </Fragment>
           );
         })}
       </div>
@@ -5704,6 +5744,7 @@ function snippetOf(m: ThreadMessage): string {
 function MessageBubble({
   message,
   actions,
+  runStart = true,
   onOpen,
   bubbleRef,
   flash,
@@ -5712,6 +5753,9 @@ function MessageBubble({
 }: {
   message: ThreadMessage;
   actions: MessageActions;
+  /** True for the first bubble of a same-sender run: it alone draws the tail,
+   *  and the rest of the run sits tighter beneath it (WhatsApp grouping). */
+  runStart?: boolean;
   onOpen: (env: MediaEnvelope) => void;
   bubbleRef?: (el: HTMLDivElement | null) => void;
   flash?: boolean;
@@ -5738,7 +5782,11 @@ function MessageBubble({
   };
 
   return (
-    <div ref={bubbleRef} className={`bubble ${message.mine ? "mine" : "theirs"}${flash ? " jump-flash" : ""}`} style={{ position: "relative" }}>
+    <div
+      ref={bubbleRef}
+      className={`bubble ${message.mine ? "mine" : "theirs"}${runStart ? " run-start" : " run-cont"}${flash ? " jump-flash" : ""}`}
+      style={{ position: "relative" }}
+    >
       {message.starred ? <span title="Starred" style={{ position: "absolute", top: -8, left: -6 }}>⭐</span> : null}
       {message.pinned ? <span title="Pinned" style={{ position: "absolute", top: -8, right: 14 }}>📌</span> : null}
       {!message.deleted ? (

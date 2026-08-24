@@ -5420,7 +5420,7 @@ export function Thread({
           </>
         )}
         {onSearchInChat && (
-          <button className="wa-icon" title="Search in this chat" aria-label="Search in this chat" onClick={() => onSearchInChat(conversationId)}>
+          <button className="wa-icon head-optional" title="Search in this chat" aria-label="Search in this chat" onClick={() => onSearchInChat(conversationId)}>
             <Icon name="search" size={21} />
           </button>
         )}

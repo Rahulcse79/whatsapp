@@ -1446,11 +1446,23 @@ body:has(.auth)::before {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   min-height: 60px;
   background: var(--header);
   border-bottom: 1px solid var(--line);
-  font-weight: 600;
+  font-weight: var(--weight-semibold);
+  /* Without this a flex row refuses to shrink below its content, so a header
+     with several action icons pushed the whole pane — and the page — wider than
+     a phone viewport and produced a horizontal scrollbar. */
+  min-width: 0;
+}
+.pane-head > * {
+  min-width: 0;
+}
+/* The action icons keep their size; it is the title that gives way. */
+.pane-head .wa-icon,
+.pane-head .avatar {
+  flex-shrink: 0;
 }
 
 /* Chat-list header: your avatar + a compact icon toolbar. */
@@ -3503,4 +3515,29 @@ body:has(.auth)::before {
 }
 .chat-filter.on .chat-filter-count {
   background: var(--accent-strong);
+}
+
+
+/* ── Narrow-viewport header (phones) ──────────────────────────────────────
+   WhatsApp's mobile chat header carries video, voice and the overflow menu —
+   search lives inside the menu, not the header. Dropping it here is what keeps
+   the row inside a 360-375px viewport instead of forcing the page to scroll
+   sideways. */
+@media (max-width: 480px) {
+  .pane-head {
+    gap: var(--space-1);
+    padding: var(--space-2);
+  }
+  .pane-head .wa-icon.head-optional {
+    display: none;
+  }
+}
+
+/* Nothing may push the document wider than the viewport. This is a backstop:
+   a single overflowing child used to produce a horizontal scrollbar across the
+   whole app, which on a phone makes every screen feel broken. */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
 }

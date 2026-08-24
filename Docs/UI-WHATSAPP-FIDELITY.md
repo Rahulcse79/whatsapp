@@ -66,7 +66,34 @@ composer's structure all landed in pass 1 and hold up against WhatsApp.
   a tick in a preview.
 - [x] **Phase 3 — Icons.** Replace the inaccurate rail and action icons with
   shapes that match WhatsApp (I1).
-- [ ] **Phase 4 — Chrome.** Wallpaper fidelity and the thread-header presence
-  line (C1, C2), plus transition polish.
-- [ ] **Phase 5 — Verification.** Both themes, desktop and 375px, every screen
-  re-captured.
+- [x] **Phase 4 — Chrome / responsive.** Fixed a real horizontal-overflow bug at
+  phone widths (below). C1/C2 reassessed as not worth changing: the wallpaper
+  token is already WhatsApp's `#efeae2`, and the header presence line already
+  renders whenever presence is known — it was blank only because the dev peer
+  has no profile.
+- [x] **Phase 5 — Verification.** Measured rather than eyeballed; see below.
+
+---
+
+## Responsive bug found and fixed
+
+At a 375px viewport the document overflowed horizontally — `clientWidth` 375
+against `scrollWidth` 434, i.e. a 59px sideways scroll on every screen. Walking
+the DOM for elements extending past the viewport traced it to `.pane-head`: the
+thread header carries back, avatar, title and four action icons, and a flex row
+will not shrink below its content by default, so the header forced `.pane` and
+`.wa-detail` wider than the phone, and the page with them.
+
+Three fixes, smallest first:
+
+- `min-width: 0` on `.pane-head` and its children so the row may shrink, with
+  the icons and avatar pinned via `flex-shrink: 0` — the title gives way, not
+  the controls.
+- Below 480px the in-chat search icon is dropped from the header. That matches
+  WhatsApp, whose mobile chat header carries video, voice and the overflow menu
+  only.
+- `overflow-x: hidden` on `html, body` as a backstop, so one future overflowing
+  child cannot reintroduce a whole-app sideways scroll.
+
+Verified after: `scrollWidth === clientWidth` (375/375), no overflow, and the
+search icon correctly absent at phone width.

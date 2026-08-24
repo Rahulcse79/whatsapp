@@ -21,18 +21,18 @@ type Store struct{ pool *pgxpool.Pool }
 func NewStore(pool *pgxpool.Pool) *Store { return &Store{pool: pool} }
 
 func (s *Store) Get(ctx context.Context, userID string) (profile.Profile, error) {
-	var username, displayName, about *string
+	var username, displayName, about, avatarRef *string
 	var privacyJSON []byte
 	err := s.pool.QueryRow(ctx,
-		`SELECT username::text, display_name, about, privacy FROM users WHERE id = $1`, userID).
-		Scan(&username, &displayName, &about, &privacyJSON)
+		`SELECT username::text, display_name, about, avatar_ref, privacy FROM users WHERE id = $1`, userID).
+		Scan(&username, &displayName, &about, &avatarRef, &privacyJSON)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return profile.Profile{}, profile.ErrNotFound
 	}
 	if err != nil {
 		return profile.Profile{}, err
 	}
-	p := profile.Profile{UserID: userID, Username: deref(username), DisplayName: deref(displayName), About: deref(about)}
+	p := profile.Profile{UserID: userID, Username: deref(username), DisplayName: deref(displayName), About: deref(about), AvatarRef: deref(avatarRef)}
 	if len(privacyJSON) > 0 {
 		_ = json.Unmarshal(privacyJSON, &p.Privacy)
 	}
@@ -40,17 +40,17 @@ func (s *Store) Get(ctx context.Context, userID string) (profile.Profile, error)
 }
 
 func (s *Store) Public(ctx context.Context, userID string) (profile.Profile, error) {
-	var username, displayName, about *string
+	var username, displayName, about, avatarRef *string
 	err := s.pool.QueryRow(ctx,
-		`SELECT username::text, display_name, about FROM users WHERE id = $1 AND status = 0`, userID).
-		Scan(&username, &displayName, &about)
+		`SELECT username::text, display_name, about, avatar_ref FROM users WHERE id = $1 AND status = 0`, userID).
+		Scan(&username, &displayName, &about, &avatarRef)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return profile.Profile{}, profile.ErrNotFound
 	}
 	if err != nil {
 		return profile.Profile{}, err
 	}
-	return profile.Profile{UserID: userID, Username: deref(username), DisplayName: deref(displayName), About: deref(about)}, nil
+	return profile.Profile{UserID: userID, Username: deref(username), DisplayName: deref(displayName), About: deref(about), AvatarRef: deref(avatarRef)}, nil
 }
 
 func (s *Store) Update(ctx context.Context, userID, displayName, username, about string) error {
@@ -113,4 +113,17 @@ func deref(s *string) string {
 		return ""
 	}
 	return *s
+}
+
+// SetAvatar stores the profile picture's object key, or clears it when ref is
+// empty. Replacing an avatar simply overwrites the key: the previous blob is
+// left to MinIO lifecycle rather than deleted here, so a slow client still
+// holding the old URL does not 404 mid-render.
+func (s *Store) SetAvatar(ctx context.Context, userID, ref string) error {
+	var v any
+	if ref != "" {
+		v = ref
+	}
+	_, err := s.pool.Exec(ctx, `UPDATE users SET avatar_ref = $2 WHERE id = $1`, userID, v)
+	return err
 }

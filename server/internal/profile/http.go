@@ -34,6 +34,10 @@ func Routes(mux *http.ServeMux, s *Service, v auth.TokenVerifier) {
 			DisplayName string `json:"display_name"`
 			Username    string `json:"username"`
 			About       string `json:"about"`
+			// AvatarRef is a POINTER so the three states stay distinct: absent
+			// leaves the picture alone, "" clears it, a value sets it. A plain
+			// string would make every profile edit silently wipe the avatar.
+			AvatarRef *string `json:"avatar_ref"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httpx.Error(w, r, http.StatusBadRequest, httpx.ErrorObj{Code: "VALIDATION_BODY", Message: "invalid JSON body"})
@@ -42,6 +46,12 @@ func Routes(mux *http.ServeMux, s *Service, v auth.TokenVerifier) {
 		if err := s.Update(r.Context(), ident.UserID, body.DisplayName, body.Username, body.About); err != nil {
 			httpx.WriteError(w, r, err)
 			return
+		}
+		if body.AvatarRef != nil {
+			if err := s.SetAvatar(r.Context(), ident.UserID, *body.AvatarRef); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})

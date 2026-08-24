@@ -19,11 +19,16 @@ var PrivacyValues = map[string]bool{"everyone": true, "contacts": true, "nobody"
 
 // Profile is a user's editable identity metadata.
 type Profile struct {
-	UserID      string            `json:"user_id"`
-	Username    string            `json:"username"`
-	DisplayName string            `json:"display_name"`
-	About       string            `json:"about"`
-	Privacy     map[string]string `json:"privacy,omitempty"`
+	UserID      string `json:"user_id"`
+	Username    string `json:"username"`
+	DisplayName string `json:"display_name"`
+	About       string `json:"about"`
+	// AvatarRef is the profile picture's object key, or "" for none. Plaintext:
+	// an avatar is identity metadata like display_name, not message content, so
+	// it is stored unencrypted and the `avatar` privacy setting governs who may
+	// see it (see Public).
+	AvatarRef string            `json:"avatar_ref,omitempty"`
+	Privacy   map[string]string `json:"privacy,omitempty"`
 }
 
 // ErrUsernameTaken is returned when a requested username is already in use.
@@ -34,9 +39,11 @@ var ErrNotFound = errors.New("profile: user not found")
 
 // Store is the persistence port over the users + blocks tables.
 type Store interface {
-	Get(ctx context.Context, userID string) (Profile, error)                        // full self view
-	Public(ctx context.Context, userID string) (Profile, error)                     // username/display/about only
-	Update(ctx context.Context, userID, displayName, username, about string) error  // ErrUsernameTaken on conflict
+	Get(ctx context.Context, userID string) (Profile, error)                       // full self view
+	Public(ctx context.Context, userID string) (Profile, error)                    // username/display/about only
+	Update(ctx context.Context, userID, displayName, username, about string) error // ErrUsernameTaken on conflict
+	// SetAvatar stores the picture's object key, or clears it when ref is "".
+	SetAvatar(ctx context.Context, userID, ref string) error
 	SetPrivacy(ctx context.Context, userID string, privacy map[string]string) error //
 	Block(ctx context.Context, blocker, blocked string) error                       //
 	Unblock(ctx context.Context, blocker, blocked string) error                     //
@@ -57,7 +64,46 @@ func (s *Service) Public(ctx context.Context, userID string) (Profile, error) {
 	if errors.Is(err, ErrNotFound) {
 		return Profile{}, httpx.Reject(http.StatusNotFound, "USER_NOT_FOUND", "no such user")
 	}
-	return p, err
+	if err != nil {
+		return Profile{}, err
+	}
+	// The `avatar` privacy setting has existed in the model since FR-USER-02 but
+	// nothing honoured it, because nothing served an avatar. Now that one is
+	// served, "nobody" must actually withhold it.
+	//
+	// "contacts" is treated as "nobody" here rather than guessed at: this
+	// context has no contact graph, and quietly serving a picture the user
+	// restricted would be the worse failure. Wiring the real contact check is a
+	// noted follow-up.
+	if s.avatarHidden(ctx, userID) {
+		p.AvatarRef = ""
+	}
+	return p, nil
+}
+
+// avatarHidden reports whether the owner's privacy setting withholds their
+// avatar from a non-self caller.
+func (s *Service) avatarHidden(ctx context.Context, ownerID string) bool {
+	full, err := s.store.Get(ctx, ownerID)
+	if err != nil {
+		return true // fail closed: on doubt, do not serve the picture
+	}
+	switch full.Privacy["avatar"] {
+	case "nobody", "contacts":
+		return true
+	default: // "everyone" or unset
+		return false
+	}
+}
+
+// SetAvatar stores (or clears, with an empty ref) the caller's profile picture.
+// The ref is an object key produced by the media upload flow, not arbitrary
+// text, so it is length-bounded to keep a malformed client from writing junk.
+func (s *Service) SetAvatar(ctx context.Context, userID, ref string) error {
+	if len(ref) > 300 {
+		return httpx.Reject(http.StatusBadRequest, "VALIDATION_AVATAR", "avatar reference too long")
+	}
+	return s.store.SetAvatar(ctx, userID, ref)
 }
 
 // Update validates + writes display name / username / about. A username, when

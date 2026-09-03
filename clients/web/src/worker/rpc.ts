@@ -59,6 +59,10 @@ export interface SearchInput {
 /** The data + crypto surface the worker exposes to the main thread. */
 export interface DbApi {
   init(): Promise<ConversationCursor[]>;
+  /** False when the local database could not be opened on persistent storage and
+   *  is running in memory — this session's history dies with the tab. The UI
+   *  warns rather than letting a user type into a store that will be discarded. */
+  storageDurable(): Promise<boolean>;
   persistInboxBatch(batch: InboxBatch): Promise<ConversationCursor[]>;
   enqueueText(input: EnqueueTextInput): Promise<void>;
   enqueueOverlay(input: EnqueueOverlayInput): Promise<void>;
@@ -110,6 +114,7 @@ export function createDbClient(worker: Worker): DbApi {
 
   return {
     init: () => call<ConversationCursor[]>("init"),
+    storageDurable: () => call<boolean>("storageDurable"),
     persistInboxBatch: (batch) => call<ConversationCursor[]>("persistInboxBatch", batch),
     enqueueText: (input) => call<void>("enqueueText", input),
     enqueueOverlay: (input) => call<void>("enqueueOverlay", input),

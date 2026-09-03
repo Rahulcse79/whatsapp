@@ -541,11 +541,38 @@ export class AppServices {
     }
   }
 
-  static async create(): Promise<AppServices> {
-    const svc = new AppServices();
-    svc.cursorMirror = await svc.db.init();
-    await svc.sessions.load();
-    return svc;
+  /** The one live instance. Memoising the *promise* (not the resolved value)
+   *  means concurrent callers share a single boot: React StrictMode invokes the
+   *  provider effect twice in dev, and without this each pass constructed its
+   *  own AppServices and therefore its own DB worker. Two workers used to be
+   *  harmless because storage was in-memory; with SQLite on OPFS the second one
+   *  holds the storage lock forever and the first silently falls back to a
+   *  non-persistent database. */
+  private static booting: Promise<AppServices> | null = null;
+
+  static create(): Promise<AppServices> {
+    if (!AppServices.booting) {
+      AppServices.booting = (async () => {
+        const svc = new AppServices();
+        svc.cursorMirror = await svc.db.init();
+        await svc.sessions.load();
+        return svc;
+      })().catch((err) => {
+        // A failed boot must not poison every later attempt.
+        AppServices.booting = null;
+        throw err;
+      });
+    }
+    return AppServices.booting;
+  }
+
+  /** storageDurable reports whether the local database is on persistent storage.
+   *  False means another tab of this app already holds the storage lock (the
+   *  OPFS pool is exclusive) or the browser denied it, so this tab is running on
+   *  a throwaway in-memory database — worth telling the user about, since
+   *  nothing they do here will still be there after a reload. */
+  storageDurable(): Promise<boolean> {
+    return this.db.storageDurable();
   }
 
   hasSession(): boolean {

@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@bufbuild/protobuf": "^2.2.0",
+    "@sqlite.org/sqlite-wasm": "3.53.0-build1",
     "@wa/call-engine": "workspace:*",
     "@wa/client-core": "workspace:*",
     "@wa/crypto-wrapper": "workspace:*",

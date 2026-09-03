@@ -8,6 +8,7 @@ import { Cursors } from "@wa/sync-engine";
 import { MsgKind, type ConversationCursor, type InboxBatch, type MsgSend, type ReceiptKind } from "./frames";
 import {
   planInboxBatch,
+  stateRank,
   type ChatSummary,
   type MessageRepo,
   type OutgoingDraft,
@@ -84,13 +85,6 @@ interface OutboxRow {
   createdAt: number;
   kind: MsgKind;
   overlayTarget?: string;
-}
-
-// Monotonic message-state ordering so a bubble's ticks only ever advance
-// (sending → sent → delivered → read). Inbound "received" is 0 (never a tick).
-const STATE_RANK: Record<string, number> = { sending: 0, received: 0, sent: 1, delivered: 2, read: 3 };
-function stateRank(s: string): number {
-  return STATE_RANK[s] ?? 0;
 }
 
 export class MemoryMessageRepo implements MessageRepo {

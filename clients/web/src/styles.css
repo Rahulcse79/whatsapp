@@ -2399,6 +2399,36 @@ body:has(.auth)::before {
   font-weight: 700;
   vertical-align: middle;
 }
+/* Shown only when this tab's local database is not persistent, so the warning
+   sits above the app rather than inside one screen. */
+.storage-warning {
+  position: fixed;
+  left: 50%;
+  bottom: var(--space-4);
+  transform: translateX(-50%);
+  z-index: var(--z-toast);
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  max-width: min(560px, 94vw);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-lg);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--shadow-lg);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+.storage-warning svg {
+  flex: none;
+  color: var(--warning);
+}
+.storage-warning span {
+  flex: 1;
+  min-width: 0;
+}
+
 .toast-stack {
   position: fixed;
   top: var(--space-4);

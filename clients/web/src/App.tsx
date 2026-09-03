@@ -38,6 +38,44 @@ function NotificationToasts({ onOpen }: { onOpen: (conversationId: string) => vo
   );
 }
 
+/** StorageWarning appears only when the local database could not be opened on
+ *  persistent storage — normally because another tab of this app already holds
+ *  it (the OPFS pool is exclusive to one tab). Without this the tab looks
+ *  perfectly healthy and then loses everything on reload, which is exactly the
+ *  failure it is here to prevent. */
+function StorageWarning() {
+  const { services } = useServices();
+  const [warn, setWarn] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    services
+      .storageDurable()
+      .then((ok) => {
+        if (alive) setWarn(!ok);
+      })
+      .catch(() => {
+        /* the DB failing to answer is its own, louder problem */
+      });
+    return () => {
+      alive = false;
+    };
+  }, [services]);
+  if (!warn || dismissed) return null;
+  return (
+    <div className="storage-warning" role="status">
+      <Icon name="info" size={18} />
+      <span>
+        This tab can’t save messages — the chat history is already open in another tab. Close the others and reload to keep
+        new messages.
+      </span>
+      <button className="btn btn-ghost btn-sm" onClick={() => setDismissed(true)}>
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
 type Nav =
   | { name: "login" }
   | { name: "verify"; challengeId: string; phone: string }
@@ -268,6 +306,7 @@ export function App() {
         <CallProvider>
           <div className="app">
             <Router />
+            <StorageWarning />
             <CallOverlay />
           </div>
         </CallProvider>

@@ -5,7 +5,7 @@
 // application is a thin adapter over the SqliteDB seam.
 
 import { Cursors } from "@wa/sync-engine";
-import { MsgKind, type ConversationCursor, type InboxBatch, type MsgSend } from "../frames";
+import { MsgKind, type ConversationCursor, type InboxBatch, type MsgSend, type ReceiptKind } from "../frames";
 import type { SqliteDB, SqlValue } from "../ports";
 import {
   DEFAULT_SEARCH_LIMIT,
@@ -154,7 +154,23 @@ export interface MessageRepo {
   deleteForMe(msgUuid: string): Promise<void>;
   /** Full-text search over decrypted local message bodies (ADR-005). */
   search(query: string, opts?: SearchOptions): Promise<SearchHit[]>;
+  /** markReceipt advances my sent messages (seq ≤ upToSeq) to delivered/read
+   *  from a peer's relayed watermark. Monotonic: it never downgrades a state. */
+  markReceipt(conversationId: string, kind: ReceiptKind, upToSeq: number): Promise<void>;
 }
+
+// Monotonic message-state ordering so a bubble's ticks only ever advance
+// (sending → sent → delivered → read). Inbound "received" is 0 (never a tick).
+// Exported so every MessageRepo implementation ranks states identically.
+export const STATE_RANK: Record<string, number> = { sending: 0, received: 0, sent: 1, delivered: 2, read: 3 };
+export function stateRank(s: string): number {
+  return STATE_RANK[s] ?? 0;
+}
+
+// The state ranking expressed in SQL, so the monotonic guard runs in the same
+// statement as the update rather than in a read-modify-write.
+const RANK_SQL =
+  "(CASE state WHEN 'sent' THEN 1 WHEN 'delivered' THEN 2 WHEN 'read' THEN 3 ELSE 0 END)";
 
 export class MessageStore implements MessageRepo {
   constructor(
@@ -232,7 +248,25 @@ export class MessageStore implements MessageRepo {
   /** markSent clears the outbox row and flips the bubble to "sent" on MsgAck. */
   async markSent(clientRef: string, seq: number): Promise<void> {
     await this.db.run("DELETE FROM outbox WHERE client_ref = ?", [clientRef]);
-    await this.db.run("UPDATE messages SET state = 'sent', seq = ? WHERE msg_uuid = ?", [seq, clientRef]);
+    // Do not undo a receipt that raced ahead of the ack.
+    await this.db.run(
+      `UPDATE messages SET state = 'sent', seq = ?
+        WHERE msg_uuid = ? AND ${RANK_SQL} < ?`,
+      [seq, clientRef, stateRank("sent")],
+    );
+  }
+
+  /** markReceipt advances my sent messages in a conversation up to the peer's
+   *  watermark. The rank guard makes it monotonic, so an out-of-order DELIVERED
+   *  arriving after a READ cannot walk the ticks backwards. */
+  async markReceipt(conversationId: string, kind: ReceiptKind, upToSeq: number): Promise<void> {
+    const target = kind === "READ" ? "read" : "delivered";
+    await this.db.run(
+      `UPDATE messages SET state = ?
+        WHERE conversation_id = ? AND mine = 1 AND seq > 0 AND seq <= ?
+          AND ${RANK_SQL} < ?`,
+      [target, conversationId, upToSeq, stateRank(target)],
+    );
   }
 
   /** pendingSends turns the durable outbox into MsgSend frames for (re)transmit. */

@@ -1,13 +1,37 @@
 // Dedicated worker: the local DB + crypto, kept off the main thread so the UI
-// stays at 60 fps (web-app-architecture.md §1). The shell uses the in-memory
-// MemoryMessageRepo (OPFS SQLite-wasm lands with the persistence epic) and the
-// T0.20 DevSessionCipher (INSECURE dev double; real libsignal is the seam). It
-// speaks the RPC protocol in ./rpc.
+// stays at 60 fps (web-app-architecture.md §1). Storage is SQLite-wasm on OPFS —
+// the same MessageStore mobile runs, over a browser SqliteDB — plus the T0.20
+// DevSessionCipher (INSECURE dev double; real libsignal is the seam). It speaks
+// the RPC protocol in ./rpc.
+//
+// This used to be MemoryMessageRepo, which meant every reload discarded every
+// conversation and message. The server cannot restore them: message_inbox is a
+// relay buffer that DELETEs on ack (ADR-001, no server-side archive), so the
+// local database is the only durable copy of a chat's history.
 
-import { MemoryMessageRepo, MsgKind, type InboxBatch } from "@wa/client-core";
+import { Cursors } from "@wa/sync-engine";
+import { MessageStore, MsgKind, type InboxBatch, type MessageRepo } from "@wa/client-core";
+import { openWebDatabase } from "../platform/opfsSqlite";
 import type { EnqueueOverlayInput, EnqueueTextInput, MarkReceiptInput, MarkSentInput, RpcRequest, SearchInput } from "./rpc";
 
-const repo = new MemoryMessageRepo();
+// Opening SQLite-wasm is async, so the store is a promise every RPC awaits.
+// Memoising the promise (rather than the resolved store) means concurrent
+// requests arriving during startup queue on the same open instead of racing it
+// and creating two databases over one file.
+let opening: Promise<MessageRepo> | null = null;
+let durable = true;
+function repo(): Promise<MessageRepo> {
+  if (!opening) {
+    opening = openWebDatabase().then((db) => {
+      durable = db.durable;
+      if (!durable) {
+        console.warn("[db] no persistent storage available — history will not survive a reload");
+      }
+      return new MessageStore(db, new Cursors());
+    });
+  }
+  return opening;
+}
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
@@ -50,7 +74,11 @@ async function openSealed(conversationId: string, envelope: Uint8Array): Promise
 }
 
 const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
-  init: () => repo.init(),
+  init: async () => (await repo()).init(),
+  storageDurable: async () => {
+    await repo();
+    return durable;
+  },
   persistInboxBatch: async (arg) => {
     const batch = arg as InboxBatch;
     // Open each inbound ciphertext with the conversation-shared key so the
@@ -64,14 +92,14 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
         /* undefined → placeholder */
       }
     }
-    return repo.persistInboxBatch(batch, bodies);
+    return (await repo()).persistInboxBatch(batch, bodies);
   },
   enqueueText: async (arg) => {
     const input = arg as EnqueueTextInput;
     // input.text is the already-encoded body (text, optionally + link preview);
     // seal the whole thing so the recipient decrypts to the same body.
     const payload = await seal(input.conversationId, input.text);
-    await repo.enqueueOutgoing({
+    await (await repo()).enqueueOutgoing({
       clientRef: input.clientRef,
       conversationId: input.conversationId,
       plaintext: input.text,
@@ -88,7 +116,7 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
     const payload = await seal(input.conversationId, input.kind === "delete" ? "" : input.text);
     const overlayKind =
       input.kind === "delete" ? MsgKind.OVERLAY_DELETE : input.kind === "react" ? MsgKind.REACTION : MsgKind.OVERLAY_EDIT;
-    await repo.enqueueOutgoing({
+    await (await repo()).enqueueOutgoing({
       clientRef: input.clientRef,
       conversationId: input.conversationId,
       plaintext: input.text,
@@ -100,30 +128,30 @@ const handlers: Record<string, (arg: unknown) => Promise<unknown>> = {
   },
   setPinned: async (arg) => {
     const i = arg as { msgUuid: string; pinned: boolean };
-    await repo.setPinned(i.msgUuid, i.pinned);
+    await (await repo()).setPinned(i.msgUuid, i.pinned);
   },
   setStarred: async (arg) => {
     const i = arg as { msgUuid: string; starred: boolean };
-    await repo.setStarred(i.msgUuid, i.starred);
+    await (await repo()).setStarred(i.msgUuid, i.starred);
   },
   deleteForMe: async (arg) => {
     const i = arg as { msgUuid: string };
-    await repo.deleteForMe(i.msgUuid);
+    await (await repo()).deleteForMe(i.msgUuid);
   },
   markSent: async (arg) => {
     const input = arg as MarkSentInput;
-    await repo.markSent(input.clientRef, input.seq);
+    await (await repo()).markSent(input.clientRef, input.seq);
   },
   markReceipt: async (arg) => {
     const input = arg as MarkReceiptInput;
-    await repo.markReceipt(input.conversationId, input.kind, input.upToSeq);
+    await (await repo()).markReceipt(input.conversationId, input.kind, input.upToSeq);
   },
-  pendingSends: () => repo.pendingSends(),
-  conversations: () => repo.conversations(),
-  thread: (arg) => repo.thread(arg as string),
-  search: (arg) => {
+  pendingSends: async () => (await repo()).pendingSends(),
+  conversations: async () => (await repo()).conversations(),
+  thread: async (arg) => (await repo()).thread(arg as string),
+  search: async (arg) => {
     const input = arg as SearchInput;
-    return repo.search(input.query, {
+    return (await repo()).search(input.query, {
       conversationId: input.conversationId,
       limit: input.limit,
       fromMe: input.fromMe,

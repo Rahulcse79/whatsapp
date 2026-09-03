@@ -132,6 +132,27 @@ importers:
         specifier: ^2.1.8
         version: 2.1.9(@types/node@26.2.0)(lightningcss@1.27.0)(terser@5.50.0)
 
+  packages/app-services:
+    dependencies:
+      '@wa/call-engine':
+        specifier: workspace:*
+        version: link:../call-engine
+      '@wa/client-core':
+        specifier: workspace:*
+        version: link:../client-core
+      '@wa/crypto-wrapper':
+        specifier: workspace:*
+        version: link:../crypto-wrapper
+      '@wa/media-pipeline':
+        specifier: workspace:*
+        version: link:../media-pipeline
+      '@wa/proto-types':
+        specifier: workspace:*
+        version: link:../proto-types
+      '@wa/sync-engine':
+        specifier: workspace:*
+        version: link:../sync-engine
+
   packages/call-engine: {}
 
   packages/client-core:
@@ -157,6 +178,9 @@ importers:
       '@bufbuild/protobuf':
         specifier: ^2.2.0
         version: 2.13.0
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.53.0-build1
+        version: 3.53.0-build1
       '@wa/call-engine':
         specifier: workspace:*
         version: link:../packages/call-engine
@@ -1257,7 +1281,7 @@ packages:
 
   '@expo/bunyan@4.0.1':
     resolution: {integrity: sha512-+Lla7nYSiHZirgK+U/uYzsLv/X+HaJienbD5AKX1UQZHYfWaP+9uuQluRB4GrEVWF0GZ7vEVp/jzaOT9k/SQlg==}
-    engines: {'0': node >=0.10.0}
+    engines: {node: '>=0.10.0'}
 
   '@expo/cli@0.22.28':
     resolution: {integrity: sha512-lvt72KNitGuixYD2l3SZmRKVu2G4zJpmg5V7WfUBNpmUU5oODBw/6qmiJ6kSLAlfDozscUk+BBGknBBzxUrwrA==}
@@ -1825,6 +1849,10 @@ packages:
 
   '@sinonjs/fake-timers@10.3.0':
     resolution: {integrity: sha512-V4BG07kuYSUkTCSBHG8G8TNhM+F19jXFWnQtzj+we8DrkpSBCee9Z3Ms8yiGer/dlmhe35/Xdgyo3/0rQKg7YA==}
+
+  '@sqlite.org/sqlite-wasm@3.53.0-build1':
+    resolution: {integrity: sha512-PfWPWN2n+/37doa8oh2/oUXk4OOsRYZsxc1W1sDXIGb/Pu5Yrb+f2eyYpgQMGITVX7HVgxhs9P18Rc6I97ym/g==}
+    engines: {node: '>=22'}
 
   '@trickfilm400/rollup-plugin-off-main-thread@3.0.0-pre1':
     resolution: {integrity: sha512-/67zpWDBLV+oYAEL682s1ktXL0HgqX76f6gaVGkGnVZlBbm1zd0v4Bz8MFF2GGhoX9rvfq3KSQHubFHwa6w6/Q==}
@@ -7205,6 +7233,8 @@ snapshots:
   '@sinonjs/fake-timers@10.3.0':
     dependencies:
       '@sinonjs/commons': 3.0.1
+
+  '@sqlite.org/sqlite-wasm@3.53.0-build1': {}
 
   '@trickfilm400/rollup-plugin-off-main-thread@3.0.0-pre1':
     dependencies:

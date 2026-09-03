@@ -31,4 +31,7 @@ export default defineConfig({
     }),
   ],
   worker: { format: "es" },
+  // sqlite-wasm resolves its .wasm relative to its own module URL and must not
+  // be pre-bundled, or the dev server rewrites that URL and the fetch 404s.
+  optimizeDeps: { exclude: ["@sqlite.org/sqlite-wasm"] },
 });

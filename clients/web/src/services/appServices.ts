@@ -26,7 +26,7 @@ import {
   type ThreadMessage,
   type VerifiedSession,
 } from "@wa/client-core";
-import { MediaPipeline, ResumableUploader, encodeContactCard, encodeLiveLocation, encodeLocation, encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
+import { MediaPipeline, ResumableUploader, sha256, toBase64, encodeContactCard, encodeLiveLocation, encodeLocation, encodeMediaMessage, encodePoll, encodeReaction, encodeSticker, encodeTextMessage, generateLinkPreview, parseMediaMessage, parseTextMessage, type QuotedRef } from "@wa/media-pipeline";
 import { config } from "../config";
 import { webDeviceCapabilities } from "../platform/deviceCapabilities";
 import { localKeyValueStore } from "../platform/keyValueStore";
@@ -42,6 +42,9 @@ export interface PublicProfile {
   username: string;
   displayName: string;
   about: string;
+  /** Object key of the profile picture, or "" when there is none (or the owner's
+   *  privacy setting withholds it). Resolve to a URL with `avatarUrlFor`. */
+  avatarRef: string;
 }
 
 /** PasskeyInfo is a registered WebAuthn credential (T10.02). */
@@ -405,6 +408,8 @@ export class AppServices {
   private readonly authListeners = new Set<(authed: boolean) => void>(); // session gained/lost
   private readonly peerByConv = new Map<string, string>(); // conversationId → peer userId
   private readonly profileCache = new Map<string, PublicProfile>(); // userId → public profile
+  private readonly avatarUrls = new Map<string, string>(); // userId → resolved avatar URL ("" = none)
+  private avatarUp: ResumableUploader | null = null;
   private callHandler: CallSignalHandler | null = null; // set by CallProvider
   private readonly channelEventListeners = new Set<(channelId: string, postId: string) => void>(); // T7.04
   private readonly groupCache = new Map<string, GroupInfo>(); // conversationId → group info
@@ -1290,12 +1295,14 @@ export class AppServices {
       username?: string;
       display_name?: string;
       about?: string;
+      avatar_ref?: string;
       privacy?: Record<string, string>;
     };
     return {
       username: p.username ?? "",
       displayName: p.display_name ?? "",
       about: p.about ?? "",
+      avatarRef: p.avatar_ref ?? "",
       privacy: p.privacy ?? {},
     };
   }
@@ -1309,7 +1316,11 @@ export class AppServices {
 
   /** updateMyProfile saves display name / username / about. Throws a friendly
    *  message when the username is taken. */
-  async updateMyProfile(fields: PublicProfile): Promise<void> {
+  /** updateMyProfile saves the text fields. It deliberately does NOT take the
+   *  avatar: the picture has its own uploadAvatar/removeAvatar path, and the
+   *  request omits avatar_ref entirely so saving the form leaves the existing
+   *  picture untouched (the server treats an absent field as "no change"). */
+  async updateMyProfile(fields: Omit<PublicProfile, "avatarRef">): Promise<void> {
     const res = await this.authedRequest("PUT", "/v1/me", {
       display_name: fields.displayName,
       username: fields.username,
@@ -1349,14 +1360,127 @@ export class AppServices {
 
   /** loadUserProfile fetches (and caches) a user's public profile; re-renders
    *  screens once it lands so peer names replace ids. */
+  // ── profile pictures ──────────────────────────────────────────────────────
+
+  /** MAX_AVATAR_BYTES bounds what a client will upload. The server enforces its
+   *  own media quota; this is here so a user picking a 40 MB photo is told
+   *  immediately rather than after a long upload. */
+  static readonly MAX_AVATAR_BYTES = 5 * 1024 * 1024;
+
+  /** uploadAvatar stores a new profile picture and points the account at it,
+   *  returning the object key.
+   *
+   *  Deliberately NOT through MediaPipeline.prepare(): that encrypts, and a
+   *  per-file key would then have to reach every contact — the unsolved problem
+   *  that leaves stories undecryptable. An avatar is identity metadata (like
+   *  display name), which this deployment already stores in plaintext, so it
+   *  goes up as plaintext through the same resumable uploader. */
+  async uploadAvatar(bytes: Uint8Array, mime: string): Promise<string> {
+    if (bytes.length === 0) throw new Error("That image is empty.");
+    if (bytes.length > AppServices.MAX_AVATAR_BYTES) {
+      throw new Error("That image is too large — pick one under 5 MB.");
+    }
+    if (!mime.startsWith("image/")) throw new Error("Choose an image file.");
+
+    const hash = toBase64(await sha256(bytes));
+    const outcome = await this.avatarUploader().upload(bytes, hash, mime);
+    await this.setAvatarRef(outcome.objectKey);
+    return outcome.objectKey;
+  }
+
+  /** removeAvatar clears the picture, falling the UI back to the silhouette. */
+  async removeAvatar(): Promise<void> {
+    await this.setAvatarRef("");
+  }
+
+  /** setAvatarRef points the account at an object key ("" removes it). Sent on
+   *  its own so a picture change never depends on the rest of the profile form. */
+  private async setAvatarRef(ref: string): Promise<void> {
+    const res = await this.authedRequest("PUT", "/v1/me", { avatar_ref: ref });
+    if (!res.ok) throw new Error("Couldn't save your profile picture.");
+    this.avatarUrls.delete(this.myUserId()); // drop the stale resolved URL
+    this.notifyChange();
+  }
+
+  /** avatarUrlFor resolves a user's avatar object key to a fetchable URL, or ""
+   *  when they have none. Cached per user because the chat list asks for the
+   *  same handful of avatars on every render. */
+  async avatarUrlFor(userId: string): Promise<string> {
+    const cached = this.avatarUrls.get(userId);
+    if (cached !== undefined) return cached;
+
+    const ref = userId === this.myUserId() ? (await this.getMyProfile()).avatarRef : this.profileCache.get(userId)?.avatarRef;
+    if (!ref) {
+      this.avatarUrls.set(userId, ""); // remember the absence; do not re-ask
+      return "";
+    }
+    // media-svc, NOT core-api: /v1/media/* lives on the media service, and
+    // calling it on the API host 404s (which is what left avatars blank).
+    const res = await this.authedMediaRequest("POST", "/v1/media/download-urls", { object_keys: [ref] });
+    if (!res.ok) return "";
+    const body = (await res.json()) as { urls?: Array<{ key: string; url: string }> };
+    const url = body.urls?.[0]?.url ?? "";
+    this.avatarUrls.set(userId, url);
+    return url;
+  }
+
+  /** cachedAvatarUrl is the synchronous read the Avatar component uses on the
+   *  render path; it returns "" until avatarUrlFor has resolved. */
+  cachedAvatarUrl(userId: string): string {
+    return this.avatarUrls.get(userId) ?? "";
+  }
+
+  /** authedMediaRequest is authedRequest against media-svc rather than core-api.
+   *  The two run on different hosts, and /v1/media/* is only mounted on the
+   *  media service. */
+  private async authedMediaRequest(method: string, path: string, body?: unknown): Promise<Response> {
+    const headers = (): Record<string, string> => ({
+      authorization: `Bearer ${this.sessions.current()?.accessJwt ?? ""}`,
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+    });
+    const go = (): Promise<Response> =>
+      fetch(`${config.mediaBaseUrl}${path}`, {
+        method,
+        headers: headers(),
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    let res = await go();
+    if (res.status === 401) {
+      await this.refreshToken();
+      res = await go();
+    }
+    return res;
+  }
+
+  /** avatarUploader is a plain resumable uploader — no encryption, no
+   *  thumbnailer — kept separate from the message MediaPipeline. */
+  private avatarUploader(): ResumableUploader {
+    if (!this.avatarUp) {
+      const token = (): string => this.sessions.current()?.accessJwt ?? "";
+      const refresh = (): Promise<void> => this.refreshToken();
+      this.avatarUp = new ResumableUploader(webUploadTransport(config.mediaBaseUrl, token, refresh));
+    }
+    return this.avatarUp;
+  }
+
   async loadUserProfile(userId: string): Promise<void> {
     if (this.profileCache.has(userId)) return;
     try {
       const res = await this.authedRequest("GET", `/v1/users/${userId}`);
       if (!res.ok) return;
-      const p = (await res.json()) as { username?: string; display_name?: string; about?: string };
-      this.profileCache.set(userId, { username: p.username ?? "", displayName: p.display_name ?? "", about: p.about ?? "" });
+      const p = (await res.json()) as { username?: string; display_name?: string; about?: string; avatar_ref?: string };
+      this.profileCache.set(userId, {
+        username: p.username ?? "",
+        displayName: p.display_name ?? "",
+        about: p.about ?? "",
+        avatarRef: p.avatar_ref ?? "",
+      });
       this.notifyChange();
+      // Resolve the picture too: the row that just learned this user's name is
+      // the same row that wants their avatar.
+      void this.avatarUrlFor(userId).then((u) => {
+        if (u) this.notifyChange();
+      });
     } catch {
       /* leave uncached; name falls back to the id */
     }

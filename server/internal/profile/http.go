@@ -30,23 +30,40 @@ func Routes(mux *http.ServeMux, s *Service, v auth.TokenVerifier) {
 		if !ok {
 			return
 		}
+		// EVERY field is a POINTER so absent means "leave unchanged". This
+		// endpoint is a partial update: the client edits the profile form and
+		// the picture through separate calls, and an avatar-only request must
+		// not blank the display name and about — which is exactly what happened
+		// when the text fields were plain strings.
 		var body struct {
-			DisplayName string `json:"display_name"`
-			Username    string `json:"username"`
-			About       string `json:"about"`
-			// AvatarRef is a POINTER so the three states stay distinct: absent
-			// leaves the picture alone, "" clears it, a value sets it. A plain
-			// string would make every profile edit silently wipe the avatar.
-			AvatarRef *string `json:"avatar_ref"`
+			DisplayName *string `json:"display_name"`
+			Username    *string `json:"username"`
+			About       *string `json:"about"`
+			AvatarRef   *string `json:"avatar_ref"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			httpx.Error(w, r, http.StatusBadRequest, httpx.ErrorObj{Code: "VALIDATION_BODY", Message: "invalid JSON body"})
 			return
 		}
-		if err := s.Update(r.Context(), ident.UserID, body.DisplayName, body.Username, body.About); err != nil {
-			httpx.WriteError(w, r, err)
-			return
+
+		if body.DisplayName != nil || body.Username != nil || body.About != nil {
+			// Fill absent fields from what is stored so a partial edit does not
+			// blank the rest.
+			cur, err := s.Get(r.Context(), ident.UserID)
+			if err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
+			if err := s.Update(r.Context(), ident.UserID,
+				strOr(body.DisplayName, cur.DisplayName),
+				strOr(body.Username, cur.Username),
+				strOr(body.About, cur.About),
+			); err != nil {
+				httpx.WriteError(w, r, err)
+				return
+			}
 		}
+
 		if body.AvatarRef != nil {
 			if err := s.SetAvatar(r.Context(), ident.UserID, *body.AvatarRef); err != nil {
 				httpx.WriteError(w, r, err)
@@ -139,4 +156,13 @@ func Routes(mux *http.ServeMux, s *Service, v auth.TokenVerifier) {
 		}
 		w.WriteHeader(http.StatusNoContent)
 	})
+}
+
+// strOr returns the supplied value, or the current one when the field was
+// absent from a partial update.
+func strOr(v *string, current string) string {
+	if v != nil {
+		return *v
+	}
+	return current
 }

@@ -73,9 +73,44 @@ function onActivate(handler: () => void) {
 /** WhatsApp default avatar: a gray circle with a white person (or group)
  *  silhouette — the exact placeholder WhatsApp shows for a contact without a
  *  photo. `group` (or the legacy `emoji="👥"`) swaps in the group silhouette. */
-export function Avatar({ size = 49, emoji, group }: { name?: string; id?: string; size?: number; emoji?: string; group?: boolean }) {
+export function Avatar({ size = 49, emoji, group, id, name }: { name?: string; id?: string; size?: number; emoji?: string; group?: boolean }) {
+  const { services } = useServices();
   const isGroup = group ?? emoji === "👥";
   const glyph = Math.round(size * 0.62);
+
+  // The picture, when this avatar identifies a user. `id` was previously
+  // accepted and ignored — every avatar in the app drew the silhouette even for
+  // users who had a photo. Resolution is async, so start from the cached URL and
+  // re-render when it lands.
+  const [url, setUrl] = useState(() => (id ? services.cachedAvatarUrl(id) : ""));
+  useEffect(() => {
+    if (!id || isGroup) return;
+    let alive = true;
+    void services.avatarUrlFor(id).then((u) => {
+      if (alive) setUrl(u);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [id, isGroup, services]);
+
+  if (url) {
+    return (
+      <span className="avatar avatar-photo" style={{ width: size, height: size }}>
+        <img
+          src={url}
+          alt={name ? `${name}'s profile picture` : "Profile picture"}
+          width={size}
+          height={size}
+          loading="lazy"
+          // A dead or expired object URL must fall back to the silhouette
+          // rather than leave a broken-image glyph in the chat list.
+          onError={() => setUrl("")}
+        />
+      </span>
+    );
+  }
+
   return (
     <span className="avatar avatar-default" aria-hidden style={{ width: size, height: size }}>
       <svg width={glyph} height={glyph} viewBox="0 0 24 24" fill="currentColor" aria-hidden focusable={false}>
@@ -94,6 +129,78 @@ export function Avatar({ size = 49, emoji, group }: { name?: string; id?: string
         )}
       </svg>
     </span>
+  );
+}
+
+/** AvatarUpload is the profile picture with WhatsApp's camera affordance: the
+ *  avatar itself is the control. Clicking it opens a file picker; while a photo
+ *  is set, a menu offers replacing or removing it. */
+function AvatarUpload({ size = 88 }: { size?: number }) {
+  const { services } = useServices();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [tick, setTick] = useState(0); // force the Avatar to re-resolve after a change
+  const me = services.myUserId();
+  const hasPhoto = !!services.cachedAvatarUrl(me);
+
+  async function pick(e: ChangeEvent<HTMLInputElement>): Promise<void> {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // let the same file be chosen again after an error
+    if (!file) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await services.uploadAvatar(new Uint8Array(await file.arrayBuffer()), file.type);
+      setTick((n) => n + 1);
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(): Promise<void> {
+    setBusy(true);
+    setError(null);
+    try {
+      await services.removeAvatar();
+      setTick((n) => n + 1);
+    } catch (err) {
+      setError(messageOf(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="avatar-upload-wrap">
+      <button
+        type="button"
+        className="avatar-upload"
+        style={{ width: size, height: size }}
+        onClick={() => fileRef.current?.click()}
+        disabled={busy}
+        aria-label={hasPhoto ? "Change profile picture" : "Add a profile picture"}
+        title={hasPhoto ? "Change profile picture" : "Add a profile picture"}
+      >
+        <Avatar key={tick} size={size} id={me} />
+        <span className="avatar-upload-badge" aria-hidden>
+          {busy ? <span className="spinner" style={{ width: 16, height: 16 }} /> : <Icon name="camera" size={16} />}
+        </span>
+      </button>
+      <input ref={fileRef} type="file" accept="image/*" hidden onChange={(e) => void pick(e)} />
+      {hasPhoto && !busy ? (
+        <button type="button" className="btn small ghost danger" onClick={() => void remove()}>
+          Remove photo
+        </button>
+      ) : null}
+      {error ? (
+        <span className="field-error" role="alert">
+          {error}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -429,7 +536,7 @@ export function Profile({ onBack, onSettings }: { onBack: () => void; onSettings
       }
     >
       <section className="section profile-hero">
-        <Avatar size={88} />
+        <AvatarUpload size={88} />
         <div className="profile-hero-text">
           <span className="profile-hero-name">{displayName.trim() || "Your name"}</span>
           {username.trim() ? <span className="profile-hero-handle">@{username.trim()}</span> : null}

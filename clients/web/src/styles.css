@@ -3541,3 +3541,68 @@ body {
   max-width: 100%;
   overflow-x: hidden;
 }
+
+/* ── Profile pictures ─────────────────────────────────────────────────────── */
+.avatar-photo {
+  background: var(--avatar-bg);
+}
+.avatar-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+/* ── Profile picture upload (WhatsApp's affordance: the avatar IS the control) */
+.avatar-upload-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+.avatar-upload {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: none;
+  background: none;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
+}
+.avatar-upload:hover:not(:disabled) {
+  transform: scale(1.02);
+  box-shadow: var(--shadow-md);
+}
+.avatar-upload:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+/* Dim the picture on hover so the camera badge stays legible over a light photo. */
+.avatar-upload::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: rgba(11, 20, 26, 0);
+  transition: background var(--dur-fast) var(--ease-out);
+  pointer-events: none;
+}
+.avatar-upload:hover:not(:disabled)::after {
+  background: rgba(11, 20, 26, 0.18);
+}
+.avatar-upload-badge {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: 2px solid var(--panel);
+  box-shadow: var(--shadow-sm);
+}

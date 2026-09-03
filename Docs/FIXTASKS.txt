@@ -1,0 +1,1335 @@
+================================================================================
+ WhatsApp V2 — FIX TASKS (round 1)
+ Nine user-reported defects/gaps, each written as a self-contained, copy-ready
+ prompt with a verified baseline and binary acceptance criteria.
+================================================================================
+
+ FILE NAME NOTE
+   This file is FIX-TASKS.txt, not tasks.txt, on purpose. macOS here is
+   case-INSENSITIVE: `Docs/tasks.txt` and the existing 70 KB `Docs/TASKS.txt`
+   (the master Phase 0-7 build plan) are the SAME inode, so writing `tasks.txt`
+   would have truncated the build plan. Nothing was overwritten.
+
+ HOW TO USE
+   Each task below has the same shape:
+
+     SYMPTOM            what the user reported, verbatim
+     VERIFIED BASELINE  what the code actually does today, cited path:line.
+                        Every claim here was read out of the tree, not guessed.
+     ROOT CAUSE         the specific defect, or "no path exists" where the
+                        feature was never built
+     IMPLEMENTATION     ordered, file-by-file work
+     ACCEPTANCE         numbered, binary, independently checkable
+     VERIFY             the exact commands / manual steps that prove it
+     OUT OF SCOPE       explicit non-goals, so the task cannot creep
+     >>> PROMPT         a copy-paste block. Hand this to Claude as-is.
+
+   Run `./start.sh` for the live dev rig (core-api :8080, ws-gateway :8081,
+   web :5173, LiveKit :7880). Dev-rig gotchas that will waste your time:
+     - repeated test logins exhaust the OTP rate limit -> clear `rl:otp:*` in redis
+     - the device limit returns 403 -> DELETE surplus rows from `devices`
+     - deleting a user's devices kills the browser session -> log in again
+
+ RECOMMENDED RUN ORDER (dependency-driven, not the user's numbering)
+   F3  cross-platform crypto ....... blocks every cross-device test below
+   F4  multi-device sync + web persistence
+   F5  latency
+   F1  contact profile pictures ... builds the client avatar plumbing
+   F2  sidebar avatar ............. consumes F1's plumbing, ~30 min after it
+   F7  phone input
+   F8  password login
+   F6  calling
+   F9  web/mobile parity .......... a survey task; do it last, it re-audits 1-8
+
+ GLOBAL GROUND RULES FOR EVERY TASK
+   - Write code only. Do not hand back a plan and stop.
+   - No new hand-rolled cryptography. Where a task touches the dev cipher, it
+     replaces one dev double with ONE shared dev double — it does not invent a
+     third. Real libsignal remains the documented seam.
+   - Match surrounding style: comment density, naming, error handling. The
+     repo's standard is Docs/13-standards/coding-standards.md.
+   - Verify before claiming done. `go build ./... && go vet ./... && go test ./...`
+     in server/, `pnpm -r typecheck && pnpm -r test` in clients/.
+   - Commit each task separately with a descriptive message and the
+     `Co-Authored-By: Claude` trailer, then push.
+
+================================================================================
+ F3  CROSS-PLATFORM CIPHER — mobile -> web messages render as "[encrypted]"
+================================================================================
+ User item 3. Do this FIRST: until it lands, no cross-device test in F1/F2/F4/F5
+ can be trusted, because every mobile->web message is an opaque placeholder.
+
+ SYMPTOM
+   "When I send a message from the mobile app to the website, everything
+   (messages, chats, etc.) appears encrypted."
+
+ VERIFIED BASELINE
+   The two clients seal message bodies with TWO DIFFERENT, MUTUALLY
+   UNINTELLIGIBLE ciphers that merely share a key-derivation *label*.
+
+   Web  - clients/web/src/worker/db.worker.ts:22-50
+          key  = WebCrypto SHA-256("wa-dev-conv-v1:" + conversationId)
+                 imported as an AES-GCM CryptoKey
+          wire = iv(12) || AES-GCM ciphertext(with 16-byte GCM tag)
+          open = crypto.subtle.decrypt; a throw leaves the body undefined,
+                 which the repo renders as the "[encrypted]" placeholder
+                 (db.worker.ts:56-66)
+
+   Mobile - clients/mobile/src/services/convCrypto.ts:1-96
+          key  = hash("wa-dev-conv-v1:" + conversationId) where hash() is a
+                 NON-CRYPTOGRAPHIC FNV-1a seed -> xorshift32 PRF (line 13-31)
+          wire = nonce(12) || mac(8) || XOR-keystream ciphertext (line 71-80)
+          open = openForConversation, throws on bad MAC (line 82-96)
+          used at appServices.ts:152-165 (inbound) and :190-197 (outbound)
+
+   So both the KEY BYTES and the WIRE FORMAT differ. A mobile envelope handed
+   to the web worker is `nonce||mac||ct` fed to AES-GCM under a different key:
+   it always throws, always falls back to the placeholder. The reverse
+   direction fails on the MAC check for the same reason. This is 100 % of the
+   reported symptom — there is no partial decode, no ordering issue, nothing
+   intermittent.
+
+   Why mobile diverged: React Native has no WebCrypto (convCrypto.ts:1-2). That
+   constraint is real; the response to it was a second cipher rather than a
+   shared one.
+
+ ROOT CAUSE
+   Two independent dev ciphers for one wire protocol. Fix = exactly one.
+
+ IMPLEMENTATION
+   1. Create the single shared implementation in the package both clients
+      already depend on: clients/packages/crypto-wrapper/src/convCipher.ts
+      (new). Export `sealForConversation(conversationId, plaintext)` and
+      `openForConversation(conversationId, envelope)`, re-exported from
+      crypto-wrapper/src/index.ts.
+
+   2. Choose ONE wire format and ONE key derivation and write them down in the
+      file header as the normative spec, with a version byte so a future
+      change is detectable rather than silent:
+
+        key    = SHA-256("wa-dev-conv-v1:" + conversationId)      -> 32 bytes
+        wire   = 0x01 || nonce(12) || AES-GCM(key, nonce, plaintext)
+        AAD    = the version byte, so a downgrade cannot be spliced
+
+      Prefer AES-GCM (the web's current choice): it is a real AEAD, it is what
+      the eventual libsignal seam looks like, and keeping it means the web's
+      existing sealed history stays readable except for the added version byte
+      (see step 5 on migration).
+
+   3. Give React Native a real AES-GCM. In order of preference:
+        a. `expo-crypto` / `react-native-quick-crypto` if either is already a
+           dependency or is trivially addable — check clients/mobile/package.json
+           FIRST and reuse what is there.
+        b. Otherwise a pure-JS AES-GCM from a maintained, audited library
+           (e.g. @noble/ciphers). This is NOT hand-rolling: it is depending on
+           a reviewed implementation, which the coding standard permits.
+      Do NOT reimplement AES. Do NOT keep the xorshift PRF.
+      Express the platform difference as a small injected port
+      (`SubtleLike` / `AesGcm` interface) so convCipher.ts itself is
+      platform-free and unit-testable in Node.
+
+   4. Rewire both call sites:
+        - clients/web/src/worker/db.worker.ts — delete the local convKey/seal/
+          openSealed (lines 20-50) and import from crypto-wrapper.
+        - clients/mobile/src/services/appServices.ts:152-165 and :190-197 —
+          import from crypto-wrapper.
+        - DELETE clients/mobile/src/services/convCrypto.ts and its test; move
+          any still-valuable test cases into the new shared test file.
+
+   5. Migration of already-stored web history: the version byte means old
+      web envelopes (which start with a random IV byte) will not parse. Handle
+      it explicitly — on open, if byte 0 != 0x01, try the legacy
+      `iv(12)||ct` layout once before giving up. Comment it as a
+      time-boxed compatibility shim tied to the dev double, not a permanent
+      branch.
+
+   6. While in the decrypt path, fix the placeholder UX: a body that genuinely
+      fails to open should render as a distinguishable state ("Message can't be
+      decrypted") rather than looking like normal ciphertext text, and should
+      log once per conversation so the next occurrence of this class of bug is
+      visible instead of silent (the same lesson as C2 in
+      Docs/FIX-STATUS-AND-CALLS.md).
+
+ ACCEPTANCE
+   AC1  A single module exports sealForConversation/openForConversation; grep
+        for `convCrypto` across clients/ returns zero non-test hits.
+   AC2  A unit test in crypto-wrapper seals with the web adapter and opens with
+        the RN adapter, and vice versa, for: ASCII, emoji, 4-byte UTF-8, empty
+        string, and a 64 KB body. All round-trip byte-identically.
+   AC3  A tampered envelope (any single flipped bit in nonce, tag, or
+        ciphertext) throws on open in both adapters.
+   AC4  An envelope sealed for conversation A does not open for conversation B.
+   AC5  LIVE: log into web as user A and mobile as user B on the same stack.
+        Send mobile -> web: the web thread renders the plaintext, not
+        "[encrypted]". Send web -> mobile: same. Both directions, text with
+        emoji included.
+   AC6  A message that truly cannot be decrypted renders as an explicit
+        "can't be decrypted" state and emits exactly one warning per
+        conversation, not one per message.
+
+ VERIFY
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Live: ./start.sh, two devices, the AC5 exchange in both directions.
+
+ OUT OF SCOPE
+   No libsignal. No X3DH, no Double Ratchet, no per-device sessions, no key
+   directory — this task swaps two dev doubles for one, nothing more. The real
+   E2EE work stays where it is (crypto-wrapper/src/engine.ts, cipher.ts).
+   No change to media encryption (@wa/media-pipeline) — media already shares one
+   path.
+
+ >>> PROMPT
+   In this repo, mobile->web messages render as "[encrypted]" because the two
+   clients use two different dev ciphers for the same wire protocol: the web
+   worker seals with WebCrypto AES-GCM keyed on SHA-256("wa-dev-conv-v1:"+convId)
+   with wire iv(12)||ct (clients/web/src/worker/db.worker.ts:22-50), while mobile
+   seals with a hand-rolled FNV-1a/xorshift XOR stream with wire
+   nonce(12)||mac(8)||ct (clients/mobile/src/services/convCrypto.ts). Neither the
+   key bytes nor the wire format match, so every cross-platform decrypt throws
+   and falls back to the placeholder.
+
+   Unify them on ONE shared implementation in
+   clients/packages/crypto-wrapper/src/convCipher.ts, exported from that
+   package's index, using AES-GCM with wire 0x01||nonce(12)||AES-GCM(...) and the
+   version byte as AAD. Give React Native a real AES-GCM — check
+   clients/mobile/package.json for expo-crypto or react-native-quick-crypto first
+   and reuse what is there; otherwise add a maintained audited library such as
+   @noble/ciphers. Do not reimplement AES and do not keep the xorshift PRF.
+   Isolate the platform difference behind a small injected port so convCipher.ts
+   is platform-free and unit-testable in Node.
+
+   Rewire clients/web/src/worker/db.worker.ts and
+   clients/mobile/src/services/appServices.ts (lines ~152-165 inbound, ~190-197
+   outbound) to the shared module, delete
+   clients/mobile/src/services/convCrypto.ts and its test, and migrate its useful
+   cases into the shared test. Add a time-boxed legacy-open shim: if byte 0 is
+   not 0x01, try the old iv(12)||ct layout once. Finally, make an
+   undecryptable body render as an explicit "can't be decrypted" state and log
+   once per conversation instead of silently looking like ciphertext.
+
+   Prove it: a cross-adapter round-trip test (web-seal/RN-open and the reverse)
+   over ASCII, emoji, 4-byte UTF-8, empty, and 64 KB bodies; tamper and
+   wrong-conversation tests that throw; `pnpm -r typecheck && pnpm -r test`
+   green; then run ./start.sh and exchange messages both directions between a
+   web session and a mobile session and confirm plaintext renders on both.
+
+================================================================================
+ F4  MULTI-DEVICE SYNC — same account on phone + web must stay in step
+================================================================================
+ User item 4. Depends on F3 (otherwise the synced copies arrive as placeholders).
+
+ SYMPTOM
+   "If the same account is logged in on both the mobile app and the website,
+   chats should sync in real time across both devices."
+
+ VERIFIED BASELINE
+   The SERVER half is already correct and must not be rebuilt:
+     server/internal/chat/adapters/pg.go:62-69 — the recipient set is every
+     active device of every conversation member MINUS the sending device, so
+     the sender's OTHER devices already receive an inbox row:
+       "SELECT d.id FROM conversation_members cm JOIN devices d
+        ON d.user_id = cm.user_id
+        WHERE cm.conversation_id = $1 AND d.revoked_at IS NULL AND d.id <> $2"
+     server/internal/chat/service.go:186-204 then publishes a live delivery to
+     each of those device ids.
+
+   Two CLIENT defects break it:
+
+   D1 - every inbound item is assumed to be from the peer.
+        clients/web/src/services/appServices.ts:578
+          for (const it of b.items) this.peerByConv.set(it.conversationId, it.senderUserId);
+        with the comment "Inbound items are always from the peer (I never
+        receive my own)". That premise is false the moment a second device
+        exists. A self-sync copy therefore (a) overwrites the conversation's
+        peer id with MY OWN user id, corrupting the header name, presence
+        subscription and typing target, and (b) falls through to the unread/
+        notification block at :581-600, so the web toasts and unread-badges the
+        user's own message sent from their phone.
+
+   D2 - the web has no durable message store, so "sync" cannot survive a reload.
+        clients/web/src/worker/db.worker.ts:10 instantiates MemoryMessageRepo
+        (clients/packages/client-core/src/memoryRepo.ts:1-5 — "in-memory
+        MessageRepo ... until the OPFS SQLite-wasm store lands"). Combined with
+        ACK-after-persist (wsClient.ts:233-237 sends client_ack once
+        onInboxBatch resolves, and server AckDelivered DELETEs the covered inbox
+        rows — server/internal/chat/service.go AckDelivered +
+        adapters/pg.go:305), a browser refresh does not merely lose the local
+        cache: the server copy is already gone. Web chat history is
+        PERMANENTLY LOST on reload. Mobile does not have this problem — it uses
+        the real SQLite MessageStore (mobile/src/services/appServices.ts:90-92
+        via platform/expoSqlite.ts).
+
+   The SqliteDB port that a web store must satisfy already exists:
+   clients/packages/client-core/src/ports.ts:55-59 (exec/run/all).
+
+ ROOT CAUSE
+   Client-side, not server-side: a false "inbound == from peer" assumption, plus
+   a non-durable web store that discards history the server has already deleted.
+
+ IMPLEMENTATION
+   Part A — self-sync correctness (both clients)
+   1. Add `myUserId()` to the web AppServices the way mobile already has it
+      (mobile/src/services/appServices.ts:113-125 decodes the JWT `sub`).
+      Reuse that decode; do not duplicate it — lift it into client-core.
+   2. In each onInboxBatch handler, split items into `fromSelf` and `fromPeer`:
+        - fromSelf: persist and render as an OUTGOING message (right-aligned,
+          own bubble, correct ticks). Never set peerByConv from it. Never
+          increment unread. Never toast. Never fire the auto-responder.
+        - fromPeer: existing behaviour unchanged.
+      Web: clients/web/src/services/appServices.ts:576-606.
+      Mobile: clients/mobile/src/services/appServices.ts:152-165.
+   3. Confirm the store renders a self-copy on the correct side. Check
+      MessageStore/MemoryMessageRepo's `fromMe` determination
+      (clients/packages/client-core/src/db/messageStore.ts, planInboxBatch) and
+      make it key on sender USER id vs my user id, not on device id or on
+      "arrived via inbox".
+   4. Extend the same self/peer split to receipts, reactions, edits, deletes and
+      read-state so a chat read on the phone stops showing unread on the web.
+
+   Part B — durable web store
+   5. Implement an OPFS SQLite-wasm adapter satisfying SqliteDB
+      (ports.ts:55-59): new clients/web/src/worker/opfsSqlite.ts using
+      @sqlite.org/sqlite-wasm with the OPFS VFS, opened inside the existing
+      dedicated worker (it is already the right thread).
+   6. Swap MemoryMessageRepo for `new MessageStore(db, cursors)` in
+      clients/web/src/worker/db.worker.ts:10 — the SAME class mobile uses, so
+      schema, merge semantics and search are shared, not re-derived.
+   7. Keep MemoryMessageRepo as the unit-test double and as an automatic
+      fallback when OPFS is unavailable (private windows, older Safari); log
+      once, loudly, when the fallback engages, because in that mode reload
+      still loses history.
+   8. Verify the cursor path end-to-end: on boot the web must send its persisted
+      cursors in `hello` (SessionProvider.cursors at appServices.ts:568 currently
+      returns `this.cursorMirror` — make that mirror load from the store, as
+      mobile does with store.cursorSnapshot() at mobile appServices.ts:143).
+      Without this, resume replay re-sends or skips.
+
+ ACCEPTANCE
+   AC1  With the same account on web and mobile, a message SENT from mobile
+        appears in the web thread within 1 s, on the OUTGOING side, with no
+        unread badge and no toast.
+   AC2  The reverse (sent from web, appears on mobile as outgoing) holds too.
+   AC3  A message from the real peer still increments unread and toasts, on
+        both clients.
+   AC4  Reading a chat on one device clears its unread badge on the other.
+   AC5  Reload the web page: full chat history is still present, in order,
+        decrypted. Close the tab for 5 minutes, send from mobile, reopen the
+        web: the missed messages arrive exactly once (no duplicates, no gaps).
+   AC6  The conversation header on web shows the PEER's name after a self-sync
+        copy arrives — not the user's own name.
+   AC7  When OPFS is unavailable the client still works, logs one explicit
+        warning, and says so rather than silently losing data.
+
+ VERIFY
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Live: two devices on one account, run AC1-AC6 by hand. For AC5, confirm with
+   DevTools > Application > OPFS that the database file exists and grows.
+
+ OUT OF SCOPE
+   No changes to server fan-out — it is already correct. No device-linking UX
+   (that is T3.01, already built). No history-transfer bootstrap for a NEWLY
+   linked device (that is @wa/sync-engine, T3.02) — this task is about two
+   devices that are both already linked and online.
+
+ >>> PROMPT
+   Same-account multi-device sync is broken on the clients, not the server. The
+   server already fans a send out to the sender's other devices
+   (server/internal/chat/adapters/pg.go:62-69 selects all member devices except
+   the sending one, and service.go:186-204 publishes to each).
+
+   Fix two client defects.
+
+   First, both clients assume every inbound item is from the peer —
+   clients/web/src/services/appServices.ts:578 does
+   `this.peerByConv.set(it.conversationId, it.senderUserId)` for every item, and
+   the block at :581-600 then raises unread + a toast. For a self-sync copy that
+   sets the conversation's peer to my own user id and notifies me about my own
+   message. Add myUserId() to the web service (lift the JWT-`sub` decode from
+   clients/mobile/src/services/appServices.ts:113-125 into client-core rather
+   than duplicating it), then split each inbox batch into self-copies and
+   peer-messages in BOTH clients: self-copies persist and render as outgoing
+   with correct ticks and never touch peerByConv, unread, toasts or the
+   auto-responder. Apply the same split to receipts, reactions, edits, deletes
+   and read-state so reading on one device clears unread on the other. Make sure
+   planInboxBatch decides fromMe on sender USER id vs my user id.
+
+   Second, the web has no durable store: clients/web/src/worker/db.worker.ts:10
+   uses MemoryMessageRepo, and because the client ACKs after persist and the
+   server then DELETEs the acked inbox rows, a browser refresh loses web history
+   permanently. Implement an OPFS SQLite-wasm adapter for the existing SqliteDB
+   port (clients/packages/client-core/src/ports.ts:55-59) inside that worker and
+   swap in the same MessageStore class mobile already uses. Keep
+   MemoryMessageRepo as the test double and as a fallback when OPFS is missing,
+   logging one loud warning in that mode. Load the boot cursors from the store
+   the way mobile does (store.cursorSnapshot()) so resume replay is correct.
+
+   Prove it live with one account on web + mobile: mobile-sent messages appear on
+   web within 1s as outgoing with no toast; peer messages still toast; reading on
+   one device clears unread on the other; a web reload keeps full history; and a
+   5-minute offline window followed by reopening delivers the backlog exactly
+   once.
+
+================================================================================
+ F5  LATENCY — messages arrive late; target is WhatsApp-class realtime
+================================================================================
+ User item 5.
+
+ SYMPTOM
+   "Messages are being delivered late. Check why there is a delay and fix it. I
+   want real-time, low-latency communication similar to WhatsApp."
+
+ TARGET (already specified in this repo — do not invent a new one)
+   Docs/01-requirements/non-functional-requirements.md:17 — NFR-05, message
+   end-to-end latency with both parties online, same region:
+   p50 <= 150 ms, p95 <= 500 ms.
+
+ VERIFIED BASELINE — the transport is push-based, so "late" is not architectural
+   Send:    client WS `msg_send` -> ws-gateway -> core-api AcceptMessage ->
+            PG transaction (seq + inbox rows) -> NATS `dev.{id}.out` per
+            recipient device -> gateway subscription -> recipient WS.
+   Sources: server/internal/gateway/server.go:419-420 (frame dispatch),
+            server/internal/chat/service.go:152-204 (accept + publish),
+            server/internal/gateway/delivery.go (per-device subscription),
+            server/cmd/ws-gateway/main.go:108 (real NATS source, not the
+            in-memory one), server/cmd/core-api/main.go:489 (NATS publisher).
+   The UI is event-driven too: clients/web/src/ui/screens.tsx:809/5144 subscribe
+   via services.onChange and the 5 s setInterval next to them is labelled
+   "safety net for missed signals", not the primary path.
+
+   So there is no polling loop to blame. MEASURE FIRST. The four concrete
+   suspects, in the order they are most likely to matter:
+
+   S1 - the gateway read loop is synchronous per frame.
+        server/internal/gateway/server.go:419-420 calls handleMsgSend inline in
+        the read loop, and handleMsgSend (:452-457) opens a context with
+        rpcTimeout = 2s (server.go:23-24) around the core-api call. One slow
+        AcceptMessage therefore head-of-line-blocks EVERY subsequent frame on
+        that connection for up to 2 s — sends, receipts and acks alike. Under
+        any burst this is the dominant term.
+   S2 - link-preview fetch on the send path.
+        clients/web/src/services/appServices.ts:656-659 and
+        clients/mobile/src/services/appServices.ts:190-193 both `await
+        generateLinkPreview(...)` BEFORE enqueueing and before the optimistic
+        render. It short-circuits with no URL
+        (packages/media-pipeline/src/linkPreview.ts:132-133), but any message
+        containing a link blocks on a third-party HTML fetch with no visible
+        timeout — the user watches their own message hang.
+   S3 - per-send PG work.
+        chat/adapters/pg.go:44-120 does, in one transaction: seq assignment, a
+        recipient-device JOIN, and a pgx.Batch of N INSERTs. Check for a missing
+        index on the recipient JOIN and on `message_inbox(recipient_device_id,
+        conversation_id, seq)`, and confirm the accept transaction is not
+        holding a lock across the NATS publish.
+   S4 - receipt coalescing adds a deliberate 250 ms.
+        server/internal/gateway/receipts.go:13 receiptFlushInterval = 250ms.
+        This is correct for receipts (it is what stops tick storms) but if any
+        MESSAGE path shares that ticker it must not.
+
+ IMPLEMENTATION
+   1. INSTRUMENT BEFORE CHANGING ANYTHING. Add a per-message timing trail with
+      the existing observability stack (ops/dashboards, server/internal/platform):
+      client send -> gateway receive -> core-api accept start/end -> PG commit ->
+      NATS publish -> gateway deliver -> client render. Emit a Prometheus
+      histogram for each hop plus the end-to-end total. Without this you are
+      guessing, and the answer will be different on the dev rig than in staging.
+   2. Reproduce with numbers: two clients on the live rig, 100 messages, record
+      p50/p95 per hop. Write the measured table into this task's completion note.
+      That table decides what to fix.
+   3. Fix S1 unconditionally — it is a correctness-of-design issue regardless of
+      what the numbers say. Dispatch handleMsgSend onto a bounded per-connection
+      worker (or an errgroup with a small concurrency limit) so a slow RPC never
+      blocks the read loop, while PRESERVING per-connection send ordering
+      (messages from one device must keep their order). Keep the 2 s timeout.
+   4. Fix S2 unconditionally: enqueue and render optimistically FIRST, then
+      generate the preview asynchronously and attach it as an update. Give
+      fetchHtml an explicit timeout (2 s) and cap the body size. A link must
+      never delay the message.
+   5. Fix whatever else the measurements indict — index the hot queries, or move
+      the fan-out off the accept path — but only with a before/after number.
+   6. Add a latency SLO alert if one does not already exist for NFR-05
+      (ops/alerts already has a message-latency runbook per Docs/TASKS.txt T4.08
+      — wire the alert to the new histogram if it is dangling).
+
+ ACCEPTANCE
+   AC1  A Prometheus histogram exists for each hop named above, and a dashboard
+        panel shows end-to-end p50/p95.
+   AC2  Measured on the dev rig with both clients online, 100 sequential
+        messages: p50 <= 150 ms and p95 <= 500 ms end-to-end (NFR-05). Report
+        the actual numbers, before and after.
+   AC3  handleMsgSend no longer blocks the connection read loop; a test proves
+        that a deliberately slow AcceptMessage (injected fake, 1.5 s) does not
+        delay an unrelated frame on the same connection beyond ~50 ms.
+   AC4  Per-connection send ORDER is preserved under concurrency — a test sends
+        20 messages back-to-back on one connection and asserts monotonically
+        increasing seq.
+   AC5  Sending a message containing a URL renders optimistically in < 50 ms;
+        the preview attaches afterwards. A link host that never responds delays
+        nothing and times out at 2 s.
+   AC6  No regression in the durability invariant: zero loss, zero duplicates
+        (the ops/loadtest auditor's msgs_lost == 0 rule).
+
+ VERIFY
+   cd server && go build ./... && go vet ./... && go test ./...
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Live: the AC2 measurement run, numbers recorded.
+
+ OUT OF SCOPE
+   No transport rewrite (no QUIC, no custom protocol). No change to the relay
+   model or to ACK-after-persist. Do not "fix" the 250 ms receipt coalescing —
+   it is deliberate and correct; only prove messages do not ride it.
+
+ >>> PROMPT
+   Messages feel late; the target is the repo's own NFR-05
+   (Docs/01-requirements/non-functional-requirements.md:17): p50 <= 150 ms,
+   p95 <= 500 ms end-to-end with both parties online.
+
+   The transport is already push-based (client WS -> ws-gateway -> core-api ->
+   PG -> NATS dev.{id}.out -> gateway -> recipient), so do not assume polling.
+   MEASURE FIRST: instrument every hop — client send, gateway receive, core-api
+   accept start/end, PG commit, NATS publish, gateway deliver, client render —
+   with Prometheus histograms plus an end-to-end total, and record p50/p95 over
+   100 messages on the live rig before changing anything. Report the numbers.
+
+   Then fix these two regardless of what the numbers say, because both are
+   design defects:
+   (1) server/internal/gateway/server.go:419-420 calls handleMsgSend inline in
+   the connection read loop, and handleMsgSend (:452-457) wraps a core-api RPC
+   with a 2 s timeout (server.go:23-24) — one slow accept head-of-line-blocks
+   every other frame on that connection. Dispatch it onto a bounded per-connection
+   worker that preserves send ordering, keeping the 2 s timeout.
+   (2) clients/web/src/services/appServices.ts:656-659 and
+   clients/mobile/src/services/appServices.ts:190-193 await generateLinkPreview
+   before enqueueing, so any message containing a URL blocks on a third-party
+   fetch before the user's own message even renders. Enqueue and render first,
+   generate the preview asynchronously and attach it as an update, and give the
+   HTML fetch a 2 s timeout and a body-size cap.
+
+   Fix anything else the measurements indict (hot-query indexes on the recipient
+   JOIN and message_inbox, fan-out off the accept path) but only with a
+   before/after number. Add a test proving a 1.5 s injected AcceptMessage does not
+   delay an unrelated frame on the same connection, and a test proving 20
+   back-to-back sends keep monotonic seq. Do not touch the deliberate 250 ms
+   receipt coalescing in server/internal/gateway/receipts.go:13 — just prove
+   messages do not ride it. Keep zero-loss/zero-duplicate behaviour intact.
+
+================================================================================
+ F1  CONTACT PROFILE PICTURES — show a saved contact's photo like WhatsApp
+================================================================================
+ User item 1. Delivers the client-side avatar plumbing that F2 then reuses.
+
+ SYMPTOM
+   "If a contact is saved, show the contact's profile picture (same as
+   WhatsApp)."
+
+ VERIFIED BASELINE
+   Docs/FIX-PROFILE-PICTURES.md is the analysis of record. Phase 1 (server) is
+   DONE and shipped as commit 4c4bd54:
+     - server/migrations/000033_user_avatar_ref_text.up.sql — users.avatar_ref
+       is now `text` with the bogus media_objects FK dropped (an object key is
+       not a uuid; the same defect 000023 fixed for stories).
+     - server/internal/profile/profile.go:26-30 — Profile.AvatarRef, plaintext,
+       json `avatar_ref`.
+     - server/internal/profile/http.go:37-52 — PUT /v1/me accepts a POINTER
+       avatar_ref so absent/set/clear stay distinct.
+     - server/internal/profile/http.go:78 — GET /v1/users/{id} serves it.
+   Phases 2-5 (client) are NOT done. Concretely:
+     - clients/web/src/services/appServices.ts:1350-1362 — loadUserProfile
+       caches only {username, displayName, about}. It DROPS avatar_ref.
+     - clients/web/src/ui/screens.tsx:76-98 — Avatar accepts `name` and `id`
+       and ignores both; it always draws the silhouette SVG.
+     - There is no uploadAvatar, no removeAvatar, no avatarUrlFor.
+
+   ONE SERVER BLOCKER REMAINS, and it will silently defeat this whole task if
+   not fixed: server/internal/profile/profile.go:62-95 — Public() treats the
+   `avatar` privacy value "contacts" as "nobody" and withholds the picture,
+   because that code has no contact graph. Its own comment says so and calls the
+   real check a follow-up. The contact graph DOES exist and is already queried
+   elsewhere: table `contacts(owner_id, contact_phone_hash, matched_user_id)`
+   (server/migrations/000004_social.up.sql:38-44), written by
+   POST /v1/contacts/sync (server/internal/contacts/adapters/pg.go:116), and
+   read for exactly this kind of audience test at
+   server/internal/stories/adapters/pg.go:125.
+
+   Object-key -> URL resolution already exists:
+   POST /v1/media/download-urls (server/internal/media/http.go:80), used by
+   clients/web/src/ui/media/webMediaService.ts:18-27.
+
+ ROOT CAUSE
+   The client half of the feature was never built, and the server's "contacts"
+   privacy branch fails closed for want of a contact-graph lookup.
+
+ IMPLEMENTATION
+   1. SERVER — honour "contacts" properly. Give profile.Service a Contacts port
+      (`AreContacts(ctx, ownerID, otherID) (bool, error)`), implement it over
+      the `contacts` table mirroring stories/adapters/pg.go:125, and use it in
+      avatarHidden (profile.go:86-95): "everyone" -> serve; "contacts" -> serve
+      IFF the viewer is in the owner's contacts; "nobody" -> withhold; error ->
+      withhold (keep failing closed). Wire the adapter in
+      server/cmd/core-api/main.go where profile.NewService is constructed.
+   2. CLIENT SERVICE (web) — Docs/FIX-PROFILE-PICTURES.md Phase 2:
+      - extend PublicProfile with `avatarRef` and stop dropping it in
+        loadUserProfile (appServices.ts:1350-1362).
+      - add `avatarUrlFor(userId): string | null` — resolves avatar_ref via
+        POST /v1/media/download-urls, caches the blob URL per object key
+        (reuse the webMediaService url cache pattern), returns null while
+        loading and notifies on resolve so React re-renders.
+      - add `uploadAvatar(bytes, mime)` and `removeAvatar()`. Per the analysis
+        doc, avatars upload as PLAINTEXT through ResumableUploader, bypassing
+        media-pipeline prepare()'s encryption: an avatar is identity metadata
+        like display name, and per-file key distribution is the unsolved problem
+        that leaves stories undecryptable. Then PUT /v1/me with the object key.
+   3. AVATAR COMPONENT — Phase 3. screens.tsx:76 must actually use its props:
+      render an <img> when a URL is known, fall back to the existing silhouette
+      otherwise, keep the exact same size/shape/class contract so all ~30
+      existing call sites keep working with no edit. Handle: image 404, slow
+      load (no layout shift), and the group case (`group`/emoji prop) unchanged.
+   4. CALL SITES — pass the id everywhere a person is shown: chat list rows,
+      thread header, contacts list, group member list, call history, search
+      results, forward picker, story ring. Grep `<Avatar` in
+      clients/web/src/ui/screens.tsx and App.tsx and fix every one.
+   5. MOBILE — mirror steps 2-4 in clients/mobile once the web shape is settled,
+      using rnMediaService for the download transport. (If mobile's screen set
+      does not yet have a contacts/profile surface, land the SERVICE half and
+      leave the UI to F9, and say so explicitly in the completion note.)
+
+ ACCEPTANCE
+   AC1  A user with a set avatar shows that picture in the chat list, thread
+        header and contacts list on web; a user without one shows the existing
+        silhouette, unchanged.
+   AC2  A user whose `avatar` privacy is "contacts" shows their picture to
+        someone in their contacts table and the silhouette to someone who is
+        not. "nobody" always shows the silhouette; "everyone" always shows the
+        picture.
+   AC3  A Go test covers all four avatarHidden branches including the error
+        path (error -> withheld).
+   AC4  The picture is fetched at most once per object key per session; opening
+        five chats with the same peer issues one download-urls call.
+   AC5  A broken/404 avatar ref degrades to the silhouette with no console
+        error spam and no layout shift.
+   AC6  Every existing <Avatar> call site still compiles and renders; no call
+        site was left passing an id that the component ignores.
+
+ VERIFY
+   cd server && go build ./... && go vet ./... && go test ./internal/profile/...
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Live: set an avatar on account A (F2 gives you the upload UI — if F2 has not
+   run yet, PUT /v1/me by curl with a known object key), then view A from
+   account B in all three surfaces, toggling A's avatar privacy through all
+   three values.
+
+ OUT OF SCOPE
+   No group avatars — `groups.avatar_ref` has the SAME uuid-vs-object-key defect
+   (migration 000004, UpdateInfo still casts $4::uuid). It is flagged in
+   Docs/FIX-PROFILE-PICTURES.md as a deliberate follow-up; file it, do not
+   silently fix it here. No avatar cropping/editing UI. No blurhash placeholder.
+
+ >>> PROMPT
+   Read Docs/FIX-PROFILE-PICTURES.md first — it is the analysis of record. Phase
+   1 (server) shipped in 4c4bd54: users.avatar_ref is text (migration 000033),
+   Profile.AvatarRef exists (server/internal/profile/profile.go:26-30), PUT /v1/me
+   accepts a pointer avatar_ref (http.go:37-52) and GET /v1/users/{id} serves it
+   (http.go:78). Phases 2-5 are not done. Do them, plus one server fix.
+
+   Server fix first, or the rest silently fails: profile.Public /
+   avatarHidden (profile.go:62-95) treats the `avatar` privacy value "contacts"
+   as "nobody" because that code has no contact graph. The graph exists — table
+   contacts(owner_id, contact_phone_hash, matched_user_id) from
+   server/migrations/000004_social.up.sql:38-44, written by
+   server/internal/contacts/adapters/pg.go:116 and already queried for an
+   audience test at server/internal/stories/adapters/pg.go:125. Add a Contacts
+   port with AreContacts(ctx, ownerID, otherID), implement it over that table,
+   wire it in server/cmd/core-api/main.go, and make avatarHidden serve for
+   "everyone", serve-iff-contact for "contacts", withhold for "nobody", and
+   withhold on error (keep failing closed). Cover all four branches with tests.
+
+   Client: extend PublicProfile with avatarRef and stop dropping it in
+   clients/web/src/services/appServices.ts:1350-1362; add avatarUrlFor(userId)
+   that resolves the object key through POST /v1/media/download-urls (same call
+   as clients/web/src/ui/media/webMediaService.ts:18-27), caches the blob URL per
+   key, and notifies on resolve; add uploadAvatar(bytes, mime) and removeAvatar()
+   that upload PLAINTEXT via ResumableUploader (skipping media-pipeline
+   prepare()'s encryption, per the analysis doc's reasoning) and then PUT /v1/me.
+
+   Then make clients/web/src/ui/screens.tsx:76 Avatar actually use its `id`/`name`
+   props: render an <img> when a URL is known, keep the existing silhouette as
+   fallback, and preserve the exact size/shape/class contract so all existing
+   call sites keep working. Pass the user id at EVERY <Avatar> call site — chat
+   list, thread header, contacts, group members, call history, search, forward
+   picker, story ring — grep for `<Avatar` in screens.tsx and App.tsx and fix
+   each. Mirror the service half in clients/mobile.
+
+   Verify live: set an avatar on account A, view it as account B in all three
+   surfaces, and toggle A's avatar privacy through everyone/contacts/nobody.
+   Do NOT fix groups.avatar_ref — it has the same uuid-vs-object-key defect and
+   is an intentional separate follow-up; note it and move on.
+
+================================================================================
+ F2  SIDEBAR AVATAR — my own photo in the nav rail
+================================================================================
+ User item 2. Small. Do it right after F1 — it is mostly consumption of F1's
+ plumbing plus the upload control (FIX-PROFILE-PICTURES Phase 4).
+
+ SYMPTOM
+   "Show my profile picture in the sidebar profile icon (same as WhatsApp)."
+
+ VERIFIED BASELINE
+   clients/web/src/App.tsx:88-98 — NavRail's bottom "Profile" button renders
+   `<Avatar size={30} />` with NO id and NO name, so even after F1 it would
+   still draw the silhouette.
+   clients/web/src/ui/screens.tsx:347 — the Profile screen exists
+   (`Profile({ onBack, onSettings })`) and shows a large avatar with no upload
+   control, exactly as FIX-PROFILE-PICTURES.md records.
+
+ IMPLEMENTATION
+   1. Give the web service a `myProfile()` accessor backed by GET /v1/me
+      (it returns avatar_ref already) and cached like the peer profile cache;
+      refresh it after any avatar change so the rail updates instantly.
+   2. App.tsx:96 — pass the signed-in user's id (and name, for the alt text) to
+      <Avatar>. Keep size={30} and the `rail-avatar` class.
+   3. Profile screen (screens.tsx:347) — add the WhatsApp affordance: a camera
+      badge overlaid on the large avatar. Click opens a file picker; on select,
+      validate client-side (accept image/jpeg,image/png,image/webp; reject
+      > 5 MB; reject non-images), downscale to a square max 640x640 via canvas,
+      upload with F1's uploadAvatar, then update in place with no reload.
+      Include a "Remove photo" action that calls removeAvatar().
+   4. Show real states: uploading spinner, failure message, success. Do not
+      leave a failed upload looking like it worked.
+   5. Mirror in mobile's profile surface if one exists; if not, note it as an
+      F9 gap.
+
+ ACCEPTANCE
+   AC1  After setting a photo, the nav-rail avatar shows it immediately — no
+        reload — and still shows it after a page refresh.
+   AC2  A user with no photo sees the unchanged silhouette in the rail.
+   AC3  The camera badge is keyboard-reachable and has an accessible name
+        (the repo's a11y bar from T4.09 — aria-label on icon-only controls).
+   AC4  A > 5 MB file, and a non-image file, are both rejected client-side with
+        a visible message and no network call.
+   AC5  Uploaded images are stored downscaled to <= 640x640; verify the stored
+        object, not just the preview.
+   AC6  "Remove photo" clears it everywhere in one action: rail, profile screen,
+        and what other users see.
+
+ VERIFY
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Live: upload, check rail + profile + a second account's view of you, reload,
+   remove, reload.
+
+ OUT OF SCOPE
+   No cropping/rotation editor. No camera capture. No group avatar upload.
+
+ >>> PROMPT
+   Complete Phase 4 of Docs/FIX-PROFILE-PICTURES.md: my own profile picture in
+   the sidebar, with the upload control on the avatar itself. This depends on
+   F1's client plumbing (avatarUrlFor / uploadAvatar / removeAvatar and an Avatar
+   component that honours its id prop) — do F1 first.
+
+   clients/web/src/App.tsx:96 renders `<Avatar size={30} />` in the nav rail with
+   no id, so it always draws the silhouette. Add a cached myProfile() accessor
+   over GET /v1/me (which already returns avatar_ref), pass the signed-in user's
+   id and name into that Avatar, and refresh the cache after any avatar change so
+   the rail updates without a reload.
+
+   Then add the WhatsApp affordance to the Profile screen
+   (clients/web/src/ui/screens.tsx:347): a camera badge on the large avatar that
+   opens a file picker; validate client-side (image/jpeg|png|webp only, reject
+   >5MB, reject non-images with a visible message and no network call), downscale
+   to a square max 640x640 with canvas, upload via uploadAvatar, update in place;
+   plus a "Remove photo" action. Show real uploading/failure/success states — a
+   failed upload must not look successful. Make the badge keyboard-reachable with
+   an aria-label, matching the accessibility bar set in T4.09.
+
+   Verify live end to end: upload, confirm rail + profile + a second account's
+   view, reload, remove, reload. Mirror on mobile if a profile surface exists
+   there; if not, record it as an F9 parity gap.
+
+================================================================================
+ F6  CALLING — voice/video does not work
+================================================================================
+ User item 6.
+
+ SYMPTOM
+   "Calling is not working. Check and fix this issue."
+
+ VERIFIED BASELINE — read Docs/FIX-STATUS-AND-CALLS.md first
+   That document is the analysis of record for the call stack. Its Part 1
+   diagnosed C1 (caller and callee derived DIFFERENT SFrame keys because one
+   side keyed on device id and the other on user id, so every media frame was
+   dropped by design in frameTransform.ts's pipe()). Phase A is marked [x] —
+   C1, C2 (a decrypt-failure counter) and C3 (mic-permission handling) are
+   claimed fixed. Phase B is still OPEN:
+     C4 — clients/web/src/call/liveKitRtc.ts appends remote tracks to a detached
+          sink div on document.body (class .call-remote-video) instead of into
+          the call overlay, and teardown does not release every track.
+
+   Control plane and infra that DO exist (do not rebuild):
+     - server/internal/calls/http.go:18-98 — POST /v1/calls, /{ring_id}/answer,
+       /{ring_id}/decline, /{room_id}/rejoin, GET /v1/calls/history,
+       POST /v1/calls/webhook.
+     - server/internal/calls/service.go + token.go — ring state machine and the
+       LiveKit join-token minter.
+     - clients/{web,mobile}/src/call/* — CallContext, CallOverlay, callControl,
+       liveKitRtc/rnCallMedia, frameTransform, camera, screen share.
+     - start.sh:267-281 livekit_up_native — dev SFU on :7880.
+
+   TWO ENVIRONMENTAL CAUSES that produce exactly "calling is not working" and
+   are NOT code bugs — rule them out before touching code:
+     E1 — livekit-server is not installed. start.sh:276 warns
+          "livekit-server not found — 'brew install livekit' ... to enable calls"
+          and start.sh:198 then warns "LiveKit unavailable — voice/video calls
+          off". Everything else boots fine, so the app looks healthy and calls
+          simply never connect.
+     E2 — WA_LIVEKIT_API_KEY / WA_LIVEKIT_API_SECRET unset.
+          server/cmd/core-api/main.go:206-209 logs "call join tokens signed with
+          an empty secret (dev only)" and carries on; the SFU then rejects every
+          token. start.sh:92-93 sets devkey/secret and points WA_LIVEKIT_URL at
+          the LAN IP so a phone on the same WiFi can reach it — a manually
+          started stack that skips start.sh will not have these.
+
+ IMPLEMENTATION
+   1. TRIAGE, in this order, and RECORD which one it was:
+      a. Is livekit-server installed and listening on :7880?
+         `curl -fsS http://localhost:7880`
+      b. Are WA_LIVEKIT_* set in the core-api process environment?
+      c. Does POST /v1/calls return a room + token? Decode the JWT and check
+         its `iss`/signature against WA_LIVEKIT_API_KEY.
+      d. Does the callee receive the `call_offer` WS frame? (gateway
+         dev.{id}.call subscription — server/internal/gateway/server.go:230-243,
+         note it is LOSSY on a full queue.)
+      e. Does the LiveKit Room actually connect? Check
+         clients/web/src/call/liveKitRtc.ts connection state and the browser
+         console; check ./start.sh logs livekit.
+      f. Do media frames flow but stay silent/black? That is the C1 class —
+         re-verify Phase A actually holds by checking the decrypt-failure
+         counter added for C2.
+   2. Make the failure LOUD instead of silent. Whatever the cause turns out to
+      be, a user must see a specific error — "Calling unavailable: media server
+      not reachable", "Microphone permission denied", "Call failed to connect" —
+      not a call overlay that sits there connected and mute. This is the single
+      highest-value change in this task; C2 in the analysis doc says the same.
+   3. Close Phase B (C4): attach remote tracks INTO the call overlay component
+      rather than document.body, and make hangup release every local track
+      (mic, camera, screen) plus close the RTCPeerConnection / LiveKit Room.
+      Verify with a device-usage check that the camera light goes out.
+   4. Verify BOTH directions and BOTH kinds: web->web, web->mobile,
+      mobile->web, voice and video. Mobile ringing on a locked screen is T2.04
+      (callkeep/PushKit) — check it still rings.
+   5. Fix whatever the triage found, with a regression test where the layer
+      allows one (token minting, ring state machine, and the frame-key
+      derivation are all unit-testable; the SFU hop is not).
+   6. If the cause is environmental (E1/E2), still ship code: make start.sh's
+      warning unmissable, and make the client surface a clear "calls
+      unavailable" state at startup rather than at call time.
+
+ ACCEPTANCE
+   AC1  The triage result is recorded explicitly: which of a-f failed, with the
+        evidence.
+   AC2  A voice call between two web sessions connects and carries audio both
+        ways.
+   AC3  A video call between two web sessions shows remote video INSIDE the call
+        overlay (not a detached body element) and carries audio both ways.
+   AC4  A web <-> mobile call works in both directions, voice and video.
+   AC5  Hanging up releases every track: the camera indicator light goes out and
+        the mic is released, on both ends, within 1 s.
+   AC6  Every failure mode shows a specific user-visible message: SFU
+        unreachable, token rejected, mic/camera permission denied, callee
+        offline. No silent connected-but-dead call.
+   AC7  With livekit-server absent, the app still starts, and the call button
+        reports "calls unavailable" up front instead of failing at dial time.
+
+ VERIFY
+   cd server && go build ./... && go vet ./... && go test ./internal/calls/...
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Live: ./start.sh (with livekit-server installed), then AC2-AC5 by hand.
+
+ OUT OF SCOPE
+   No group-call work (T2.07 is built). No new codec/quality tuning (T2.09).
+   No call-history schema changes. No Status/stories work — Phases C-E of
+   Docs/FIX-STATUS-AND-CALLS.md are a separate, still-open task.
+
+ >>> PROMPT
+   Calling does not work. Read Docs/FIX-STATUS-AND-CALLS.md Part 1 first: it
+   diagnosed C1 (caller and callee derived different SFrame keys because one side
+   keyed on device id and the other on user id, so frameTransform.ts silently
+   dropped every media frame) and marks Phase A fixed, leaving Phase B open —
+   C4: clients/web/src/call/liveKitRtc.ts attaches remote tracks to a detached
+   div on document.body instead of into the call overlay, and teardown does not
+   release every track.
+
+   Before changing code, run this triage and RECORD which step failed with its
+   evidence: (a) is livekit-server listening on :7880 — start.sh:276 only WARNS
+   when it is missing, so the app looks healthy and calls just never connect;
+   (b) are WA_LIVEKIT_API_KEY/SECRET set in core-api's environment —
+   server/cmd/core-api/main.go:206-209 warns and continues with an empty signing
+   secret, which the SFU then rejects; (c) does POST /v1/calls return a room and
+   a token whose signature matches the key; (d) does the callee receive the
+   call_offer WS frame (gateway dev.{id}.call, server.go:230-243, lossy on a full
+   queue); (e) does the LiveKit Room connect; (f) do frames flow but decrypt to
+   nothing (the C1 class — check the C2 decrypt-failure counter).
+
+   Then: make every failure loud and specific in the UI — SFU unreachable, token
+   rejected, mic/camera denied, callee offline — instead of an overlay that sits
+   connected and mute. Close Phase B by attaching remote tracks inside the call
+   overlay component and releasing every local track plus the Room on hangup
+   (camera light must go out). Fix whatever the triage found, with unit tests
+   where the layer allows (token minting, ring state machine, frame-key
+   derivation). If the cause is environmental, still ship code: an unmissable
+   start.sh warning and a client-side "calls unavailable" state at startup rather
+   than at dial time.
+
+   Verify live: voice and video, web<->web and web<->mobile, both directions,
+   with clean teardown. Do not touch the Status/stories phases of that document.
+
+================================================================================
+ F7  PHONE INPUT — accept real-world numbers, not just strict E.164
+================================================================================
+ User item 7.
+
+ SYMPTOM
+   "Fix the phone number input. It should support all valid phone numbers, with
+   or without a country code. Users should not be required to enter numbers only
+   in the international format (e.g., +14155550123)."
+
+ VERIFIED BASELINE
+   Client gate — clients/packages/client-core/src/ids.ts:20-22
+     export function isValidPhone(phone: string): boolean {
+       return /^\+[1-9]\d{7,14}$/.test(phone.trim());
+     }
+   Enforced at three UI call sites, all with the same message:
+     clients/web/src/ui/screens.tsx:281-282  (add-contact)
+     clients/web/src/ui/screens.tsx:563-564  (login)
+     clients/mobile/app/(auth)/login.tsx:15-17 (login)
+   Server gate — server/internal/auth/service.go:184
+     reE164 = ^\+[1-9][0-9]{6,14}$   used by validHandle (:188-194) and
+     rejected in RequestOTP (:213-216) with VALIDATION_PHONE.
+   Note the two regexes DISAGREE on minimum length (client >= 9 digits total,
+   server >= 8) — an 8-digit number passes the server and is refused by the
+   client. Fix that inconsistency as part of this task.
+
+   Identity depends on the normalised string: server/internal/auth/service.go
+   PhoneHash (:170-181) HMACs the handle, and users are keyed by phone_hash. So
+   NORMALISATION MUST BE DETERMINISTIC AND STABLE — "+14155550123",
+   "4155550123" with region US, "(415) 555-0123" and "415-555-0123" must all
+   hash to the SAME value, or the same human gets two accounts.
+
+ ROOT CAUSE
+   The product requires E.164 at the input layer instead of normalising to it.
+
+ IMPLEMENTATION
+   1. Adopt a real library — do NOT hand-roll country rules. Use
+      `libphonenumber-js` on the clients (small, tree-shakeable, maintained) and
+      `github.com/nyaruka/phonenumbers` on the server (the Go port of Google's
+      libphonenumber). Hand-written per-country regexes are how you ship an
+      outage in a country you did not test.
+   2. Pick the default region explicitly. Add a country-code selector to the
+      phone input (flag + dial code, WhatsApp's own UX), defaulting from an
+      explicit config value — not from the browser locale alone, and never
+      silently. Store the user's selection.
+   3. Normalise at ONE boundary, on the server, before hashing:
+      - server/internal/auth/service.go: replace reE164/validHandle with
+        parse(handle, defaultRegion) -> E.164; reject only what the library
+        says is invalid; hash the normalised E.164.
+      - Return a clear, specific error for an unparseable or invalid number,
+        distinguishing "not a number" from "not valid for that country".
+   4. Client-side, validate with the same library for immediate feedback, and
+      SEND the normalised E.164 so the wire format never changes. The client
+      check is a UX nicety; the server check is the authority.
+   5. Fix the client/server minimum-length disagreement noted above by deleting
+      both regexes in favour of the library.
+   6. Update all three call sites plus the contact-sync path
+      (clients/web/src/services/appServices.ts:1590-1596 syncPhones, which
+      splits a pasted list) so pasted address-book numbers in local format also
+      match.
+   7. MIGRATION — say this out loud in the completion note: existing accounts
+      were hashed from strict E.164 input, so they are unaffected. But if any
+      test account was created from a differently-formatted string it will not
+      match after normalisation. Check `users` for duplicates by normalising
+      existing rows offline before deploying.
+
+ ACCEPTANCE
+   AC1  With default region IN, all of "9812345678", "09812345678",
+        "+919812345678", "+91 98123 45678", "0091-9812345678" normalise to the
+        SAME E.164 and therefore the same phone_hash.
+   AC2  With default region US, "(415) 555-0123", "415-555-0123", "4155550123"
+        and "+14155550123" likewise collapse to one value.
+   AC3  A number that is genuinely invalid for the selected region is rejected
+        with a message naming the region, not a generic "international format"
+        instruction.
+   AC4  A number typed WITH a country code is accepted regardless of the
+        selected region (an explicit + wins over the default).
+   AC5  The three UI call sites and the contact-sync paste path all accept local
+        format; the phrase "international format" no longer appears as a
+        requirement in any user-facing string.
+   AC6  Server-side table tests cover at least 8 countries with 3 formats each,
+        including a leading-zero trunk prefix and a number that is valid in one
+        region and invalid in another.
+   AC7  The client and server agree on validity for every case in AC6 — no input
+        the server accepts is refused by the client, or vice versa.
+
+ VERIFY
+   cd server && go test ./internal/auth/...
+   cd clients && pnpm -r test
+   Live: request an OTP with a local-format number and complete login.
+
+ OUT OF SCOPE
+   No SMS-provider changes. No number-portability or carrier lookup. No change to
+   the peppered-hash contact-discovery model.
+
+ >>> PROMPT
+   Phone input must accept real-world formats, with or without a country code,
+   instead of demanding strict E.164. Today
+   clients/packages/client-core/src/ids.ts:20-22 enforces /^\+[1-9]\d{7,14}$/ at
+   three UI call sites (clients/web/src/ui/screens.tsx:281 and :563,
+   clients/mobile/app/(auth)/login.tsx:15) and
+   server/internal/auth/service.go:184 enforces ^\+[1-9][0-9]{6,14}$ in
+   validHandle. Note those two regexes disagree on minimum length — an 8-digit
+   number passes the server and is refused by the client. Delete both.
+
+   Use real libraries, not hand-written country rules: libphonenumber-js on the
+   clients and github.com/nyaruka/phonenumbers on the server. Add a country-code
+   selector (flag + dial code) to the phone input defaulting from an explicit
+   config value, and remember the selection. Normalise to E.164 on the SERVER
+   before hashing — server/internal/auth/service.go PhoneHash (:170-181) keys
+   user identity on the handle, so normalisation must be deterministic or one
+   human gets two accounts. Reject only what the library calls invalid, and
+   distinguish "not a number" from "not valid for that country" in the error.
+   Clients validate with the same library for instant feedback and always send
+   normalised E.164 on the wire. Update all three call sites plus the
+   contact-sync paste path (clients/web/src/services/appServices.ts:1590-1596).
+
+   Prove it with server table tests over at least 8 countries x 3 formats
+   including a leading-zero trunk prefix, asserting that local and international
+   spellings of the same number collapse to one E.164 and one phone_hash, and
+   that client and server agree on every case. Remove the phrase "international
+   format" from user-facing strings. In the completion note, state the migration
+   check you ran for existing `users` rows.
+
+================================================================================
+ F8  PASSWORD LOGIN — OTP or password, with a strength policy
+================================================================================
+ User item 8.
+
+ SYMPTOM
+   "Users should be able to log in using either an OTP or a password. Passwords
+   must be 8-16 characters with at least 1 uppercase, 1 lowercase, 1 number and
+   1 special character."
+
+ VERIFIED BASELINE
+   Auth surface today — server/internal/auth/http.go:24-30:
+     POST /v1/auth/request-otp, /verify-otp, /verify-pin, /refresh, /logout
+     PUT  /v1/auth/pin
+   There is NO password concept anywhere: no column, no route, no client call.
+   `users` (server/migrations/000002_identity.up.sql) has no password column.
+
+   The precedent to copy is already in the tree and is good: the 2FA
+   registration PIN uses Argon2id in PHC format —
+   server/internal/auth/domain/pin.go:11-73 (HashPIN / CheckPIN, params
+   time=3, memory=64 MiB, threads=4, keyLen=32, per-hash salt, version-checked
+   on verify). Password hashing must reuse this shape, not invent another.
+   Client: clients/packages/client-core/src/otpClient.ts:45-80 (requestOtp,
+   verifyOtp, verifyPin, refresh) is where a `loginWithPassword` belongs.
+
+ SECURITY REQUIREMENTS — non-negotiable, state them in the code comments
+   - Hash with Argon2id at the pin.go parameters or stronger. Never store, log,
+     or return a password. Never put one in a URL or query string.
+   - Rate-limit password attempts per account AND per IP, reusing the limiter
+     already used for OTP (service.go:220-238 pattern) and failing CLOSED when
+     the limiter is unavailable, exactly as the OTP path does (:229-232).
+   - Lock out after N failures with exponential backoff; log the event to the
+     existing LoginObserver hook (http.go:24, `observers ...LoginObserver`).
+   - The response for "wrong password" and "no such account" must be IDENTICAL,
+     mirroring the enumeration defence already documented at service.go:209-211.
+   - A password login must still mint the same TokenPair + device registration
+     as verify-otp, so downstream code sees one session shape.
+   - Setting or changing a password requires an existing authenticated session
+     (or a completed OTP challenge); it is never a bare unauthenticated write.
+
+ IMPLEMENTATION
+   1. Migration 000034: add `password_hash text` (nullable — password is
+      OPTIONAL; OTP remains the primary path) and `password_updated_at
+      timestamptz` to `users`. Nullable means existing accounts are unaffected.
+   2. Policy, in ONE place, server-side, exported for tests:
+      server/internal/auth/domain/password.go —
+        ValidatePassword(s string) error
+      Rules exactly as specified: length 8-16 inclusive; >= 1 uppercase
+      [A-Z]; >= 1 lowercase [a-z]; >= 1 digit [0-9]; >= 1 special (define the
+      set explicitly in the code, e.g. the printable ASCII punctuation set, and
+      say what it is in the error message). Reject anything outside printable
+      ASCII + a documented decision on unicode. Return a SPECIFIC error naming
+      which rule failed — a generic "invalid password" is a support-ticket
+      generator.
+      HashPassword / CheckPassword wrapping argon2id exactly as pin.go does;
+      factor the shared PHC encode/decode out of pin.go rather than copying it.
+   3. Routes — server/internal/auth/http.go:
+        PUT  /v1/auth/password       set/change (authenticated; on change,
+                                     require the current password)
+        POST /v1/auth/login-password {handle, password, device} -> TokenPair,
+                                     the same shape verify-otp returns
+        DELETE /v1/auth/password     remove it, reverting to OTP-only
+      Service methods alongside RequestOTP/VerifyOTP in service.go.
+   4. Client — clients/packages/client-core/src/otpClient.ts: add
+      loginWithPassword(handle, password, device) and setPassword/
+      changePassword/removePassword. Mirror the SAME policy client-side for
+      instant feedback with a live checklist UI (WhatsApp/1Password style: each
+      rule ticks green as it is met) — but the server remains the authority.
+   5. UI:
+      - web login (clients/web/src/ui/screens.tsx:554 Login): a "Use password
+        instead" toggle; on the password path skip the verify screen entirely.
+      - mobile login (clients/mobile/app/(auth)/login.tsx): the same toggle.
+      - Settings: a "Password" section to set/change/remove, showing the live
+        rule checklist. Web Settings is screens.tsx:2715.
+      - Every password field: type="password", autoComplete="current-password"
+        / "new-password", a show/hide toggle, and NO value logging.
+   6. Interaction with the existing PIN: the registration PIN (verify-pin) is
+      2FA on the OTP path and is a DIFFERENT thing from a login password. Say
+      so in the code and in the UI copy so they are not confused. If a user has
+      both, define and document which applies: password login should still
+      honour the PIN as a second factor if one is set.
+
+ ACCEPTANCE
+   AC1  ValidatePassword accepts "Abcdef1!" (8 chars) and "Abcdefgh1234567!"
+        (16) and rejects: 7 chars, 17 chars, no uppercase, no lowercase, no
+        digit, no special. Each rejection names the failing rule.
+   AC2  A user with no password set can still log in with OTP, unchanged.
+   AC3  Setting a password then logging in with it yields a TokenPair and a
+        registered device indistinguishable in shape from the OTP path.
+   AC4  Wrong password and unknown account return byte-identical responses and
+        the same status code.
+   AC5  N consecutive failures rate-limit the account, and the limiter being
+        unavailable fails CLOSED (login refused), matching the OTP path.
+   AC6  The password is never present in any log line, error body, URL, or the
+        `users` table in plaintext; `password_hash` is a PHC argon2id string.
+   AC7  Changing a password requires the current one; removing it reverts to
+        OTP-only and the account can still log in.
+   AC8  The web and mobile login screens both offer the OTP/password choice and
+        show the live rule checklist while typing a new password.
+
+ VERIFY
+   cd server && go build ./... && go vet ./... && go test ./internal/auth/...
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Live: set a password in Settings, sign out, sign in with it on web AND
+   mobile; then sign in with OTP on the same account.
+
+ OUT OF SCOPE
+   No password RESET / forgot-password flow (that needs the OTP path as the
+   recovery channel and is a follow-up task — file it, do not half-build it).
+   No SSO. No passkeys/WebAuthn. No change to the existing 2FA PIN semantics.
+
+ >>> PROMPT
+   Add optional password login alongside OTP. There is no password concept in
+   the tree today: server/internal/auth/http.go:24-30 exposes only request-otp,
+   verify-otp, verify-pin, refresh, logout and PUT /v1/auth/pin, and `users`
+   (migration 000002) has no password column. The precedent to reuse is the 2FA
+   PIN's Argon2id/PHC implementation at server/internal/auth/domain/pin.go:11-73
+   (time=3, memory=64MiB, threads=4, keyLen=32, per-hash salt, version-checked)
+   — factor its shared PHC encode/decode out rather than copying it.
+
+   Migration 000034 adds nullable `password_hash text` and `password_updated_at`
+   to users, so OTP stays primary and existing accounts are untouched. Put the
+   policy in one exported place — server/internal/auth/domain/password.go
+   ValidatePassword — enforcing 8-16 characters with at least one uppercase, one
+   lowercase, one digit and one special character; define the special-character
+   set explicitly in code, decide and document the unicode rule, and return an
+   error naming WHICH rule failed. Add PUT /v1/auth/password (authenticated;
+   change requires the current password), POST /v1/auth/login-password returning
+   the same TokenPair + device registration shape as verify-otp, and DELETE
+   /v1/auth/password.
+
+   Security, non-negotiable: rate-limit per account and per IP reusing the OTP
+   limiter pattern at service.go:220-238 and fail CLOSED when the limiter is
+   unavailable; make "wrong password" and "unknown account" byte-identical
+   responses, mirroring the enumeration defence at service.go:209-211; log
+   attempts through the existing LoginObserver; never log, return, or URL-encode
+   a password.
+
+   Client: add loginWithPassword/setPassword/changePassword/removePassword to
+   clients/packages/client-core/src/otpClient.ts, mirror the policy client-side
+   as a live rule checklist that ticks green as each rule is met, add a "use
+   password instead" toggle to both login screens
+   (clients/web/src/ui/screens.tsx:554 and clients/mobile/app/(auth)/login.tsx)
+   and a Password section in Settings. Use type="password" with the right
+   autoComplete values and a show/hide toggle. Explain in code and UI copy that
+   the registration PIN is 2FA on the OTP path, not a login password, and define
+   which applies when a user has both.
+
+   Do not build forgot-password/reset in this task — file it as a follow-up.
+
+================================================================================
+ F9  WEB / MOBILE PARITY — one product, two clients
+================================================================================
+ User item 9. Do this LAST: it re-audits everything F1-F8 touched.
+
+ SYMPTOM (as reported)
+   "Ensure the website has the same features and functionality as the mobile app.
+   Any feature that works in the app should also work on the website."
+
+ IMPORTANT — THE DIRECTION IS THE OTHER WAY ROUND
+   Measured, not assumed. The MOBILE app is the thin one:
+     clients/mobile/app has FIVE screens totalling 690 lines —
+       (auth)/login.tsx 72, (auth)/verify.tsx 92, (app)/chats.tsx 142,
+       (app)/search.tsx 110, (app)/thread/[id].tsx 186, _layout.tsx 36,
+       index.tsx 8
+     clients/mobile/src/services/appServices.ts is 245 lines and its entire
+       public API is: otp, sessions, config, onCallSignal, create, messages,
+       hasSession, myUserId, completeLogin, startRealtime, search, sendText,
+       startDirectChat, logout, refreshToken.
+   The WEB app:
+     clients/web/src/ui/screens.tsx is 5,000+ lines and App.tsx routes ~22
+       screens: chats, newChat, search, calls, status, profile, settings,
+       contacts, createGroup, groupInfo, channels, channel, communities,
+       community, collab, board, discover, thread, login, verify.
+     clients/web/src/services/appServices.ts is 2,562 lines.
+   Memory of the build plan agrees: Phase 5 shipped the web client UI and
+   recorded "mobile parity = T5.01" as outstanding.
+
+   So the honest reading of this request is "make the two clients equivalent",
+   and the overwhelming majority of the work is WEB -> MOBILE. This task
+   delivers a bidirectional matrix and then closes gaps in both directions.
+   If the intent really was mobile -> web only, say so and this task shrinks to
+   the (short) mobile-ahead list.
+
+ KNOWN MOBILE GAPS (a starting list, not the finished audit)
+   - No media: no send/receive of images, video, docs, voice notes. Mobile
+     appServices has no sendMedia at all (web: appServices.ts:667-673).
+   - No group UI: no create, no info, no member management.
+   - No calls UI: CallProvider/CallOverlay ARE mounted in
+     clients/mobile/app/_layout.tsx:19-33, but no screen offers a way to place
+     a call and there is no call-history screen.
+   - No status/stories, channels, communities, collab, whiteboard, discover.
+   - No contacts screen, no profile screen, no settings screen.
+   - No receipts/typing/presence: mobile's WsClient handler set
+     (appServices.ts:150-179) omits onReceipt, onTyping, onPresence and
+     onChannelEvent, which web wires at appServices.ts:613-640. So mobile shows
+     no ticks, no "typing...", no online status.
+   - sendText only — no reply, edit, react, delete, forward, star, pin,
+     location, contact card, poll, sticker, scheduled message.
+
+ KNOWN WEB GAPS (short list — this is the direction the user asked about)
+   - Push notifications: mobile has voipPush.ts + pushRegistration.ts +
+     callKeepRinger.ts (lock-screen ringing, T2.04). Web has push.ts — verify
+     it actually registers a service worker and receives pushes; if not, that
+     is a genuine mobile-ahead gap.
+   - Durable local store: mobile uses real SQLite; web uses MemoryMessageRepo.
+     Covered by F4 — confirm it landed rather than redoing it.
+   - Native share / camera capture / contact-book import: platform affordances
+     the web can partially match (Web Share API, getUserMedia, Contact Picker
+     API where supported). Decide per item and record the decision.
+
+ IMPLEMENTATION
+   1. Produce the matrix FIRST, as a committed document:
+      Docs/11-clients/parity-matrix.md — one row per user-visible capability,
+      columns: capability | web | mobile | gap direction | priority | task ref.
+      Derive the row list from Docs/FEATURE-CHECKLIST.md and
+      Docs/01-requirements/uat-matrix.md (the FR list already exists — do not
+      invent a new taxonomy). Mark each cell from CODE, citing path:line, not
+      from assumption.
+   2. Rank the gaps by user impact. Propose the order; get sign-off before
+      building, because this is many PRs' worth of work.
+   3. Close them in vertical slices, each independently shippable and each its
+      own commit, in this suggested order for mobile:
+        S1 receipts/typing/presence (small; wire the four missing WsClient
+           handlers — the shared client-core already supports them)
+        S2 media send/receive (reuse @wa/media-pipeline + rnMediaService, both
+           already present)
+        S3 message actions: reply, react, edit, delete, forward, star
+        S4 contacts + profile + settings screens
+        S5 groups: create, info, members
+        S6 calls UI: place a call from a thread, plus call history
+        S7 status/stories
+        S8 channels + communities
+      Anything beyond S8 (collab, whiteboard, discover) is explicitly LOWER
+      priority — say so rather than dropping it silently.
+   4. Every slice reuses the shared packages. If a slice tempts you to duplicate
+      logic into clients/mobile, that logic belongs in clients/packages/* —
+      the F3 lesson.
+   5. Keep the matrix updated as the definition of done for each slice.
+
+ ACCEPTANCE
+   AC1  Docs/11-clients/parity-matrix.md exists, covers every FR in
+        Docs/01-requirements/uat-matrix.md, and every cell cites code.
+   AC2  The gap list is ranked and the build order is agreed before slice work
+        starts.
+   AC3  Each slice ships as its own commit with tests, and updates the matrix
+        row it closes.
+   AC4  After S1: mobile shows delivery/read ticks, "typing...", and online/
+        last-seen, matching web behaviour for the same conversation.
+   AC5  After S2: an image sent from mobile renders on web and vice versa, with
+        the same thumbnail/blurhash treatment.
+   AC6  No capability regresses on either client; `pnpm -r typecheck &&
+        pnpm -r test` stays green after every slice.
+   AC7  The completion note states explicitly which capabilities remain
+        unmatched and why — nothing is dropped silently.
+
+ VERIFY
+   cd clients && pnpm -r typecheck && pnpm -r test
+   Per slice: the manual cross-client scenario named in its AC.
+
+ OUT OF SCOPE
+   Not a redesign of either client. Not a shared-UI-component-library project —
+   the clients stay React DOM and React Native, sharing SERVICES not views. No
+   new features that exist on neither client.
+
+ >>> PROMPT
+   The request was "make the website match the mobile app", but the measurement
+   says the opposite: clients/mobile/app has five screens totalling 690 lines and
+   its appServices.ts (245 lines) exposes only otp, sessions, config,
+   onCallSignal, create, messages, hasSession, myUserId, completeLogin,
+   startRealtime, search, sendText, startDirectChat, logout and refreshToken —
+   while clients/web routes ~22 screens from a 5,000-line screens.tsx over a
+   2,562-line service. Mobile has no media, no groups, no calls UI, no
+   status/channels/communities, no contacts/profile/settings screens, and its
+   WsClient handler set (appServices.ts:150-179) omits onReceipt, onTyping,
+   onPresence and onChannelEvent, so it shows no ticks, no typing indicator and
+   no presence. Treat this task as "make the two clients equivalent", flag the
+   direction discrepancy to me, and note the short list where mobile IS ahead
+   (VoIP push and lock-screen ringing via voipPush.ts/callKeepRinger.ts; real
+   SQLite persistence, which F4 brings to web).
+
+   Deliver the matrix first as Docs/11-clients/parity-matrix.md: one row per
+   capability drawn from Docs/01-requirements/uat-matrix.md and
+   Docs/FEATURE-CHECKLIST.md, columns capability | web | mobile | gap direction |
+   priority | task ref, every cell filled from code with a path:line citation,
+   not from assumption. Rank the gaps by user impact and get my sign-off on the
+   build order before writing feature code — this is many PRs of work.
+
+   Then close gaps in vertical, independently shippable slices, each its own
+   commit with tests, updating the matrix row it closes. Suggested mobile order:
+   (1) wire the four missing WsClient handlers for receipts/typing/presence;
+   (2) media send/receive reusing @wa/media-pipeline and rnMediaService, both
+   already present; (3) message actions — reply, react, edit, delete, forward,
+   star; (4) contacts/profile/settings screens; (5) groups; (6) calls UI and call
+   history; (7) status; (8) channels and communities. Anything shared belongs in
+   clients/packages/*, never duplicated into clients/mobile. In the completion
+   note, state explicitly which capabilities remain unmatched and why.
+
+================================================================================
+ CROSS-CUTTING NOTES
+================================================================================
+ THINGS THAT ARE ALREADY CORRECT — do not rebuild them
+   - Server-side self-sync fan-out (chat/adapters/pg.go:62-69).
+   - ACK-after-persist durability and the zero-loss invariant.
+   - Receipt coalescing at 250 ms (gateway/receipts.go:13) — deliberate.
+   - The Argon2id PIN implementation (auth/domain/pin.go) — the template for F8.
+   - Profile avatar server plumbing (migration 000033, profile.go, http.go) —
+     F1 extends it, does not redo it.
+   - The calls control plane, ring state machine and token minter.
+   - Enumeration-resistant OTP responses (auth/service.go:209-216).
+
+ KNOWN FOLLOW-UPS DELIBERATELY NOT IN THESE NINE TASKS
+   - groups.avatar_ref has the same uuid-vs-object-key defect users.avatar_ref
+     had (migration 000004; UpdateInfo still casts $4::uuid). File it.
+   - Status/stories content never reaches viewers — Docs/FIX-STATUS-AND-CALLS.md
+     Phases C-E remain open (server half of C is done).
+   - Forgot-password / password reset (F8 out-of-scope).
+   - Real libsignal E2EE. Every "dev double" in this codebase is a documented
+     seam, not an accident, and F3 does not change that.
+
+ DEFINITION OF DONE, EVERY TASK
+   1. Code written and committed, not a plan.
+   2. `cd server && go build ./... && go vet ./... && go test ./...` green.
+   3. `cd clients && pnpm -r typecheck && pnpm -r test` green.
+   4. The task's ACCEPTANCE list verified item by item, with the live steps
+      actually performed — not assumed.
+   5. A completion note recording what was measured, what was assumed, and
+      anything left undone with the reason.
+================================================================================

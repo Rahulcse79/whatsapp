@@ -2,12 +2,20 @@
 #
 # start.sh — bring up the whole WhatsApp V2 stack on one box for local dev.
 #
-#   ./start.sh            # up: infra → migrations → 4 Go services → web
+#   ./start.sh            # up: infra → migrations → 4 Go services → ALL UIs
 #   ./start.sh up [native|docker]
-#   ./start.sh down       # stop the Go services + web + infra
+#   ./start.sh ui         # (re)start just the UIs against an already-up backend
+#   ./start.sh down       # stop the Go services + UIs + infra
 #   ./start.sh restart
 #   ./start.sh status
-#   ./start.sh logs [svc] # core-api|ws-gateway|media-svc|notification-svc|web|minio
+#   ./start.sh logs [svc] # core-api|ws-gateway|media-svc|notification-svc
+#                         # |web|admin|mobile|nats|minio|livekit|pnpm-install
+#
+# "Everything" means everything: infra, migrations, the four Go services, and
+# all three front-ends — the web PWA (:5173), the admin console (:5174) and the
+# Expo/Metro dev server for the mobile app (:8090). Opt out per UI with
+# WA_SKIP_WEB=1 / WA_SKIP_ADMIN=1 / WA_SKIP_MOBILE=1, and suppress the browser
+# tab with WA_NO_OPEN=1.
 #
 # Runtime is auto-detected: if Docker is running it uses deploy/compose; if not,
 # it falls back to NATIVE services via Homebrew (no Docker needed). Force either
@@ -31,10 +39,24 @@ MINIO_DATA="$RUN_DIR/minio-data"
 SEED_FILE="$RUN_DIR/jwt-seed"
 
 SERVICES=(core-api ws-gateway media-svc notification-svc)
+UI_APPS=(web admin mobile)
+# UI ports. Metro is pinned to 8090 on purpose: Expo defaults to 8081, which is
+# ws-gateway here, and its usual fallback 8082 is media-svc — left alone, the
+# mobile dev server either fails to bind or silently squats a service port.
+WEB_PORT=5173
+ADMIN_PORT=5174
+METRO_PORT=8090
 COMPOSE=(docker compose -f "$COMPOSE_FILE")
 RUNTIME=""
 MINIO_OK=1   # media-svc is started only when MinIO is available
-case "$(uname -m)" in arm64) OS_ARCH=arm64 ;; *) OS_ARCH=amd64 ;; esac  # for prebuilt downloads
+# Prebuilt-download arch. buf names its release assets differently from
+# nats/minio (x86_64 rather than amd64), hence the second variable.
+case "$(uname -m)" in
+  arm64) OS_ARCH=arm64; BUF_ARCH=arm64 ;;
+  *)     OS_ARCH=amd64; BUF_ARCH=x86_64 ;;
+esac
+BUF_VER=v1.47.2
+PROTO_STAMP="$RUN_DIR/proto.stamp"
 
 # ── pretty output ───────────────────────────────────────────────────────────
 if [ -t 1 ]; then B=$'\033[1m'; G=$'\033[32m'; Y=$'\033[33m'; R=$'\033[31m'; D=$'\033[2m'; X=$'\033[0m'; else B= G= Y= R= D= X=; fi
@@ -45,6 +67,26 @@ die()  { printf '%s✗ %s%s\n' "$R" "$*" "$X" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "missing prerequisite: $1"; }
 port_up()   { lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1; }
 port_wait() { local i; for i in $(seq 1 "${2:-30}"); do port_up "$1" && return 0; printf '.'; sleep 1; done; return 1; }
+# http_wait URL [tries] — poll until the URL actually answers. A listening port
+# is not the same as a served app: Vite binds before the first build finishes,
+# and a crashed dev server can leave a stale socket. Everything that claims
+# "started" below goes through here first.
+http_wait() {
+  local i
+  for i in $(seq 1 "${2:-40}"); do
+    curl -fsS -o /dev/null --max-time 2 "$1" >/dev/null 2>&1 && return 0
+    printf '.'; sleep 1
+  done
+  return 1
+}
+# kill_tree PID — kill a process and its descendants. Needed because the UI dev
+# servers fork children (Vite's optimizer, Metro's workers) that outlive a plain
+# kill of the parent and keep holding the port.
+kill_tree() {
+  local pid="$1" child
+  for child in $(pgrep -P "$pid" 2>/dev/null); do kill_tree "$child"; done
+  kill "$pid" 2>/dev/null || true
+}
 # fetch_bin URL DEST — download a single prebuilt binary (official release host).
 fetch_bin() { curl -fsSL "$1" -o "$2" && chmod +x "$2"; }
 # lan_ip echoes this machine's WiFi/LAN address (for phones on the same network),
@@ -91,6 +133,17 @@ load_env() {
   # reach the SFU (the web client derives its own ws:// URL from the API host).
   export WA_LIVEKIT_API_KEY=devkey WA_LIVEKIT_API_SECRET=secret
   export WA_LIVEKIT_URL="ws://$(lan_ip):7880"
+}
+
+# svc_port NAME — the listening port a component owns, for status probing.
+svc_port() {
+  case "$1" in
+    core-api) echo 8080 ;; ws-gateway) echo 8081 ;;
+    media-svc) echo 8082 ;; notification-svc) echo 8083 ;;
+    nats) echo 4222 ;; minio) echo 9000 ;; livekit) echo 7880 ;;
+    web) echo "$WEB_PORT" ;; admin) echo "$ADMIN_PORT" ;; mobile) echo "$METRO_PORT" ;;
+    *) echo "" ;;
+  esac
 }
 
 # Per-service HTTP/gRPC ports (distinct so all four share one host).
@@ -277,8 +330,10 @@ livekit_up_native() {
   "$bin" --dev --bind 0.0.0.0 >"$LOG_DIR/livekit.log" 2>&1 &
   echo $! > "$PID_DIR/livekit.pid"
   printf '  waiting for LiveKit'
-  for _ in $(seq 1 20); do curl -fsS http://localhost:7880 -o /dev/null 2>&1 && break; printf '.'; sleep 1; done; printf '\n'
-  curl -fsS http://localhost:7880 -o /dev/null 2>&1 && ok "LiveKit on :7880 (dev)" || { warn "LiveKit not ready — see ./start.sh logs livekit"; return 1; }
+  # -S keeps curl's error text on stderr, which used to smear across the
+  # progress dots ("waiting for LiveKitcurl: (7) Failed to connect…").
+  for _ in $(seq 1 20); do curl -fsS http://localhost:7880 -o /dev/null >/dev/null 2>&1 && break; printf '.'; sleep 1; done; printf '\n'
+  curl -fsS http://localhost:7880 -o /dev/null >/dev/null 2>&1 && ok "LiveKit on :7880 (dev)" || { warn "LiveKit not ready — see ./start.sh logs livekit"; return 1; }
 }
 
 migrate_native() {
@@ -317,8 +372,48 @@ migrate_native() {
   ok "migrations applied"
 }
 
+# ── protobuf codegen ────────────────────────────────────────────────────────
+# Generated code (server/internal/proto/gen + clients/packages/proto-types/src/gen)
+# is deliberately NEVER committed — see .gitignore: "CI runs buf generate before
+# every Go compile", which is exactly what ci.yml does (buf-action → buf generate
+# → go build). start.sh did not, so on any fresh clone or new git worktree the
+# build died with "no required module provides package .../internal/proto/gen/…"
+# and the script exited BEFORE starting a single service, let alone a UI. This is
+# that missing step.
+proto_gen() {
+  local go_gen="$REPO_ROOT/server/internal/proto/gen"
+  local ts_gen="$REPO_ROOT/clients/packages/proto-types/src/gen"
+  # Skip when nothing changed: buf resolves remote plugins over the network, so
+  # a needless run costs a round-trip to the BSR on every start.
+  if [ -d "$go_gen" ] && [ -d "$ts_gen" ] && [ -f "$PROTO_STAMP" ] \
+     && [ -z "$(find "$REPO_ROOT/server/proto" -name '*.proto' -newer "$PROTO_STAMP" -print -quit 2>/dev/null)" ]; then
+    ok "protobuf code up to date"
+    return 0
+  fi
+  local buf; buf="$(command -v buf 2>/dev/null || true)"
+  [ -x "$buf" ] || buf="$BIN_DIR/buf"
+  if [ ! -x "$buf" ]; then
+    say "Fetching prebuilt buf $BUF_VER ($BUF_ARCH)…"
+    fetch_bin "https://github.com/bufbuild/buf/releases/download/${BUF_VER}/buf-Darwin-${BUF_ARCH}" "$BIN_DIR/buf" || true
+    buf="$BIN_DIR/buf"
+  fi
+  if [ ! -x "$buf" ]; then
+    [ -d "$go_gen" ] && { warn "buf unavailable — reusing the existing generated code (may be stale)"; return 0; }
+    die "buf could not be fetched and there is no generated protobuf code, so the Go services cannot build. Install it (brew install bufbuild/buf/buf) or run 'make proto', then re-run."
+  fi
+  say "Generating protobuf code (buf → Go + TypeScript)…"
+  if ( cd "$REPO_ROOT/server/proto" && "$buf" generate ) >"$LOG_DIR/proto.log" 2>&1; then
+    touch "$PROTO_STAMP"; ok "protobuf code generated"; return 0
+  fi
+  warn "buf generate failed — last lines of $LOG_DIR/proto.log:"
+  tail -n 15 "$LOG_DIR/proto.log" | sed 's/^/      /'
+  [ -d "$go_gen" ] && { warn "continuing with the existing generated code"; return 0; }
+  die "codegen failed and no generated code exists — the Go services cannot build. buf needs network access to buf.build for its remote plugins."
+}
+
 # ── Go services ─────────────────────────────────────────────────────────────
 build_services() {
+  proto_gen
   say "Building Go services…"
   ( cd "$REPO_ROOT/server" && for s in "${SERVICES[@]}"; do go build -o "$BIN_DIR/$s" "./cmd/$s"; done )
   ok "built: ${SERVICES[*]}"
@@ -349,22 +444,139 @@ services_up() {
   start_service notification-svc
 }
 
-# ── web (optional) ──────────────────────────────────────────────────────────
+# ── UIs: web PWA, admin console, mobile (Expo/Metro) ────────────────────────
+# All three front-ends come up with ./start.sh. Each one installs from the same
+# workspace, is health-probed before it is called "started", and reports its own
+# log on failure instead of leaving a URL pointing at nothing.
+
+DEPS_OK=0   # set by deps_install; the UIs refuse to start without it
+
+# deps_install runs ONE workspace install for web + admin + mobile. Failures are
+# no longer swallowed: a broken install used to surface as a dev server that
+# simply never came up, with the reason discarded to /dev/null.
+deps_install() {
+  command -v pnpm >/dev/null 2>&1 || { warn "pnpm not found — skipping all UIs (backend is still up). Install Node + pnpm: https://pnpm.io/installation"; return 1; }
+  say "Installing client dependencies (pnpm workspace)…"
+  if ( cd "$REPO_ROOT/clients" && pnpm install --no-frozen-lockfile ) >"$LOG_DIR/pnpm-install.log" 2>&1; then
+    DEPS_OK=1; ok "client dependencies ready"; return 0
+  fi
+  warn "pnpm install failed — UIs cannot start. Last lines of $LOG_DIR/pnpm-install.log:"
+  tail -n 15 "$LOG_DIR/pnpm-install.log" | sed 's/^/      /'
+  return 1
+}
+
+# vite_app_up NAME DIR PORT URL — start a Vite dev server and PROVE it serves.
+# Binds 0.0.0.0 so a phone on the same WiFi can load it. NOTE: vite is invoked
+# directly — `pnpm dev -- --host` passes a stray `--` that vite reads as
+# end-of-options, so --host is silently ignored and the LAN never sees it.
+vite_app_up() {
+  local name="$1" dir="$2" port="$3" url="$4"
+  if running "$name"; then warn "$name already running (pid $(cat "$PID_DIR/$name.pid"))"; return 0; fi
+  # --strictPort means vite exits rather than drifting to another port, so a
+  # squatter on this port would otherwise leave us advertising someone else's app.
+  if port_up "$port"; then
+    local holder; holder="$(lsof -nP -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null | head -1)"
+    if curl -fsS -o /dev/null --max-time 2 "$url" >/dev/null 2>&1; then
+      warn "$name: $url is already being served by pid ${holder:-?} (started outside this script)."
+      warn "     It may be stale and bound to localhost only — 'kill ${holder:-PID}' then './start.sh ui' to rebind on the LAN."
+    else
+      warn "$name: port $port is held by pid ${holder:-?} but nothing answers there — free it and re-run './start.sh ui'."
+    fi
+    return 1
+  fi
+  ( cd "$dir" && exec pnpm exec vite --host 0.0.0.0 --port "$port" --strictPort ) >"$LOG_DIR/$name.log" 2>&1 &
+  echo $! > "$PID_DIR/$name.pid"
+  printf '  waiting for %s' "$name"
+  if http_wait "$url" 40; then printf '\n'; ok "$name → $url"; return 0; fi
+  printf '\n'
+  warn "$name did not come up. Last lines of $LOG_DIR/$name.log:"
+  tail -n 15 "$LOG_DIR/$name.log" | sed 's/^/      /'
+  rm -f "$PID_DIR/$name.pid"
+  return 1
+}
+
 web_up() {
-  command -v pnpm >/dev/null 2>&1 || { warn "pnpm not found — skipping the web app (backend is still up)"; return 0; }
-  if running web; then warn "web already running (pid $(cat "$PID_DIR/web.pid"))"; return 0; fi
+  [ "${WA_SKIP_WEB:-0}" = 1 ] && { warn "web skipped (WA_SKIP_WEB=1)"; return 0; }
+  [ "$DEPS_OK" = 1 ] || return 0
   say "Starting web app (Vite)…"
   local ip; ip="$(lan_ip)"
   # Point the web app at the LAN IP (not localhost) so it also works when opened
   # from a phone browser on the same WiFi; regenerated each run to track the IP.
   printf 'VITE_API_URL=http://%s:8080\nVITE_WS_URL=ws://%s:8081/v1/ws\n' "$ip" "$ip" > "$REPO_ROOT/clients/web/.env.local"
-  ( cd "$REPO_ROOT/clients" && pnpm install --no-frozen-lockfile >/dev/null 2>&1 || true )
-  # Bind Vite to 0.0.0.0 so other devices on the LAN can load the PWA. NOTE: run
-  # vite directly — `pnpm dev -- --host` passes a stray `--` that vite treats as
-  # end-of-options, so --host is silently ignored (LAN never exposed).
-  ( cd "$REPO_ROOT/clients/web" && exec pnpm exec vite --host 0.0.0.0 --port 5173 --strictPort ) >"$LOG_DIR/web.log" 2>&1 &
-  echo $! > "$PID_DIR/web.pid"
-  ok "web starting → http://localhost:5173  (LAN: http://$ip:5173)"
+  vite_app_up web "$REPO_ROOT/clients/web" "$WEB_PORT" "http://localhost:$WEB_PORT/"
+}
+
+# admin_up starts the internal admin console (clients/admin). It derives its own
+# API base from the browser host on :8080, so it needs no env. The server-side
+# admin plane is OIDC-gated (core-api/main.go: WA_ADMIN_OIDC_ISSUER + _JWKS —
+# unset means the /admin/v1 routes are never mounted), so say that plainly here
+# rather than handing over a console whose every request 404s for no visible
+# reason.
+admin_up() {
+  [ "${WA_SKIP_ADMIN:-0}" = 1 ] && { warn "admin console skipped (WA_SKIP_ADMIN=1)"; return 0; }
+  [ "$DEPS_OK" = 1 ] || return 0
+  say "Starting admin console (Vite)…"
+  vite_app_up admin "$REPO_ROOT/clients/admin" "$ADMIN_PORT" "http://localhost:$ADMIN_PORT/" || return 1
+  if [ -z "${WA_ADMIN_OIDC_ISSUER:-}" ] || [ -z "${WA_ADMIN_OIDC_JWKS:-}" ]; then
+    warn "admin plane is DISABLED server-side (WA_ADMIN_OIDC_ISSUER/_JWKS unset) — the console loads but /admin/v1 is not mounted"
+  fi
+}
+
+# mobile_up starts the Expo dev server (Metro) for the React Native app. The
+# EXPO_PUBLIC_* values are baked into the bundle at build time and must be the
+# LAN IP, never localhost: on a phone, localhost is the phone. Metro is pinned
+# to $METRO_PORT because Expo's default (8081) is ws-gateway here.
+#
+# EXPO_NO_TYPESCRIPT_SETUP=1 is load-bearing: without it every `expo start`
+# rewrites clients/mobile/tsconfig.json and DELETES the tracked
+# clients/mobile/expo-env.d.ts, so merely bringing the stack up left the working
+# tree dirty. Starting a dev server must never edit the repo.
+mobile_up() {
+  [ "${WA_SKIP_MOBILE:-0}" = 1 ] && { warn "mobile/Expo skipped (WA_SKIP_MOBILE=1)"; return 0; }
+  [ "$DEPS_OK" = 1 ] || return 0
+  if running mobile; then warn "mobile already running (pid $(cat "$PID_DIR/mobile.pid"))"; return 0; fi
+  if port_up "$METRO_PORT"; then warn "mobile: port $METRO_PORT already in use — Metro not started"; return 1; fi
+  say "Starting mobile dev server (Expo/Metro)…"
+  local ip; ip="$(lan_ip)"
+  (
+    cd "$REPO_ROOT/clients/mobile" \
+      && EXPO_NO_TELEMETRY=1 \
+         EXPO_NO_TYPESCRIPT_SETUP=1 \
+         EXPO_PUBLIC_API_URL="http://$ip:8080" \
+         EXPO_PUBLIC_WS_URL="ws://$ip:8081/v1/ws" \
+         EXPO_PUBLIC_LIVEKIT_URL="ws://$ip:7880" \
+         exec pnpm exec expo start --port "$METRO_PORT"
+  ) >"$LOG_DIR/mobile.log" 2>&1 &
+  echo $! > "$PID_DIR/mobile.pid"
+  printf '  waiting for Metro'
+  # Metro's first boot compiles the dep graph — give it longer than a Vite start.
+  if http_wait "http://localhost:$METRO_PORT/status" 90; then
+    printf '\n'; ok "mobile (Metro) → exp://$ip:$METRO_PORT  (open in Expo Go)"
+    return 0
+  fi
+  printf '\n'
+  warn "Metro did not come up. Last lines of $LOG_DIR/mobile.log:"
+  tail -n 15 "$LOG_DIR/mobile.log" | sed 's/^/      /'
+  rm -f "$PID_DIR/mobile.pid"
+  return 1
+}
+
+# uis_up brings up every front-end. Ordered cheapest-first so a slow Metro boot
+# never delays the browser UIs.
+uis_up() {
+  proto_gen              # @wa/proto-types is generated, not committed
+  deps_install || return 0
+  web_up   || true
+  admin_up || true
+  mobile_up || true
+}
+
+# open_browser opens the web app once it is actually serving — the payoff of
+# "run everything". WA_NO_OPEN=1 suppresses it (CI, headless, tmux).
+open_browser() {
+  [ "${WA_NO_OPEN:-0}" = 1 ] && return 0
+  running web || return 0
+  command -v open >/dev/null 2>&1 && open "http://localhost:$WEB_PORT" >/dev/null 2>&1 || true
 }
 
 # ── lifecycle helpers ───────────────────────────────────────────────────────
@@ -376,7 +588,10 @@ stop_procs() {
   for p in "$PID_DIR"/*.pid; do
     [ -e "$p" ] || continue
     local name pid; name="$(basename "$p" .pid)"; pid="$(cat "$p")"
-    if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; ok "stopped $name (pid $pid)"; fi
+    # kill_tree, not kill: the UI dev servers fork children (Vite's optimizer,
+    # Metro's transform workers) that survive a kill of the parent and keep the
+    # port bound, so the next `up` finds 5173/8090 "already in use".
+    if kill -0 "$pid" 2>/dev/null; then kill_tree "$pid"; ok "stopped $name (pid $pid)"; fi
     rm -f "$p"
   done
 }
@@ -393,21 +608,28 @@ urls() {
   cat <<EOF
 
 ${B}Stack is up (${RUNTIME}).${X}
-  ${D}core-api     ${X}http://localhost:8080   (readyz: /readyz, metrics: /metrics)
-  ${D}ws-gateway   ${X}ws://localhost:8081/v1/ws
-  ${D}media-svc    ${X}http://localhost:8082
-  ${D}notify-svc   ${X}http://localhost:8083
-  ${D}web app      ${X}http://localhost:5173   (LAN: http://${ip}:5173)
-  ${D}MinIO console${X}http://localhost:9001    (minioadmin / minioadmin)
-  ${D}Postgres     ${X}localhost:5432           (whatsapp / devpassword)
+  ${D}core-api      ${X}http://localhost:8080  (readyz: /readyz, metrics: /metrics)
+  ${D}ws-gateway    ${X}ws://localhost:8081/v1/ws
+  ${D}media-svc     ${X}http://localhost:8082
+  ${D}notify-svc    ${X}http://localhost:8083
+  ${D}LiveKit SFU   ${X}ws://localhost:7880    (voice/video)
+  ${D}MinIO console ${X}http://localhost:9001  (minioadmin / minioadmin)
+  ${D}Postgres      ${X}localhost:5432         (whatsapp / devpassword)
 
-  ${B}📱 Phone on the same WiFi${X} — set the app's server URL to:
+${B}User interfaces.${X}
+  ${D}web app       ${X}http://localhost:${WEB_PORT}  (LAN: http://${ip}:${WEB_PORT})
+  ${D}admin console ${X}http://localhost:${ADMIN_PORT}  (LAN: http://${ip}:${ADMIN_PORT})
+  ${D}mobile (Expo) ${X}exp://${ip}:${METRO_PORT}    (open in Expo Go; Metro on :${METRO_PORT})
+
+  ${B}📱 Phone on the same WiFi${X} — the mobile bundle is already built with:
        API   http://${ip}:8080
        WS    ws://${ip}:8081/v1/ws
+     For the web PWA in a phone browser, just open http://${ip}:${WEB_PORT}.
      (services already bind 0.0.0.0; if the phone can't reach it, allow incoming
       connections in System Settings ▸ Network ▸ Firewall.)
 
-  Logs:  ./start.sh logs core-api      Stop:  ./start.sh down
+  Logs:  ./start.sh logs web           Stop:  ./start.sh down
+  UIs only:  ./start.sh ui             Skip one:  WA_SKIP_MOBILE=1 ./start.sh
 EOF
 }
 
@@ -419,8 +641,19 @@ cmd_up() {
   if [ "$RUNTIME" = docker ]; then infra_up_docker; migrate_docker
   else infra_up_native; migrate_native; fi
   services_up
-  web_up
+  uis_up
   urls
+  open_browser
+}
+
+# cmd_ui (re)starts only the front-ends, against a backend that is already up —
+# the common case when you are iterating on a client.
+cmd_ui() {
+  detect_runtime
+  load_env
+  uis_up
+  urls
+  open_browser
 }
 
 cmd_down() {
@@ -437,8 +670,18 @@ cmd_status() {
   detect_runtime
   say "Runtime: $RUNTIME"
   say "Host processes:"
-  for s in "${SERVICES[@]}" nats minio web; do
-    if running "$s"; then ok "$s (pid $(cat "$PID_DIR/$s.pid"))"; else printf '  %s·%s %s stopped\n' "$D" "$X" "$s"; fi
+  local port
+  for s in "${SERVICES[@]}" nats minio livekit "${UI_APPS[@]}"; do
+    port="$(svc_port "$s")"
+    if running "$s"; then
+      ok "$s (pid $(cat "$PID_DIR/$s.pid"), :$port)"
+    elif [ -n "$port" ] && port_up "$port"; then
+      # Up, but not ours — start.sh reuses an instance that was already
+      # listening (Postgres, NATS, MinIO, LiveKit) and writes no pidfile for it.
+      ok "$s (:$port, reused — not started by this script)"
+    else
+      printf '  %s·%s %s stopped\n' "$D" "$X" "$s"
+    fi
   done
   if [ "$RUNTIME" = docker ] && docker info >/dev/null 2>&1; then say "Infra (docker):"; "${COMPOSE[@]}" ps
   else say "Infra (brew services):"; brew services list 2>/dev/null | grep -E "postgresql@17|valkey|redis|nats-server" || true; fi
@@ -446,7 +689,7 @@ cmd_status() {
 
 cmd_logs() {
   local s="${1:-core-api}"; local f="$LOG_DIR/$s.log"
-  [ -f "$f" ] || die "no log for '$s' (choose: ${SERVICES[*]} nats minio web)"
+  [ -f "$f" ] || die "no log for '$s' (choose: ${SERVICES[*]} ${UI_APPS[*]} nats minio livekit pnpm-install)"
   tail -f "$f"
 }
 
@@ -454,9 +697,10 @@ case "${1:-up}" in
   up)      RUNTIME="${2:-}"; cmd_up ;;
   native)  RUNTIME=native; cmd_up ;;
   docker)  RUNTIME=docker; cmd_up ;;
+  ui)      cmd_ui ;;
   down)    cmd_down ;;
   restart) cmd_down; cmd_up ;;
   status)  cmd_status ;;
   logs)    cmd_logs "${2:-}" ;;
-  *)       die "usage: ./start.sh [up [native|docker]|down|restart|status|logs <service>]" ;;
+  *)       die "usage: ./start.sh [up [native|docker]|ui|down|restart|status|logs <service>]" ;;
 esac
